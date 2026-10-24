@@ -1,0 +1,20 @@
+# Secrets
+.env
+credentials.json
+token.json
+
+# Disposable intermediates
+.tmp/*
+!.tmp/.gitkeep
+
+# Vercel CLI link
+.vercel/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Database snapshots (personal data, kept out of git)
+backups/

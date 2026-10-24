@@ -1,0 +1,46 @@
+# Channel settings read by the daily jobs. Edit, commit, and Vercel redeploys.
+
+channel:
+  name: "Paws & Giggles"   # placeholder: change to your channel's name
+  audience: "global English-speaking viewers who love wholesome, funny animal moments"
+  voice: >-
+    Warm, playful and a little cheeky. Short punchy lines a viewer reads in one glance. Relatable everyday
+    humour (Mondays, snacks, naps, bosses, chores). Never mean to the animals, never mocks people, no
+    politics, no tragedy, no brand names.
+  contact_email: ""          # shown on the public /about and /privacy pages; optional
+
+schedule:
+  # The autopilot posts posts_per_day Shorts: the first at first_post, then one every every_hours,
+  # on this time zone's clock (08:00 every 2 hours x10 = 08:00 to 02:00). Each Short is made in
+  # the hours before its slot and YouTube publishes it on the minute. `python tools/slots.py` lists them.
+  timezone: "Asia/Kolkata"
+  first_post: "08:00"
+  every_hours: 2
+  posts_per_day: 10
+
+formats:
+  # Rotates in this order, one format per Short.
+  #   punchline: one clip, hook on top, punchline appears halfway through
+  #   pov:       one clip, "POV: ..." caption on top
+  #   top3:      three clips counting down 3-2-1, hook on top, numbered captions
+  rotation: ["punchline", "top3", "pov"]
+
+content:
+  animals: ["cat", "kitten", "dog", "puppy", "rabbit", "hamster", "guinea pig", "parrot", "duckling",
+    "goat", "otter", "panda", "fox", "horse"]
+  allow_people: false        # true would allow adults in frame; children are always rejected
+  min_clip_seconds: 4
+  max_short_seconds: 40
+  min_check_score: 7         # 0-10 score from the frame check; clips below this are skipped
+
+trends:
+  region: "ALL"              # ALL = every country, the most widespread trends first; or one code like US
+  calendar_days_ahead: 3     # theme around pet days and holidays this many days early
+
+metadata:
+  category_id: '15'          # Pets & Animals
+  base_hashtags: ["#shorts", "#cuteanimals"]
+  language: en
+
+music:
+  volume: 1.0                # music is the only audio track
