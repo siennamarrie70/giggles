@@ -1,0 +1,36 @@
+# Pet days and holidays the concept writer can theme a Short around.
+#   date: "MM-DD"                 fixed date
+#   rule: "<n> <weekday> <month>" floating date, e.g. "4 thu 11" = 4th Thursday of November
+
+events:
+  - {name: "New Year's Day", date: "01-01"}
+  - {name: "Valentine's Day", date: "02-14"}
+  - {name: "Love Your Pet Day", date: "02-20"}
+  - {name: "National Puppy Day", date: "03-23"}
+  - {name: "National Pet Day", date: "04-11"}
+  - {name: "Hug Your Cat Day", date: "06-04"}
+  - {name: "National Kitten Day", date: "07-10"}
+  - {name: "International Cat Day", date: "08-08"}
+  - {name: "National Dog Day", date: "08-26"}
+  - {name: "World Animal Day", date: "10-04"}
+  - {name: "Black Cat Day", date: "10-27"}
+  - {name: "National Cat Day", date: "10-29"}
+  - {name: "Halloween", date: "10-31"}
+  - {name: "Thanksgiving (US)", rule: "4 thu 11"}
+  - {name: "Christmas", date: "12-25"}
+  - {name: "New Year's Eve", date: "12-31"}
+
+# Northern-hemisphere seasons by month, matching a US-centred audience.
+seasons:
+  winter: [12, 1, 2]
+  spring: [3, 4, 5]
+  summer: [6, 7, 8]
+  autumn: [9, 10, 11]
+
+# Everyday hooks by weekday (0 = Monday).
+weekday_vibes:
+  0: "Monday mood"
+  2: "midweek slump"
+  4: "Friday feeling"
+  5: "weekend energy"
+  6: "lazy Sunday"
