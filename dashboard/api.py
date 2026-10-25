@@ -265,6 +265,7 @@ def _video_json(v: dict) -> dict:
         "publish_at": v["publish_at"], "slot": v["slot"], "error": v["error"], "youtube_id": v["youtube_id"],
         "studio_url": f"https://studio.youtube.com/video/{v['youtube_id']}/edit" if v["youtube_id"] else None,
         "duration": edit.get("duration"),
+        "music": plan.get("music"), "music_credit": short_render.music_credit(plan.get("music")),
         "metadata": {k: meta.get(k) for k in ("hook", "punchline", "captions", "title", "description", "hashtags")},
         "clips": [{
             "source": c.get("source"), "credit_name": c.get("credit_name"), "page_url": c.get("page_url"),

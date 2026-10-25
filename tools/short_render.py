@@ -4,7 +4,8 @@ Renders a vertical 1080x1920 Short from an edit spec using ffmpeg and Pillow.
 Portrait clips are cropped to fill the frame; landscape or square clips sit over a
 blurred, zoomed copy of themselves. Pillow draws each caption as a transparent PNG
 (white text, black outline) that ffmpeg overlays at its time. The audio is a random
-track from assets/music/ (silence if the folder is empty), loudness-normalised.
+track from assets/music/ (silence if the folder is empty), loudness-normalised; music_credit()
+gives the credit line its licence asks for in the description.
 
 CPU is the scarce thing on Vercel's free plan (4 CPU-hours a month, and the autopilot
 renders up to 10 Shorts a day), so the encoder runs at "superfast" and the background is
@@ -31,6 +32,7 @@ from pathlib import Path
 
 import imageio_ffmpeg
 import requests
+import yaml
 from PIL import Image, ImageDraw, ImageFont
 
 from common import ASSETS_DIR, TMP_DIR, load_config, tmp_path
@@ -70,6 +72,18 @@ def ffmpeg_exe() -> str:
 def pick_music() -> Path | None:
     tracks = [p for p in MUSIC_DIR.glob("*") if p.suffix.lower() in MUSIC_EXTS] if MUSIC_DIR.exists() else []
     return random.choice(tracks) if tracks else None
+
+
+def music_credit(name: str | None) -> str | None:
+    """The credit line a track's licence asks for (assets/music/tracks.yaml), or None if it needs none.
+    Kevin MacLeod's tracks are CC BY 4.0 and in YouTube's Content ID, so their line must be in the
+    description of every Short that uses them."""
+    notes_file = MUSIC_DIR / "tracks.yaml"
+    if not name or not notes_file.exists():
+        return None
+    with open(notes_file, encoding="utf-8") as f:
+        notes = yaml.safe_load(f) or {}
+    return (notes.get(name) or {}).get("credit")
 
 
 def download(url: str, dest: Path) -> Path:

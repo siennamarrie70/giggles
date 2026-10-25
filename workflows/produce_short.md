@@ -9,7 +9,9 @@ The **autopilot** does this by itself: 10 Shorts a day, one every 2 hours from 0
 ## Required Inputs
 - Keys in `.env` (see `workflows/setup_accounts.md`): `GEMINI_API_KEY`, `PEXELS_API_KEY`, the YouTube values
 - Settings in `config/channel.yaml` (schedule, voice, formats, animals) and `config/calendar.yaml`
-- Music tracks in `assets/music/` (optional; silent without them)
+- Music tracks in `assets/music/` (optional; silent without them). A track that needs a credit has it in
+  `assets/music/tracks.yaml` (`credit:`); the Short remembers its track when rendered and the upload adds that
+  line to the description. Kevin MacLeod's tracks (CC BY 4.0, in YouTube's Content ID) must always carry it.
 
 ## Tools
 | Step | Tool | Command |
