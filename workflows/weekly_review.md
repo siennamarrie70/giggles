@@ -1,40 +1,41 @@
 # Workflow: Weekly review
 
 ## Objective
-Once a week, see what's working, steer the channel, and keep the free tiers free. About 15 minutes.
+Once a week, see what's working, steer the channel, and keep everything free. About 15 minutes.
 
 ## Required Inputs
-- The Sunday Telegram "weekly check-in" (written by the `stats` job from your numbers)
-- YouTube Studio analytics
+- The dashboard's **Results** page (Agent 5): the playbook's lessons and what does better than usual, by setting,
+  kind of character, voice, outfit, length, number of lines, trend or evergreen, and posting time
+- The weekly check-in on Telegram (if set up) and YouTube Studio analytics
 
 ## Tools
-- `tools/db.py recent`: latest videos, failures and job runs
-- `tools/stats_pull.py --id <video id>`: numbers for specific Shorts on demand
-- `config/channel.yaml`: the settings you change
+- `.venv/Scripts/python tools/db.py recent`: latest Shorts, failures and runs
+- `.venv/Scripts/python -m agents.analyst --learn`: read the numbers and rewrite the playbook now
+- `.venv/Scripts/python tools/stats_pull.py --id <video id>`: numbers for specific Shorts on demand
+- `config/channel.yaml` or the dashboard's **Settings** page: what you change
 
 ## Steps
-1. **Read the check-in.** The lessons it lists are fed into next week's concepts automatically.
-   Disagree with one? Say so to Claude and we'll adjust the prompt in `tools/concept_write.py`.
-2. **Look for failures:** `tools/db.py recent`. Repeated failures usually mean an expired sign-in or a quota;
-   see the Edge Cases in `workflows/produce_short.md`.
-3. **Steer** in `config/channel.yaml`, then commit (Vercel redeploys):
-   - `formats.rotation`: lean into what wins, e.g. `[top3, punchline, top3, pov]`
-   - `content.animals`: drop animals that flop, add ones that work
-   - `schedule`: first post, hours between posts, Shorts a day and time zone (or use the dashboard's Settings)
-   - `channel.voice`: adjust the humour
-4. **Refresh music** every few weeks with new Audio Library tracks in `assets/music/`.
-5. **Monthly: check free-tier usage:**
-   - Vercel → Usage: Active CPU should stay under 4 h/month (10 Shorts a day was estimated at ~2.5 h; if it runs
-     higher, post fewer per day)
-   - AI Studio → Usage: Gemini requests are far from the daily limits
-   - Neon dashboard: storage well under 0.5 GB
+1. **Read the playbook** (Results → 5.1). Agents 1 and 2 follow it three times out of four, leaving the rest to
+   variety so early noise doesn't lock the channel in. Disagree with a lesson? Say so to Claude and we'll adjust the
+   agent's prompt (`agents/casting.py`, `agents/writer.py`).
+2. **Look at what does better than usual** (Results → 5.2). A group needs 5 Shorts that are 2 days old before it
+   counts, so the bars fill in over the first weeks.
+3. **Watch a few episodes** in the Studio. If a character type, voice or setting keeps falling flat, steer:
+   - **Settings → Episodes**: switch off settings that don't work, cap characters at 2, shorten the longest sketch
+   - **Settings → Channel → Humour and voice**: the tone both agents follow
+   - **Settings → Posting**: first post, hours between posts, Shorts a day and time zone
+4. **Look for failures:** the Overview's agent cards ("Hit a snag") and the Activity page. Repeated failures usually
+   mean an expired YouTube sign-in or a Gemini quota; see the Edge Cases in `workflows/produce_short.md`.
+5. **Music** every few weeks: remove tracks you're tired of on the Music page and add new ones (with a mood and,
+   if the licence asks, a credit line in `assets/music/tracks.yaml`).
+6. **Monthly:** AI Studio → Usage: Gemini requests stay far from the daily limits (about 2 per episode).
 
 ## Expected Outputs
-- Updated `config/channel.yaml` (if anything changed)
+- Updated settings (if anything changed)
 - New learnings recorded in the "Edge Cases" sections of the workflows when something new went wrong
 
 ## Edge Cases & Known Issues
 - Analytics (percent viewed, subscribers gained) lag about two days; brand-new Shorts show views only.
 - Small numbers are noisy. Give a change 1–2 weeks before judging it.
-- When the channel starts earning, Vercel's Hobby plan no longer fits (non-commercial only): upgrade to Pro or move
-  the same code to another host. That's also the time to consider paid extras like AI-generated originals.
+- The playbook only learns from cartoons: Shorts from the cute-animal version are left out.
+- When the channel starts earning, that's the time to consider paid extras (better voices, AI-drawn art).

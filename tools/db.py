@@ -3,7 +3,12 @@ Storage for the pipeline: Postgres (Neon) in the cloud, a SQLite file locally.
 
 DATABASE_URL set -> Postgres. Not set -> .tmp/ezzy.db, for local runs only. On
 Vercel a missing DATABASE_URL is an error, since /tmp doesn't survive between runs.
-Tables are created automatically on first use, and new columns are added to old tables.
+Tables are created automatically on first use, and new columns are added to old tables
+(only ever added, so an older version of the app still works on the same database).
+
+What the agents hand each other lives here: characters (Agent 1), videos whose plan holds the
+cast, the script (Agent 2), the render and the upload (Agents 3 and 4), stats (Agent 5) and
+notes (the playbook, caches, heartbeats).
 
 A Short "making" or "scheduled" holds its posting slot: a unique index lets only one
 run claim each slot, even when Vercel delivers the same cron call twice.
@@ -65,6 +70,12 @@ CREATE TABLE IF NOT EXISTS notes (
     kind TEXT NOT NULL,
     body TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS characters (
+    id {pk},
+    created_at TEXT NOT NULL,
+    name TEXT NOT NULL,
+    spec TEXT NOT NULL
 )
 """
 # Columns added after the first release, for databases created before them.
@@ -205,10 +216,18 @@ def slot_holders(start: str, end: str) -> list[dict]:
     return [_video(r) for r in rows]
 
 
-def next_planned() -> dict | None:
+def planned_videos(limit: int = 50) -> list[dict]:
+    """The queue: cartoon episodes written and waiting for a slot, oldest first. Shorts planned by the
+    cute-animal version (other formats) can't be animated, so the agents leave them to the dashboard."""
     with connect() as db:
-        rows = db.query("SELECT * FROM videos WHERE status = 'planned' ORDER BY id LIMIT 1")
-    return _video(rows[0] if rows else None)
+        rows = db.query("SELECT * FROM videos WHERE status = 'planned' AND format = 'sketch' ORDER BY id LIMIT %s",
+                        (limit,))
+    return [_video(r) for r in rows]
+
+
+def next_planned() -> dict | None:
+    found = planned_videos(1)
+    return found[0] if found else None
 
 
 def get_video(video_id: int) -> dict | None:
@@ -318,6 +337,54 @@ def last_beat(name: str) -> str | None:
     with connect() as db:
         rows = db.query("SELECT created_at FROM notes WHERE kind = %s", (f"beat:{name}",))
     return rows[0]["created_at"] if rows else None
+
+
+def latest_stats(youtube_ids: list[str]) -> dict[str, dict]:
+    """The newest numbers for each video, with the day they were taken."""
+    if not youtube_ids:
+        return {}
+    marks = ", ".join(["%s"] * len(youtube_ids))
+    with connect() as db:
+        rows = db.query(f"SELECT * FROM stats WHERE youtube_id IN ({marks}) ORDER BY taken_on", tuple(youtube_ids))
+    return {r["youtube_id"]: r for r in rows}  # later days overwrite earlier ones
+
+
+def last_run(job: str, ok: bool | None = True) -> dict | None:
+    """The latest run of a job or agent (only successful ones by default)."""
+    with connect() as db:
+        if ok is None:
+            rows = db.query("SELECT * FROM runs WHERE job = %s ORDER BY id DESC LIMIT 1", (job,))
+        else:
+            rows = db.query("SELECT * FROM runs WHERE job = %s AND ok = %s ORDER BY id DESC LIMIT 1", (job, int(ok)))
+    return rows[0] if rows else None
+
+
+# --- characters (Agent 1) -------------------------------------------------
+
+def insert_character(spec: dict) -> int:
+    with connect() as db:
+        return db.query("INSERT INTO characters (created_at, name, spec) VALUES (%s, %s, %s) RETURNING id",
+                        (now_iso(), spec["name"], json.dumps(spec)))[0]["id"]
+
+
+def _character(row: dict) -> dict:
+    return {**json.loads(row["spec"]), "id": row["id"], "created_at": row["created_at"]}
+
+
+def get_characters(ids: list[int]) -> list[dict]:
+    """Characters in the order asked for."""
+    if not ids:
+        return []
+    marks = ", ".join(["%s"] * len(ids))
+    with connect() as db:
+        rows = {r["id"]: r for r in db.query(f"SELECT * FROM characters WHERE id IN ({marks})", tuple(ids))}
+    return [_character(rows[i]) for i in ids if i in rows]
+
+
+def list_characters(limit: int = 60) -> list[dict]:
+    with connect() as db:
+        rows = db.query("SELECT * FROM characters ORDER BY id DESC LIMIT %s", (limit,))
+    return [_character(r) for r in rows]
 
 
 def start_run(job: str) -> int:

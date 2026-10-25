@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse
 from common import load_config
 
 PAGES_DIR = Path(__file__).resolve().parent
-POLICY_UPDATED = date(2026, 10, 24)  # change when the privacy policy text changes
+POLICY_UPDATED = date(2026, 10, 25)  # change when the privacy policy text changes
 
 router = APIRouter()
 

@@ -1,15 +1,15 @@
 """
-Collects today's trend signals for the concept writer.
+Collects today's trend signals for the Writer (agents/writer.py).
 
 Sources (each is optional; a failing source is reported in "errors", not fatal):
   - Google Trends daily trending searches (public RSS feed, no key)
-  - YouTube's most-popular Pets & Animals chart, or a search for recent animal Shorts
-    as a fallback (needs the YouTube sign-in from youtube_auth.py)
-  - config/calendar.yaml: upcoming pet days/holidays, the season and a weekday vibe
+  - YouTube's most-popular Comedy chart, or a search for recent comedy Shorts as a
+    fallback (needs the YouTube sign-in from youtube_auth.py)
+  - config/calendar.yaml: upcoming holidays and world days, the season and a weekday vibe
 
 The region is one country code (US, GB, IN...) or ALL. ALL asks every country in WORLD and
 merges the lists: a search or video trending in many countries ranks first, because the
-channel's audience is worldwide. That's ~190 requests, so the planner keeps the result for a
+channel's audience is worldwide. That's ~190 requests, so the Writer keeps the result for a
 few hours (jobs.trend_signals) instead of asking for every Short.
 
 Usage:
@@ -63,10 +63,10 @@ def _video(item: dict) -> dict:
 
 
 def youtube_chart(region: str, limit: int = 25) -> list[dict]:
-    """The most-popular Pets & Animals videos in one country (1 quota unit)."""
+    """The most-popular Comedy videos in one country (1 quota unit)."""
     items = youtube_auth.yt_get("videos", {
         "part": "snippet,statistics", "chart": "mostPopular", "regionCode": region,
-        "videoCategoryId": "15", "maxResults": limit,
+        "videoCategoryId": "23", "maxResults": limit,
     }).get("items", [])
     return [_video(it) for it in items]
 
@@ -82,7 +82,7 @@ def youtube_popular(region: str, limit: int = 25) -> list[dict]:
     items = youtube_auth.yt_get("search", {  # 100 quota units, so only for a single country
         "part": "snippet", "type": "video", "videoDuration": "short", "order": "viewCount",
         "publishedAfter": since, "regionCode": region, "relevanceLanguage": "en",
-        "q": "cute animals", "maxResults": limit,
+        "q": "comedy sketch", "maxResults": limit,
     }).get("items", [])
     return [_video(it) for it in items]
 

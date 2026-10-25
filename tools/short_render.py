@@ -1,43 +1,35 @@
 """
-Renders a vertical 1080x1920 Short from an edit spec using ffmpeg and Pillow.
+Media helpers every video shares: the captions (Pillow draws them in the Sniglet font, white with
+a black outline, inside the Shorts safe areas), the music library, and a working ffmpeg.
 
-Portrait clips are cropped to fill the frame; landscape or square clips sit over a
-blurred, zoomed copy of themselves. Pillow draws each caption as a transparent PNG
-(white text, black outline) that ffmpeg overlays at its time. The audio is a random
-track from assets/music/ (silence if the folder is empty), loudness-normalised; music_credit()
-gives the credit line its licence asks for in the description.
+  caption_image()  a caption on a transparent 1080x1920 frame, at the top or bottom safe area
+  pick_music()     a track from assets/music/ (its mood first, if asked), or None if there are none
+  music_credit()   the credit line a track's licence asks for in the description
+  ffmpeg_exe()     the bundled ffmpeg (copied to /tmp on Vercel, where the bundle is read-only)
 
-CPU is the scarce thing on Vercel's free plan (4 CPU-hours a month, and the autopilot
-renders up to 10 Shorts a day), so the encoder runs at "superfast" and the background is
-blurred at quarter size. On one core (2026-10-24): a 14 s portrait Short took 10 s of CPU,
-a 21 s Top 3 took 19 s; "veryfast" cost a third more and the full-size blur twice as much.
-
-Edit spec (what concept_write.build_edit() produces):
-  {"segments": [{"url" or "path": ..., "start": 0.3, "duration": 9, "width": 1080, "height": 1920}],
-   "overlays": [{"text": "When it's Monday again", "start": 0, "end": 9, "position": "top"}]}
+Kevin MacLeod's tracks are CC BY 4.0 and in YouTube's Content ID: every Short that uses one must carry
+its credit line, which the Publisher adds at upload (agents/publisher.py).
 
 Usage:
-    python tools/short_render.py --edit .tmp/plan.json --out .tmp/out/short.mp4 [--music track.mp3]
+    python tools/short_render.py --caption "When it's Monday again" --out .tmp/out/caption.png
+    python tools/short_render.py --music [--mood funny]          # which track would be picked
 """
 
 import argparse
-import json
 import random
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 import imageio_ffmpeg
-import requests
 import yaml
 from PIL import Image, ImageDraw, ImageFont
 
-from common import ASSETS_DIR, TMP_DIR, load_config, tmp_path
+from common import ASSETS_DIR, tmp_path
 
-W, H, FPS = 1080, 1920, 30
+W, H = 1080, 1920
 FONT_PATH = ASSETS_DIR / "fonts" / "Sniglet-ExtraBold.ttf"
 MUSIC_DIR = ASSETS_DIR / "music"
 MUSIC_EXTS = {".mp3", ".m4a", ".aac", ".wav", ".ogg"}
@@ -46,8 +38,6 @@ TEXT_MAX_WIDTH = {"top": 920, "bottom": 840}  # bottom stays clear of the like/c
 FONT_SIZE = {"top": 80, "bottom": 72}
 TOP_TEXT_Y = 250
 BOTTOM_TEXT_BOTTOM = 1380
-MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
-RENDER_TIMEOUT_S = 240
 ASCII_SWAPS = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"',
                              "–": "-", "—": "-", "…": "..."})
 EMOJI = re.compile("[\U0001F000-\U0001FFFF☀-➿️‍]")
@@ -69,39 +59,43 @@ def ffmpeg_exe() -> str:
         return str(local)
 
 
-def pick_music() -> Path | None:
-    tracks = [p for p in MUSIC_DIR.glob("*") if p.suffix.lower() in MUSIC_EXTS] if MUSIC_DIR.exists() else []
-    return random.choice(tracks) if tracks else None
+# --- music ----------------------------------------------------------------
+
+def _music_notes() -> dict:
+    notes_file = MUSIC_DIR / "tracks.yaml"
+    if not notes_file.exists():
+        return {}
+    with open(notes_file, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def music_tracks() -> list[Path]:
+    return sorted(p for p in MUSIC_DIR.glob("*") if p.suffix.lower() in MUSIC_EXTS) if MUSIC_DIR.exists() else []
+
+
+def music_moods() -> list[str]:
+    """The moods the library's tracks are tagged with (assets/music/tracks.yaml)."""
+    notes = _music_notes()
+    return sorted({(notes.get(p.name) or {}).get("mood") for p in music_tracks()} - {None})
+
+
+def pick_music(mood: str | None = None) -> Path | None:
+    """A random track, from the given mood if the library has one."""
+    tracks = music_tracks()
+    notes = _music_notes()
+    matching = [p for p in tracks if mood and (notes.get(p.name) or {}).get("mood") == mood]
+    pool = matching or tracks
+    return random.choice(pool) if pool else None
 
 
 def music_credit(name: str | None) -> str | None:
-    """The credit line a track's licence asks for (assets/music/tracks.yaml), or None if it needs none.
-    Kevin MacLeod's tracks are CC BY 4.0 and in YouTube's Content ID, so their line must be in the
-    description of every Short that uses them."""
-    notes_file = MUSIC_DIR / "tracks.yaml"
-    if not name or not notes_file.exists():
+    """The credit line a track's licence asks for (assets/music/tracks.yaml), or None if it needs none."""
+    if not name:
         return None
-    with open(notes_file, encoding="utf-8") as f:
-        notes = yaml.safe_load(f) or {}
-    return (notes.get(name) or {}).get("credit")
+    return (_music_notes().get(name) or {}).get("credit")
 
 
-def download(url: str, dest: Path) -> Path:
-    if dest.exists():
-        return dest
-    partial = dest.with_suffix(".part")
-    size = 0
-    with requests.get(url, stream=True, timeout=60) as resp:
-        resp.raise_for_status()
-        with open(partial, "wb") as f:
-            for chunk in resp.iter_content(1 << 20):
-                size += len(chunk)
-                if size > MAX_DOWNLOAD_BYTES:
-                    raise RuntimeError(f"clip larger than {MAX_DOWNLOAD_BYTES >> 20} MB: {url}")
-                f.write(chunk)
-    partial.replace(dest)
-    return dest
-
+# --- captions -------------------------------------------------------------
 
 def clean_text(text: str) -> str:
     return " ".join(EMOJI.sub("", text.translate(ASCII_SWAPS)).split())
@@ -132,6 +126,12 @@ def _balanced_wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTyp
 
 def caption_png(text: str, position: str, dest: Path) -> Path:
     """Full-frame transparent PNG with the caption drawn at the top or bottom safe area."""
+    caption_image(text, position).save(dest)
+    return dest
+
+
+def caption_image(text: str, position: str) -> Image.Image:
+    """The caption on a transparent full frame, at the top or bottom safe area."""
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     text = clean_text(text)
@@ -151,96 +151,24 @@ def caption_png(text: str, position: str, dest: Path) -> Path:
     y = TOP_TEXT_Y - top if position == "top" else BOTTOM_TEXT_BOTTOM - (bottom - top) - top
     draw.multiline_text((x, y), block, font=font, fill="white", stroke_width=stroke, stroke_fill="black",
                         spacing=spacing, align="center")
-    img.save(dest)
-    return dest
-
-
-def _video_chain(i: int, seg: dict) -> str:
-    finish = f"setsar=1,fps={FPS},format=yuv420p,setpts=PTS-STARTPTS[v{i}]"
-    if seg["width"] / seg["height"] <= 0.65:  # portrait: crop to fill
-        return f"[{i}:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},{finish}"
-    return (f"[{i}:v]split[bg{i}][fg{i}];"  # blurring a quarter-size copy looks the same and costs far less
-            f"[bg{i}]scale={W // 4}:{H // 4}:force_original_aspect_ratio=increase,crop={W // 4}:{H // 4},"
-            f"gblur=sigma=10,scale={W}:{H}[bgb{i}];"
-            f"[fg{i}]scale={W}:-2[fgs{i}];"
-            f"[bgb{i}][fgs{i}]overlay=(W-w)/2:(H-h)/2,{finish}")
-
-
-def build_command(ffmpeg: str, segments: list[dict], overlays: list[dict], pngs: list[Path],
-                  music: Path | None, volume: float, out: Path) -> list[str]:
-    total = sum(s["duration"] for s in segments)
-    cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error"]
-    for s in segments:
-        cmd += ["-ss", f"{s['start']:.2f}", "-t", f"{s['duration']:.2f}", "-i", str(s["path"])]
-    for png in pngs:
-        cmd += ["-i", str(png)]
-    if music:
-        cmd += ["-stream_loop", "-1", "-i", str(music)]
-    else:
-        cmd += ["-f", "lavfi", "-t", f"{total:.2f}", "-i", "anullsrc=r=44100:cl=stereo"]
-    audio_input = len(segments) + len(pngs)
-
-    chains = [_video_chain(i, s) for i, s in enumerate(segments)]
-    chains.append("".join(f"[v{i}]" for i in range(len(segments))) + f"concat=n={len(segments)}:v=1:a=0[base]")
-    last = "base"
-    for k, ov in enumerate(overlays):
-        chains.append(f"[{last}][{len(segments) + k}:v]overlay=0:0:"
-                      f"enable='between(t,{ov['start']:.2f},{ov['end']:.2f})'[o{k}]")
-        last = f"o{k}"
-    chains.append(f"[{audio_input}:a]atrim=0:{total:.2f},asetpts=PTS-STARTPTS,volume={volume},"
-                  f"afade=t=in:st=0:d=0.5,afade=t=out:st={max(total - 1, 0):.2f}:d=1,"
-                  f"loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
-
-    return cmd + ["-filter_complex", ";".join(chains), "-map", f"[{last}]", "-map", "[aout]",
-                  "-c:v", "libx264", "-preset", "superfast", "-crf", "21", "-pix_fmt", "yuv420p", "-r", str(FPS),
-                  "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2", "-movflags", "+faststart",
-                  "-t", f"{total:.2f}", str(out)]
-
-
-def run(edit: dict, out_path: Path | str, music: Path | str | None = "auto", volume: float = 0.8) -> Path:
-    out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    (TMP_DIR / "work").mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix="render_", dir=TMP_DIR / "work"))
-    try:
-        segments = []
-        for i, seg in enumerate(edit["segments"]):
-            path = seg.get("path")
-            if not path or not Path(path).exists():
-                name = (seg.get("key") or f"clip{i}").replace(":", "_") + ".mp4"
-                path = download(seg["url"], tmp_path("clips", name))
-            segments.append({**seg, "path": str(path)})
-        overlays = [ov for ov in edit.get("overlays", []) if clean_text(ov["text"])]
-        pngs = [caption_png(ov["text"], ov["position"], work / f"caption_{k}.png") for k, ov in enumerate(overlays)]
-        track = pick_music() if music == "auto" else (Path(music) if music else None)
-
-        cmd = build_command(ffmpeg_exe(), segments, overlays, pngs, track, volume, out)
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                timeout=RENDER_TIMEOUT_S)
-        if result.returncode != 0:
-            raise RuntimeError(f"ffmpeg failed: {result.stderr.strip()[-1500:]}")
-        return out
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+    return img
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    parser.add_argument("--edit", required=True, help="JSON edit spec, or plan.json containing an 'edit' key")
-    parser.add_argument("--out", default=str(tmp_path("out", "short.mp4")))
-    parser.add_argument("--music", default="auto", help="Track path, 'auto' (random from assets/music) or 'none'")
+    parser.add_argument("--caption", help="Draw this caption")
+    parser.add_argument("--position", choices=["top", "bottom"], default="bottom")
+    parser.add_argument("--out", default=str(tmp_path("out", "caption.png")))
+    parser.add_argument("--music", action="store_true", help="Show which track would be picked")
+    parser.add_argument("--mood")
     args = parser.parse_args()
-
-    try:
-        with open(args.edit, encoding="utf-8") as f:
-            spec = json.load(f)
-        music = None if args.music == "none" else args.music
-        out = run(spec.get("edit", spec), args.out, music, load_config()["music"]["volume"])
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-
-    print(f"Wrote {out}")
+    if args.music:
+        track = pick_music(args.mood)
+        print(f"{track.name if track else 'No tracks in assets/music/'} (moods: {', '.join(music_moods()) or 'none'})")
+        return 0
+    if not args.caption:
+        parser.error("give --caption or --music")
+    print(f"Wrote {caption_png(args.caption, args.position, Path(args.out))}")
     return 0
 
 
