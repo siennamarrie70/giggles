@@ -2,7 +2,7 @@
 Shared paths and settings for every tool.
 
 Loads .env once, points TMP_DIR somewhere writable (.tmp/ locally, /tmp on Vercel,
-where the project folder is read-only) and reads the YAML files in config/.
+where the project folder is read-only) and reads (and edits, comments kept) the YAML files in config/.
 """
 
 import os
@@ -44,6 +44,20 @@ def is_true(name: str) -> bool:
 def load_config(name: str = "channel") -> dict:
     with open(CONFIG_DIR / f"{name}.yaml", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def update_config(change, name: str = "channel") -> None:
+    """Edits config/<name>.yaml in place, keeping its comments: change(data) changes the loaded YAML."""
+    from ruamel.yaml import YAML
+
+    yaml = YAML()
+    yaml.preserve_quotes = True  # "14:00" must stay a string (unquoted, YAML 1.1 reads it as a number)
+    yaml.width = 130  # wide enough that lines already in the file aren't re-wrapped
+    path = CONFIG_DIR / f"{name}.yaml"
+    data = yaml.load(path.read_text(encoding="utf-8"))
+    change(data)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.dump(data, f)
 
 
 def tmp_path(*parts: str) -> Path:

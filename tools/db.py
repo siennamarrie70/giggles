@@ -6,9 +6,11 @@ Vercel a missing DATABASE_URL is an error, since /tmp doesn't survive between ru
 Tables are created automatically on first use, and new columns are added to old tables
 (only ever added, so an older version of the app still works on the same database).
 
-What the agents hand each other lives here: characters (Agent 1), videos whose plan holds the
-cast, the script (Agent 2), the render and the upload (Agents 3 and 4), stats (Agent 5) and
-notes (the playbook, caches, heartbeats).
+What the agents hand each other lives here: videos whose plan holds the brief (Agent 1), the
+research pack (Agent 2), the script (Agent 3), the render and the upload (Agents 4 and 5); stats and
+viewers' comments (Agent 6); topics you ask for; the two hosts (characters); and notes (the
+playbook, caches, heartbeats). Only rows of FORMAT are the case studies: older versions' Shorts
+share the database and are left alone.
 
 A Short "making" or "scheduled" holds its posting slot: a unique index lets only one
 run claim each slot, even when Vercel delivers the same cron call twice.
@@ -76,8 +78,25 @@ CREATE TABLE IF NOT EXISTS characters (
     created_at TEXT NOT NULL,
     name TEXT NOT NULL,
     spec TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS topics (
+    id {pk},
+    created_at TEXT NOT NULL,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT,
+    video_id INTEGER
+);
+CREATE TABLE IF NOT EXISTS comments (
+    comment_id TEXT PRIMARY KEY,
+    youtube_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    likes INTEGER,
+    published_at TEXT,
+    used_by INTEGER
 )
 """
+FORMAT = "case"  # the case studies' rows; earlier versions' Shorts have other formats
 # Columns added after the first release, for databases created before them.
 NEW_COLUMNS = {"slot": "TEXT", "claimed_at": "TEXT"}
 SLOT_INDEX = ("CREATE UNIQUE INDEX IF NOT EXISTS one_short_per_slot ON videos (slot) "
@@ -217,17 +236,22 @@ def slot_holders(start: str, end: str) -> list[dict]:
 
 
 def planned_videos(limit: int = 50) -> list[dict]:
-    """The queue: cartoon episodes written and waiting for a slot, oldest first. Shorts planned by the
-    cute-animal version (other formats) can't be animated, so the agents leave them to the dashboard."""
+    """The queue: cases written and waiting for a slot, oldest first (including those waiting for your
+    OK). Shorts planned by earlier versions (other formats) are left to the dashboard."""
     with connect() as db:
-        rows = db.query("SELECT * FROM videos WHERE status = 'planned' AND format = 'sketch' ORDER BY id LIMIT %s",
-                        (limit,))
+        rows = db.query("SELECT * FROM videos WHERE status = 'planned' AND format = %s ORDER BY id LIMIT %s",
+                        (FORMAT, limit))
     return [_video(r) for r in rows]
 
 
+def ready(video: dict) -> bool:
+    """Can it go up without anyone's OK: approved, or it never needed approval."""
+    return video["plan"].get("approval") in (None, "approved")
+
+
 def next_planned() -> dict | None:
-    found = planned_videos(1)
-    return found[0] if found else None
+    """The oldest case ready to go up."""
+    return next((v for v in planned_videos() if ready(v)), None)
 
 
 def get_video(video_id: int) -> dict | None:
@@ -359,7 +383,53 @@ def last_run(job: str, ok: bool | None = True) -> dict | None:
     return rows[0] if rows else None
 
 
-# --- characters (Agent 1) -------------------------------------------------
+# --- topics you ask for, viewers' comments ----------------------------------
+
+def add_topic(text: str) -> int:
+    with connect() as db:
+        return db.query("INSERT INTO topics (created_at, text, status) VALUES (%s, %s, 'waiting') RETURNING id",
+                        (now_iso(), text))[0]["id"]
+
+
+def list_topics(status: str | None = None, limit: int = 50) -> list[dict]:
+    with connect() as db:
+        if status:
+            return db.query("SELECT * FROM topics WHERE status = %s ORDER BY id LIMIT %s", (status, limit))
+        return db.query("SELECT * FROM topics ORDER BY id DESC LIMIT %s", (limit,))
+
+
+def set_topic(topic_id: int, status: str, reason: str | None = None, video_id: int | None = None) -> None:
+    with connect() as db:
+        db.query("UPDATE topics SET status = %s, reason = %s, video_id = %s WHERE id = %s",
+                 (status, reason, video_id, topic_id))
+
+
+def save_comments(rows: list[dict]) -> int:
+    """New top-level comments (text and likes only, never who wrote them); returns how many were new."""
+    added = 0
+    with connect() as db:
+        for r in rows:
+            if db.query("SELECT 1 FROM comments WHERE comment_id = %s", (r["comment_id"],)):
+                db.query("UPDATE comments SET likes = %s WHERE comment_id = %s", (r["likes"], r["comment_id"]))
+                continue
+            db.query("INSERT INTO comments (comment_id, youtube_id, text, likes, published_at) VALUES (%s, %s, %s, %s, %s)",
+                     (r["comment_id"], r["youtube_id"], r["text"], r["likes"], r["published_at"]))
+            added += 1
+    return added
+
+
+def recent_comments(days: int = 30, limit: int = 30, unused: bool = True) -> list[dict]:
+    with connect() as db:
+        return db.query("SELECT * FROM comments WHERE published_at >= %s" + (" AND used_by IS NULL" if unused else "")
+                        + " ORDER BY likes DESC, published_at DESC LIMIT %s", (now_iso(-timedelta(days=days)), limit))
+
+
+def use_comment(comment_id: str, video_id: int) -> None:
+    with connect() as db:
+        db.query("UPDATE comments SET used_by = %s WHERE comment_id = %s", (video_id, comment_id))
+
+
+# --- characters (the hosts) -------------------------------------------------
 
 def insert_character(spec: dict) -> int:
     with connect() as db:

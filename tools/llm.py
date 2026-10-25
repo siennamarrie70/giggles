@@ -3,12 +3,15 @@ Thin wrapper around Gemini (free tier) that returns JSON matching a schema.
 
 Every model call in the project goes through generate_json(), so changing provider
 or model means editing this one file. Models are tried in order: free-tier quotas
-are per model, so a quota error or timeout on one falls through to the next.
-Measured 2026-10-24 on the free tier: gemini-3.5-flash-lite answers in 2-6 s, gemini-3.1-flash-lite
-and gemini-3.5-flash in ~2 s; gemini-3.8-flash took ~100 s per request (queueing), so it's the last
-resort. gemini-2.5-flash is "no longer available to new users" (404).
+are per model, so a quota error or timeout on one falls through to the next. careful=True
+(the Writer) starts with the bigger Flash models and lets them think a little: their scripts
+read better; the quick checks and lists use the Flash-Lite ones.
+Measured on the free tier: gemini-3.5-flash-lite answers in 2-6 s, gemini-3.1-flash-lite,
+gemini-3.5-flash and gemini-3.6-flash in 2-3 s (2026-10-25); gemini-3.8-flash took ~100 s per request
+(queueing), so it's the last resort. gemini-2.5-flash is "no longer available to new users" (404).
+Grounding with Google Search isn't on the free tier, so the agents fetch sources themselves.
 Note: on the free tier Google may use prompts to improve its products. Nothing
-private goes in here: the channel's settings, trend topics, characters and scripts.
+private goes in here: the channel's settings, trend topics, public sources, scripts and public counts.
 
 Usage (check the key works):
     python tools/llm.py --prompt "Give me a two-word name for a cat"
@@ -26,14 +29,19 @@ from google.genai import errors, types
 from common import env
 
 # Free-tier models, fastest first. GEMINI_MODEL in .env overrides the first choice.
-DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"]
-# Casting and writing need little reasoning; less thinking = faster answers.
+DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash",
+                  "gemini-3.8-flash"]
+CAREFUL_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
+                  "gemini-3.8-flash"]
+# Lists and checks need little reasoning; less thinking = faster answers.
 THINKING = {
     "gemini-3.5-flash-lite": types.ThinkingConfig(thinking_level="MINIMAL"),
     "gemini-3.1-flash-lite": types.ThinkingConfig(thinking_level="MINIMAL"),
+    "gemini-3.6-flash": types.ThinkingConfig(thinking_level="MINIMAL"),
     "gemini-3.5-flash": types.ThinkingConfig(thinking_level="MINIMAL"),
     "gemini-3.8-flash": types.ThinkingConfig(thinking_level="LOW"),  # MINIMAL isn't supported here
 }
+CAREFUL_THINKING = types.ThinkingConfig(thinking_level="LOW")
 TIMEOUT_MS = 60_000
 
 _client = None
@@ -48,9 +56,10 @@ def _get_client() -> genai.Client:
     return _client
 
 
-def models() -> list[str]:
+def models(careful: bool = False) -> list[str]:
     preferred = env("GEMINI_MODEL")
-    return ([preferred] if preferred else []) + [m for m in DEFAULT_MODELS if m != preferred]
+    order = CAREFUL_MODELS if careful else DEFAULT_MODELS
+    return ([preferred] if preferred else []) + [m for m in order if m != preferred]
 
 
 def _to_part(item) -> types.Part:
@@ -61,16 +70,16 @@ def _to_part(item) -> types.Part:
     return types.Part.from_text(text=str(item))
 
 
-def generate_json(parts: list, schema: dict, system: str) -> dict:
+def generate_json(parts: list, schema: dict, system: str, careful: bool = False) -> dict:
     """Send text/image parts and get back a dict that follows `schema`."""
     contents = [types.Content(role="user", parts=[_to_part(p) for p in parts])]
     failures = []
-    for model in models():
+    for model in models(careful):
         config = types.GenerateContentConfig(
             system_instruction=system,
             response_mime_type="application/json",
             response_json_schema=schema,
-            thinking_config=THINKING.get(model),
+            thinking_config=CAREFUL_THINKING if careful else THINKING.get(model),
         )
         for attempt in range(2):
             try:

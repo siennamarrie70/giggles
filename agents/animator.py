@@ -1,8 +1,9 @@
 """
-Agent 3, Animator: makes the video. For each line it makes the character's voice (Kokoro, on this
-computer), works out the mouth shapes (Rhubarb), picks a music track in the script's mood, and
-has tools/cartoon_render.py draw and encode the episode, with a cover frame for the dashboard.
-No Gemini calls: everything here is deterministic and free.
+Agent 4, Animator: makes the video. It records every line in its host's voice (Kokoro, on this
+computer), works out the mouth shapes (Rhubarb), turns each line's visual into something to draw
+(the research pack's photos and data become photos, charts, maps, timelines, big numbers...), picks
+a music track in the script's mood, and has tools/case_render.py draw and encode the case, with a
+cover frame for the dashboard. No Gemini calls: everything here is deterministic and free.
 
 The track is remembered on the plan, so the Publisher can add the credit line its licence asks for.
 
@@ -16,12 +17,13 @@ import shutil
 import sys
 from pathlib import Path
 
-import cartoon_render
+import case_render
 import db
 import lipsync
 import short_render
 import voice_tts
 from agents.base import act, log
+from agents.writer import visual_spec
 from common import load_config, tmp_path
 
 
@@ -33,33 +35,45 @@ def cover_path(video_id: int) -> Path:
     return tmp_path("out", f"cover_{video_id}.jpg")
 
 
+def case_number(video_id: int) -> int:
+    """The case's number on screen ("Case file 12"): its place among the cases made so far."""
+    with db.connect() as conn:
+        return conn.query("SELECT COUNT(*) AS n FROM videos WHERE format = %s AND id <= %s "
+                          "AND status NOT IN ('discarded', 'skipped')", (db.FORMAT, video_id))[0]["n"]
+
+
+def end_text(cfg: dict) -> str:
+    ch = cfg["channel"]
+    return f"Follow {ch['name']} for a new case every day" if ch.get("show_name") else "A new case every day"
+
+
 def animate(row: dict, out: Path, progress=log) -> dict:
-    """Voices, mouth shapes, music and the render for one Short; returns its updated plan."""
+    """Voices, mouth shapes, visuals, music and the render for one case; returns its updated plan."""
     cfg = load_config()
     plan = row["plan"]
-    if not plan.get("script"):
-        raise RuntimeError(f"Short #{row['id']} is from the cute-animal version: it has no script to animate")
-    cast, script = plan["cast"], plan["script"]
+    if row["format"] != db.FORMAT or not plan.get("script"):
+        raise RuntimeError(f"Short #{row['id']} is from an earlier version of the channel: it has no case to animate")
+    hosts, script = plan["hosts"], plan["script"]
     work = tmp_path("voices", str(row["id"]), "x").parent
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     try:
-        progress(f"Recording {len(script['beats'])} lines in the characters' voices")
-        beats = []
-        for k, beat in enumerate(script["beats"]):
-            spec = cast[beat["speaker"]]
+        progress(f"Recording {len(script['lines'])} lines in the hosts' voices")
+        lines = []
+        for k, line in enumerate(script["lines"]):
+            host = hosts[line["speaker"]]
             wav = work / f"line_{k}.wav"
-            seconds = voice_tts.speak(beat["line"], spec["voice"], spec["speed"], wav)
-            beats.append({**beat, "wav": str(wav), "seconds": round(seconds, 3)})
+            seconds = voice_tts.speak(line["text"], host["voice"], host["speed"], wav)
+            lines.append({**line, "visual": visual_spec(line["visual"], plan), "wav": str(wav), "seconds": round(seconds, 3)})
         progress("Working out the mouth shapes")
-        for beat, cues in zip(beats, lipsync.cues_for([(Path(b["wav"]), b["line"]) for b in beats])):
-            beat["cues"] = cues
+        for line, cues in zip(lines, lipsync.cues_for([(Path(l["wav"]), l["text"]) for l in lines])):
+            line["cues"] = cues
         track = short_render.pick_music(script.get("music_mood")) if cfg["music"]["volume"] > 0 else None
         progress("Animating" + (f" with {track.stem}" if track else " (no music)"))
-        episode = {"setting": plan["setting"], "seed": plan.get("seed", 0), "hook": script.get("hook", ""),
-                   "cast": cast, "beats": beats}
-        made = cartoon_render.render(episode, out, track, cfg["music"]["volume"], cover_path=cover_path(row["id"]),
-                                     progress=progress)
+        case = {"category": plan["brief"]["category"], "case_no": case_number(row["id"]),
+                "case_title": script["case_title"], "end_text": end_text(cfg), "hosts": hosts, "lines": lines}
+        made = case_render.render(case, out, track, cfg["music"]["volume"], cover_path=cover_path(row["id"]),
+                                  progress=progress)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     plan = {**plan, "music": track.name if track else None,
@@ -80,8 +94,8 @@ def main() -> int:
     args = parser.parse_args()
     try:
         row = db.get_video(args.id)
-        if not row or not row["plan"].get("script"):
-            raise RuntimeError(f"Short #{args.id} has no script")
+        if not row:
+            raise RuntimeError(f"there's no Short #{args.id}")
         result = run(row)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

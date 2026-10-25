@@ -27,7 +27,7 @@ def act(agent: str, what: str, work, *args, progress=log, **kwargs) -> dict:
     except Exception as e:
         db.finish_run(run_id, False, {"what": what, "error": str(e)})
         raise
-    logged = {k: v for k, v in (result or {}).items() if k not in ("cast", "script", "plan", "metadata")}
+    logged = {k: v for k, v in (result or {}).items() if k not in ("brief", "pack", "hosts", "script", "plan", "metadata")}
     db.finish_run(run_id, True, {**logged, "what": what, "seconds": round(time.monotonic() - started, 1)})
     return result
 

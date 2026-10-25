@@ -1,7 +1,7 @@
 """
-The character contract between Agent 1 (casting) and the puppet rig (puppet.py): every part a
-character can be drawn with, the voices it can speak with, and validate_cast(), which turns what
-the casting agent wrote into specs the rig can always draw.
+The character contract between the hosts' design (agents/hosts.py) and the puppet rig (puppet.py):
+every part a character can be drawn with, the voices it can speak with, and validate_cast(), which
+turns what Gemini wrote into specs the rig can always draw.
 
 Everything is adult on purpose: the rig only has adult proportions, ages run 25 to 75, and the
 clothes are grown-up clothes. A value the rig doesn't know is snapped to the nearest one it does
@@ -16,16 +16,6 @@ import argparse
 import json
 import re
 import sys
-
-SETTINGS = {
-    "office": "an open-plan office, desks and a window",
-    "flat": "a shared flat's living room, on the sofa",
-    "kitchen": "a home kitchen, at the counter",
-    "cafe": "a coffee shop, at a table",
-    "gym": "a gym, behind the dumbbell rack",
-    "street": "a city street, by a low wall",
-    "park": "a park, behind a hedge",
-}
 
 SKIN_TONES = {"porcelain": "#f7dfcf", "fair": "#f0cdb0", "light": "#e6b994", "warm": "#d69d70",
               "tan": "#bd8253", "brown": "#97603d", "deep": "#714328", "ebony": "#4d2d1b"}
@@ -82,7 +72,7 @@ VOICES = {
     "bm_daniel": "man, British, calm",
 }
 
-# What the casting agent might write instead of the rig's own word.
+# What Gemini might write instead of the rig's own word.
 SYNONYMS = {
     "hair": {"shaved": "bald", "shaved head": "bald", "crew cut": "buzz", "buzz cut": "buzz", "parted": "side part",
              "side parted": "side part", "curls": "curly", "wavy": "curly", "top knot": "bun", "man bun": "bun",
@@ -182,7 +172,7 @@ def validate_cast(raw: list[dict], max_size: int = 3) -> list[dict]:
         voices.add(spec["voice"])
         cast.append(spec)
     if len(cast) < 2:
-        raise ValueError("a sketch needs at least two characters")
+        raise ValueError("at least two characters are needed")
     return cast
 
 
@@ -206,7 +196,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.parts:
         print(json.dumps({**PARTS, "skin": list(SKIN_TONES), "hair_color": list(HAIR_COLORS),
-                          "colors": list(COLORS), "voices": VOICES, "settings": SETTINGS}, indent=1))
+                          "colors": list(COLORS), "voices": VOICES}, indent=1))
         return 0
     if not args.check:
         parser.error("give --check or --parts")

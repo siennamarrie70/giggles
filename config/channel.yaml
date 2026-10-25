@@ -1,12 +1,14 @@
 # Channel settings read by the agents. Edit here or in the dashboard's Settings page.
 
 channel:
-  name: "Paws & Giggles"   # kept for now; rename it in Settings when you choose the cartoon channel's name
-  audience: "adults worldwide who enjoy short, relatable comedy sketches"
+  name: "Paws & Giggles"     # kept for now; the videos show no channel name until show_name is true
+  show_name: false           # true: the end card says "Follow <name> for a new case every day"
+  audience: "curious adults worldwide who like quick, well-researched stories about business, the economy, history and myths"
   voice: >-
-    Dry, warm and quick. Everyday adult life: work, bills, flatmates, dating, the gym, Mondays, family
-    group chats. The punchline lands on the last line. Clean enough for any advertiser: no slurs, nothing
-    sexual, no politics, no tragedy, no real people or brands. Never aimed at children.
+    Two hosts talk each case through: a clear, confident presenter who tells it and a curious co-host who asks what viewers would ask
+    and adds the odd joke. Facts first, told as a story with a twist at the end. Neutral on politics (both sides, attributed), respectful
+    to every faith and culture, never mocking real people. No advice on money, health or law. Clean enough for any advertiser. Never
+    aimed at children.
   contact_email: ""          # shown on the public /about and /privacy pages; optional
 
 schedule:
@@ -15,25 +17,44 @@ schedule:
   # YouTube publishes it on the minute. `python tools/slots.py` lists them.
   timezone: "Asia/Kolkata"
   first_post: "08:00"
-  every_hours: 6
-  posts_per_day: 3
+  every_hours: 2
+  posts_per_day: 10
 
-episodes:
-  # Agent 1 picks one of these settings for each episode and casts 2 to max_cast characters;
-  # Agent 2 keeps each sketch under max_seconds. The dashboard on this computer keeps `queue`
-  # episodes written ahead and renders their previews, so you can watch them before they go up.
-  settings: ["office", "flat", "kitchen", "cafe", "gym", "street", "park"]
-  max_cast: 3
-  max_seconds: 60
+cases:
+  # Agent 1 picks each case's type from these: the number is how often (0 = never). Agent 3 aims for
+  # target_seconds and never goes over max_seconds. The dashboard on this computer keeps `queue` cases
+  # ready to post (written, checked and, if needed, approved) and renders their previews.
+  categories:
+    business: 2              # rise and fall of companies, how businesses work
+    economy: 2               # what-ifs and explainers: tariffs, growth, inflation
+    trending: 2              # this week's events
+    history: 1
+    mythology: 1
+  approval:
+    trending: true           # cases about this week's events wait for your OK in the Studio
+    politics: true           # so do cases that touch politics, whatever their type
+  approval_expires_days: 2   # news goes stale: a case still waiting this long is discarded
+  target_seconds: 75
+  max_seconds: 90
   queue: 2
+  follow_ups: true           # a case that did well can get a part 2
+  comment_requests: true     # viewers' comments can suggest the next case
+
+research:
+  share_alike_images: false  # also use CC BY-SA photos (they arguably make the whole video share-alike)
+
+hosts:                       # the two hosts' character ids, set on the dashboard's Hosts page
+  presenter: 12
+  cohost: 17
 
 trends:
   region: "ALL"              # ALL = every country, the most widespread trends first; or one code like US
-  calendar_days_ahead: 3     # theme around holidays and world days this many days early
+  calendar_days_ahead: 3     # holidays and world days this many days ahead count as "now"
+  youtube_category: "27"     # the popular-videos chart the Editor reads (27 = Education)
 
 metadata:
-  category_id: '23'          # Comedy
-  base_hashtags: ["#shorts", "#animation", "#comedy"]
+  category_id: '27'          # Education
+  base_hashtags: ["#shorts", "#casestudy"]
   language: en
 
 music:
