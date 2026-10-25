@@ -206,6 +206,23 @@ def _save_plan(video_id: int, plan: dict) -> None:
     db.mark_clips_used([c["key"] for c in plan["clips"]])
 
 
+def _render(row: dict, out, cfg: dict) -> dict:
+    """Renders the Short with a random track and remembers which one on its plan, so the upload can
+    carry the credit line the track's licence asks for. Returns the updated plan."""
+    track = short_render.pick_music()
+    short_render.run(row["plan"]["edit"], out, track, cfg["music"]["volume"])
+    plan = {**row["plan"], "music": track.name if track else None}
+    db.update_video(row["id"], plan=plan)
+    return plan
+
+
+def _description(meta: dict, plan: dict) -> str:
+    """The description with the music credit added, if the track needs one and it isn't there yet."""
+    credit = short_render.music_credit(plan.get("music"))
+    text = meta["description"] or ""
+    return f"{text.rstrip()}\n\n{credit}" if credit and credit not in text else text
+
+
 def _render_and_upload(row: dict, slot: datetime, cfg: dict, sched: dict, progress) -> dict:
     """Uploads a Short already claimed for `slot`: scheduled for the slot, or public at once
     if the slot is only minutes away or has passed. On failure the Short goes back to the
@@ -213,14 +230,15 @@ def _render_and_upload(row: dict, slot: datetime, cfg: dict, sched: dict, progre
     plan, out = row["plan"], tmp_path("out", f"short_{row['id']}.mp4")
     meta, when = plan["metadata"], clock(slot, sched)
     try:
-        if not out.exists():  # reuse the preview you watched, if there is one
+        # Reuse the preview you watched, if there is one and we know its track (for the credit line).
+        if not out.exists() or "music" not in plan:
             progress("Downloading the clips and rendering the video")
-            short_render.run(plan["edit"], out, "auto", cfg["music"]["volume"])
+            plan = _render(row, out, cfg)
         db.update_video(row["id"], claimed_at=db.now_iso())  # still alive: rendering can take a while
         live_now = slot - _now() <= GO_LIVE_MARGIN
         progress("Uploading to YouTube, public right away" if live_now
                  else f"Uploading to YouTube, scheduled for {when}")
-        upload = youtube_upload.run(out, meta["title"], meta["description"], meta["tags"],
+        upload = youtube_upload.run(out, meta["title"], _description(meta, plan), meta["tags"],
                                     publish_at=None if live_now else slots.iso(slot), public=live_now,
                                     category_id=cfg["metadata"]["category_id"], language=cfg["metadata"]["language"])
     except Exception as e:
@@ -315,8 +333,8 @@ def publish(dry_run: bool = False, video_id: int | None = None, progress=_log) -
     if dry_run:
         out = tmp_path("out", f"short_{row['id']}.mp4")
         progress("Downloading the clips and rendering the video")
-        short_render.run(row["plan"]["edit"], out, "auto", cfg["music"]["volume"])
-        return {"rendered": str(out), "title": row["plan"]["metadata"]["title"]}
+        plan = _render(row, out, cfg)
+        return {"rendered": str(out), "title": plan["metadata"]["title"], "music": plan["music"]}
 
     sched = slots.plan(cfg)
     slot = next_open_slot(MANUAL_LEAD, sched=sched)

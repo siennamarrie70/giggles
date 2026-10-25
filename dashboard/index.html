@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Control room</title>
-  <meta name="theme-color" content="#F4ECDF">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cg fill='%23FF5A36'%3E%3Cellipse cx='32' cy='42' rx='14' ry='12'/%3E%3Cellipse cx='13' cy='27' rx='6' ry='8'/%3E%3Cellipse cx='25' cy='15' rx='6' ry='8'/%3E%3Cellipse cx='39' cy='15' rx='6' ry='8'/%3E%3Cellipse cx='51' cy='27' rx='6' ry='8'/%3E%3C/g%3E%3C/svg%3E">
+  <meta name="theme-color" content="#f3f3ef">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23151513'/%3E%3Cg fill='%23e5482b'%3E%3Cellipse cx='32' cy='41' rx='11' ry='9.5'/%3E%3Cellipse cx='17' cy='29' rx='4.6' ry='6'/%3E%3Cellipse cx='26' cy='20' rx='4.6' ry='6.2'/%3E%3Cellipse cx='38' cy='20' rx='4.6' ry='6.2'/%3E%3Cellipse cx='47' cy='29' rx='4.6' ry='6'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,400..900,0..100,0..1;1,9..144,400..900,0..100,0..1&family=Figtree:wght@400..800&family=Fragment+Mono&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
   <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
@@ -20,120 +20,68 @@
       <ellipse fill="currentColor" cx="39.5" cy="15.5" rx="5.8" ry="7.8" transform="rotate(8 39.5 15.5)"/>
       <ellipse fill="currentColor" cx="50.5" cy="27.5" rx="5.8" ry="7.6" transform="rotate(22 50.5 27.5)"/>
     </symbol>
+    <symbol id="ic-overview" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></g></symbol>
+    <symbol id="ic-shorts" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10.5 9.5v5l4-2.5z" fill="currentColor"/></g></symbol>
+    <symbol id="ic-trends" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></g></symbol>
+    <symbol id="ic-music" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></g></symbol>
+    <symbol id="ic-youtube" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2.5" y="5.5" width="19" height="13" rx="3.5"/><path d="M10.5 9.5v5l4.5-2.5z" fill="currentColor"/></g></symbol>
+    <symbol id="ic-settings" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></g></symbol>
+    <symbol id="ic-activity" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/></g></symbol>
+    <symbol id="ic-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   </svg>
 
   <a class="skip" href="#main">Skip to content</a>
 
-  <header class="topbar">
-    <div class="brand">
-      <svg class="brand-paw" aria-hidden="true"><use href="#paw"/></svg>
-      <div>
-        <p class="eyebrow">Control room</p>
-        <h1 class="brand-name" id="channel-name">Your channel</h1>
-      </div>
-    </div>
-    <ul class="services" id="services" aria-label="Connections"></ul>
-    <label class="switch" id="pause-switch">
-      <input type="checkbox" id="autopost" checked>
-      <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
-      <span class="switch-text"><b id="autopost-label">Autopilot on</b><small id="autopost-sub">Posts by itself</small></span>
-    </label>
-  </header>
-
-  <nav class="tabs" aria-label="Sections">
-    <a href="#queue" data-view="queue">Shorts</a>
-    <a href="#trends" data-view="trends">Trends</a>
-    <a href="#music" data-view="music">Music</a>
-    <a href="#settings" data-view="settings">Settings</a>
-    <a href="#youtube" data-view="youtube">YouTube</a>
-    <a href="#activity" data-view="activity">Activity</a>
-  </nav>
-
-  <main id="main">
-    <div class="task" id="task" hidden aria-live="polite"></div>
-
-    <section class="view" id="view-queue" aria-labelledby="queue-title">
-      <div class="hero">
-        <div class="hero-copy">
-          <p class="eyebrow" id="today-date">Today</p>
-          <h2 class="hero-title" id="queue-title">Today’s <em>line-up</em></h2>
-          <p class="hero-line" id="next-slot"></p>
-          <ul class="events" id="events" aria-label="Coming up"></ul>
-        </div>
-        <div class="hero-actions">
-          <button class="btn btn-primary btn-big" id="plan-btn" type="button">
-            <span>Plan a new Short</span>
-            <small>finds a trend, clips and captions · about a minute</small>
-          </button>
-          <button class="btn" id="make-btn" type="button">Make the next Short now</button>
-          <button class="btn btn-quiet" id="stats-btn" type="button">Refresh stats</button>
-        </div>
-        <ol class="lineup" id="lineup" aria-label="Today's posting slots"></ol>
-      </div>
-      <div id="queue"></div>
-    </section>
-
-    <section class="view" id="view-trends" hidden aria-labelledby="trends-title">
-      <div class="view-head">
+  <div class="app">
+    <aside class="sidebar" id="sidebar" aria-label="Sections">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><svg><use href="#paw"/></svg></span>
         <div>
-          <p class="eyebrow">What the planner sees</p>
-          <h2 class="view-title" id="trends-title">Trending <em>today</em></h2>
+          <p class="brand-eyebrow">Control room</p>
+          <p class="brand-name" id="channel-name">Your channel</p>
         </div>
-        <button class="btn btn-sm" type="button" id="trends-refresh">Refresh</button>
       </div>
-      <div class="stack" id="trends-body"></div>
-    </section>
+      <nav class="nav" id="nav">
+        <a href="#overview" data-view="overview"><span class="nav-num">00</span><svg class="nav-ic"><use href="#ic-overview"/></svg><span class="nav-label">Overview<small>Today at a glance</small></span></a>
+        <p class="nav-group">Make</p>
+        <a href="#shorts" data-view="shorts"><span class="nav-num">01</span><svg class="nav-ic"><use href="#ic-shorts"/></svg><span class="nav-label">Shorts<small>Plan, check, upload</small></span><span class="nav-count" id="count-shorts"></span></a>
+        <a href="#trends" data-view="trends"><span class="nav-num">02</span><svg class="nav-ic"><use href="#ic-trends"/></svg><span class="nav-label">Trends<small>What the planner sees</small></span></a>
+        <p class="nav-group">Library</p>
+        <a href="#music" data-view="music"><span class="nav-num">L1</span><svg class="nav-ic"><use href="#ic-music"/></svg><span class="nav-label">Music</span><span class="nav-count" id="count-music"></span></a>
+        <p class="nav-group">Setup</p>
+        <a href="#youtube" data-view="youtube"><span class="nav-num">S1</span><svg class="nav-ic"><use href="#ic-youtube"/></svg><span class="nav-label">YouTube</span></a>
+        <a href="#settings" data-view="settings"><span class="nav-num">S2</span><svg class="nav-ic"><use href="#ic-settings"/></svg><span class="nav-label">Settings</span></a>
+        <a href="#activity" data-view="activity"><span class="nav-num">S3</span><svg class="nav-ic"><use href="#ic-activity"/></svg><span class="nav-label">Activity</span></a>
+      </nav>
+      <div class="connections">
+        <p class="nav-group">Connections</p>
+        <ul id="services"></ul>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim" hidden></div>
 
-    <section class="view" id="view-music" hidden aria-labelledby="music-title">
-      <div class="view-head">
-        <div>
-          <p class="eyebrow">Background tracks</p>
-          <h2 class="view-title" id="music-title">Music <em>library</em></h2>
-        </div>
-      </div>
-      <div class="panel">
-        <label class="dropzone" id="dropzone">
-          <input type="file" id="music-input" accept=".mp3,.m4a,.aac,.wav,.ogg,audio/*" multiple hidden>
-          <svg class="drop-paw" aria-hidden="true"><use href="#paw"/></svg>
-          <b>Drop music files here, or click to choose</b>
-          <small>Each Short picks one of these at random. Free, safe tracks: YouTube Studio → Audio Library → “Attribution not required”.</small>
+    <div class="main-col">
+      <header class="topbar">
+        <button class="icon-btn menu-btn" id="menu-btn" type="button" aria-label="Open the menu" aria-controls="sidebar" aria-expanded="false"><svg><use href="#ic-menu"/></svg></button>
+        <div class="taskbar" id="task" aria-live="polite"></div>
+        <label class="switch" id="pause-switch">
+          <input type="checkbox" id="autopost" role="switch">
+          <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+          <span class="switch-text"><b id="autopost-label">Autopilot</b><small id="autopost-sub"></small></span>
         </label>
-        <p class="note" id="music-empty" hidden>No tracks yet, so Shorts are silent for now.</p>
-        <ul class="tracks" id="tracks"></ul>
-      </div>
-    </section>
+      </header>
 
-    <section class="view" id="view-settings" hidden aria-labelledby="settings-title">
-      <div class="view-head">
-        <div>
-          <p class="eyebrow">How the channel behaves</p>
-          <h2 class="view-title" id="settings-title">Settings</h2>
-        </div>
-      </div>
-      <form id="settings-form" class="settings" novalidate></form>
-    </section>
-
-    <section class="view" id="view-youtube" hidden aria-labelledby="youtube-title">
-      <div class="view-head">
-        <div>
-          <p class="eyebrow">Uploading needs your permission</p>
-          <h2 class="view-title" id="youtube-title">Connect <em>YouTube</em></h2>
-        </div>
-        <button class="btn btn-sm" type="button" id="youtube-refresh">Check connection</button>
-      </div>
-      <div class="stack" id="youtube-body"></div>
-    </section>
-
-    <section class="view" id="view-activity" hidden aria-labelledby="activity-title">
-      <div class="view-head">
-        <div>
-          <p class="eyebrow">Every run, every alert</p>
-          <h2 class="view-title" id="activity-title">Activity</h2>
-        </div>
-      </div>
-      <div class="stack" id="activity-body"></div>
-    </section>
-  </main>
+      <main id="main" tabindex="-1">
+        <section class="view" id="view-overview" aria-label="Overview"></section>
+        <section class="view" id="view-shorts" aria-label="Shorts" hidden></section>
+        <section class="view" id="view-trends" aria-label="Trends" hidden></section>
+        <section class="view" id="view-music" aria-label="Music" hidden></section>
+        <section class="view" id="view-youtube" aria-label="YouTube" hidden></section>
+        <section class="view" id="view-settings" aria-label="Settings" hidden></section>
+        <section class="view" id="view-activity" aria-label="Activity" hidden></section>
+      </main>
+    </div>
+  </div>
 
   <div class="toasts" id="toasts"></div>
   <script type="module" src="/ui/app.js"></script>
