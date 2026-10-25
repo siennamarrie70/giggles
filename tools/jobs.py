@@ -1,21 +1,23 @@
 """
-The jobs that run the channel on its posting schedule, by calling the five agents (agents/) in
+The jobs that run the channel on its posting schedule, by calling the six agents (agents/) in
 order. The dashboard on this computer runs them; Vercel Cron can call them through app.py.
 
-  autopilot  the earliest posting slot that's due -> the oldest written episode (or a new one:
-             Agent 1 casts, Agent 2 writes) -> Agent 3 animates it (unless its preview exists) ->
-             Agent 4 uploads it, scheduled to go public on the minute of its slot
-  prepare    Agents 1 and 2 write an episode into the queue (the autopilot uses those first)
-  publish    with --dry-run Agent 3 renders a queued episode's preview; without it Agents 3 and 4
+  autopilot  the earliest posting slot that's due -> the oldest case ready to go up (or a new one,
+             made on the spot from a topic that needs nobody's OK) -> Agent 4 animates it (unless its
+             preview exists) -> Agent 5 uploads it, scheduled to go public on the minute of its slot
+  prepare    Agents 1, 2 and 3 make a case for the queue: the Editor picks it, the Researcher checks
+             the facts, the Writer scripts and fact-checks it. News and politics wait for your OK.
+  publish    with --dry-run Agent 4 renders a queued case's preview; without it Agents 4 and 5
              upload it into the next open slot
-  stats      Agent 5: today's numbers for published Shorts; weekly, the playbook
+  stats      Agent 6: today's numbers and comments; weekly, the playbook
 
 next_chore() is what the dashboard's loop on this computer asks every minute: a due slot first,
-then keeping `episodes.queue` episodes written ahead, then rendering their previews, then the
-day's numbers. The slots come from `schedule` in config/channel.yaml (see tools/slots.py). A slot
-is due from 150 minutes before it until an hour after, so a missed one still goes out late.
+then keeping `cases.queue` cases ready to post, then rendering previews (also for cases waiting for
+your OK, so you can watch them first), then the day's numbers. A case still waiting for approval after
+cases.approval_expires_days is discarded (news goes stale). The slots come from `schedule` in
+config/channel.yaml (see tools/slots.py); a slot is due from 150 minutes before it until an hour after.
 
-Setting PAUSED=true stops the autopilot and every automatic job (the kill switch). Writing,
+Setting PAUSED=true stops the autopilot and every automatic job (the kill switch). Making cases,
 previews and uploads you start yourself still work. Each job reports its steps through `progress`
 (stderr by default; the dashboard shows them live).
 
@@ -28,6 +30,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -39,8 +42,8 @@ import db  # noqa: E402
 import notify  # noqa: E402
 import slots  # noqa: E402
 import trends_fetch  # noqa: E402
-from agents import analyst, animator, casting, publisher, writer  # noqa: E402
-from common import is_true, load_config  # noqa: E402
+from agents import analyst, animator, editor, hosts, publisher, researcher, writer  # noqa: E402
+from common import is_true, load_config, tmp_path  # noqa: E402
 
 MAKE_AHEAD = timedelta(minutes=150)    # a slot is due this long before its time
 LATE_GRACE = timedelta(minutes=60)     # ...and stays due this long after it (the Short then goes live at once)
@@ -48,6 +51,7 @@ STALE_CLAIM = timedelta(minutes=15)    # "making" for longer means the run was c
 MANUAL_LEAD = timedelta(minutes=10)    # an upload you start yourself takes a slot at least this far ahead
 TRENDS_FRESH = timedelta(hours=6)      # how long fetched trends are reused (worldwide is ~190 requests)
 STATS_EVERY = timedelta(hours=20)      # the Analyst reads the numbers about once a day
+TOPIC_TRIES = 2                        # topics the Editor may pick before a case is given up
 clock = slots.clock
 
 
@@ -104,12 +108,28 @@ def next_open_slot(lead: timedelta, now: datetime | None = None, sched: dict | N
     return found
 
 
+def expire_approvals(progress=_log) -> list[int]:
+    """Cases that waited for your OK longer than cases.approval_expires_days: discarded (news goes stale)."""
+    days = int(load_config()["cases"].get("approval_expires_days", 2))
+    cutoff = _now() - timedelta(days=days)
+    expired = []
+    for v in db.planned_videos():
+        if v["plan"].get("approval") == "waiting" and slots.parse(v["created_at"]) < cutoff:
+            db.update_video(v["id"], status="discarded", error=f"Waited more than {days} days for approval")
+            expired.append(v["id"])
+            progress(f"Case #{v['id']} waited too long for your OK and was discarded")
+    if expired:
+        notify.run(f"\U0001F5D1 {len(expired)} case(s) waited more than {days} days for your OK and were discarded.")
+    return expired
+
+
 def check(progress=_log) -> datetime | None:
-    """The cheap part of each check: check in, free Shorts whose run was cut off, and say whether a
-    slot is due."""
+    """The cheap part of each check: check in, free Shorts whose run was cut off, drop stale approvals,
+    and say whether a slot is due."""
     db.beat("autopilot")
     for row in db.release_stale(slots.iso(_now() - STALE_CLAIM)):
         progress(f"Short #{row['id']} was interrupted while being made; it's now {row['status']}")
+    expire_approvals(progress)
     return due_slot()
 
 
@@ -128,7 +148,7 @@ def next_chore() -> tuple[str, dict] | None:
         return "autopilot", {}
     cfg = load_config()
     planned = db.planned_videos()
-    if len(planned) < int(cfg["episodes"].get("queue", 2)):
+    if sum(1 for v in planned if db.ready(v)) < int(cfg["cases"].get("queue", 2)):
         return "prepare", {"count": 1}
     waiting = next((v for v in planned if not animator.preview_path(v["id"]).exists()), None)
     if waiting:
@@ -139,10 +159,10 @@ def next_chore() -> tuple[str, dict] | None:
     return None
 
 
-# --- making Shorts --------------------------------------------------------
+# --- making cases -----------------------------------------------------------
 
 def trend_signals(cfg: dict, days_ahead: int | None = None, refresh: bool = False, cached_only: bool = False) -> dict:
-    """Today's trend signals for the Writer and the dashboard. What comes from the internet is kept for
+    """Today's trend signals for the Editor and the dashboard. What comes from the internet is kept for
     TRENDS_FRESH: trends move slowly, and Google's feed refuses to be asked by every country for every
     Short. cached_only never goes online: the last fetch however old (for the dashboard to show at once).
     The calendar part is worked out fresh each time."""
@@ -163,20 +183,47 @@ def trend_signals(cfg: dict, days_ahead: int | None = None, refresh: bool = Fals
             **online}
 
 
-def _write_episode(cfg: dict, progress) -> dict:
-    """Agent 1 casts, Agent 2 writes: a plan ready for the queue."""
-    progress("Reading today's trends" + (" from every country" if str(cfg["trends"]["region"]).upper() == "ALL" else ""))
-    trends = trend_signals(cfg)
-    cast = casting.run(progress=progress)
-    written = writer.run(cast["cast"], cast["setting"], cast["premise_hint"], trends, progress=progress)
-    return {"setting": cast["setting"], "seed": cast["seed"], "premise_hint": cast["premise_hint"],
-            "cast": cast["cast"], "script": written["script"], "metadata": written["metadata"]}
+def research_folder(topic: str) -> Path:
+    slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:40] or "case"
+    return tmp_path("research", f"{_now():%Y%m%d-%H%M%S}-{slug}", "x").parent
+
+
+def _make_case(progress, ready_now: bool = False) -> dict:
+    """Agent 1 picks the case, Agent 2 researches it, Agent 3 writes it: a plan ready for the queue. A
+    topic the sources can't support is swapped for another one."""
+    cast = hosts.current(progress)
+    avoid = []
+    for attempt in range(TOPIC_TRIES):
+        brief = editor.run(progress=progress, avoid=avoid, ready_now=ready_now)["brief"]
+        try:
+            pack = researcher.run(brief, research_folder(brief["topic"]), progress=progress)["pack"]
+        except RuntimeError as e:
+            progress(f"Can't research this case ({e})" + ("; choosing another" if attempt + 1 < TOPIC_TRIES else ""))
+            avoid.append(brief["topic"])
+            continue
+        written = writer.run(brief, pack, cast, progress=progress)
+        return {"brief": brief, "research": pack, "hosts": cast, "script": written["script"],
+                "metadata": written["metadata"], "approval": "waiting" if brief["needs_approval"] else None}
+    raise RuntimeError(f"no case could be researched ({'; '.join(avoid)})")
+
+
+def _saved(plan: dict, video_id: int, progress) -> None:
+    """After a case is saved: mark the request or comment it answers, and ask for approval if needed."""
+    brief = plan["brief"]
+    if brief.get("request_id"):
+        db.set_topic(brief["request_id"], "used", video_id=video_id)
+    if brief.get("comment_id"):
+        db.use_comment(brief["comment_id"], video_id)
+    if plan["approval"] == "waiting":
+        progress(f"Case #{video_id} waits for your OK in the Studio")
+        notify.run(f"\U0001F4F0 A case waits for your OK (news or politics): {plan['metadata']['title']}\n"
+                   "Watch it in the dashboard's Studio, then approve or discard it.")
 
 
 def autopilot(force: bool = False, progress=_log) -> dict:
     """Makes and uploads the Short for the earliest slot that's due. With force, takes the
     next open slot even if it isn't due yet (the dashboard's "make it now" button)."""
-    cfg, sched = load_config(), slots.plan()
+    sched = slots.plan()
     now = _now()
     slot = due_slot(now, sched) or (next_open_slot(publisher.GO_LIVE_MARGIN, now, sched) if force else None)
     if not slot:
@@ -187,49 +234,57 @@ def autopilot(force: bool = False, progress=_log) -> dict:
     if row:
         if not db.claim(row["id"], slots.iso(slot)):
             return {"skipped": f"another run is already making the {when} Short"}
-        progress(f"Using episode #{row['id']} for the {when} slot")
+        progress(f"Using case #{row['id']} for the {when} slot")
         row = db.get_video(row["id"])
     else:
-        video_id = db.insert_video("making", "sketch", None, None, {}, slot=slots.iso(slot))
+        video_id = db.insert_video("making", db.FORMAT, None, None, {}, slot=slots.iso(slot))
         if video_id is None:
             return {"skipped": f"another run is already making the {when} Short"}
-        progress(f"No episode written yet: writing one for the {when} slot")
+        progress(f"No case ready: making one for the {when} slot")
         try:
-            plan = _write_episode(cfg, progress)
+            plan = _make_case(progress, ready_now=True)
         except Exception as e:
             db.update_video(video_id, status="skipped", error=str(e)[:500])
             raise RuntimeError(f"Couldn't make the {when} Short: {e}") from e
-        db.update_video(video_id, theme=plan["script"]["premise"], trend=plan["script"]["trend_used"] or None, plan=plan)
+        if plan["approval"] == "waiting":  # it turned out to need your OK: it waits, the slot stays empty
+            db.update_video(video_id, status="planned", slot=None, claimed_at=None, theme=plan["brief"]["topic"],
+                            trend=plan["brief"]["trend"] or None, plan=plan)
+            _saved(plan, video_id, progress)
+            return {"skipped": f"the case made for {when} needs your OK first", "video_id": video_id}
+        db.update_video(video_id, theme=plan["brief"]["topic"], trend=plan["brief"]["trend"] or None, plan=plan)
+        _saved(plan, video_id, progress)
         row = db.get_video(video_id)
     return publisher.run(row, slot, sched, progress=progress)
 
 
 def prepare(count: int = 1, progress=_log) -> dict:
-    """Writes `count` episodes into the queue, where the autopilot picks them up oldest first."""
-    cfg = load_config()
+    """Makes `count` cases for the queue, where the autopilot picks them up oldest first."""
     planned = []
     for _ in range(count):
-        plan = _write_episode(cfg, progress)
-        video_id = db.insert_video("planned", "sketch", plan["script"]["premise"], plan["script"]["trend_used"] or None,
-                                   plan)
-        planned.append({"id": video_id, "theme": plan["script"]["premise"], "title": plan["metadata"]["title"]})
-        progress(f"Saved episode #{video_id}: {plan['metadata']['title']}")
+        plan = _make_case(progress)
+        video_id = db.insert_video("planned", db.FORMAT, plan["brief"]["topic"], plan["brief"]["trend"] or None, plan)
+        _saved(plan, video_id, progress)
+        planned.append({"id": video_id, "topic": plan["brief"]["topic"], "title": plan["metadata"]["title"],
+                        "waits_for_approval": plan["approval"] == "waiting"})
+        progress(f"Saved case #{video_id}: {plan['metadata']['title']}")
     return {"planned": planned}
 
 
 def publish(dry_run: bool = False, video_id: int | None = None, progress=_log) -> dict:
-    """Agent 3 renders one queued episode (the oldest, or `video_id`); without dry_run Agent 4 then
-    uploads it into the next open slot. A real upload reuses an existing preview, so what you
+    """Agent 4 renders one queued case (the oldest ready one, or `video_id`); without dry_run Agent 5
+    then uploads it into the next open slot. A real upload reuses an existing preview, so what you
     watched in the dashboard is exactly what goes up."""
     row = db.get_video(video_id) if video_id else publisher.choose()
     if not row:
-        return {"skipped": "nothing planned"}
+        return {"skipped": "nothing ready to post"}
     if row["status"] != "planned":
         raise RuntimeError(f"Short #{row['id']} is {row['status']}, not planned")
     if dry_run:
         made = animator.run(row, progress=progress)
         return {"rendered": str(animator.preview_path(row["id"])), "video_id": row["id"],
                 "title": made["plan"]["metadata"]["title"], "length": made["length"], "music": made["music"]}
+    if row["format"] == db.FORMAT and not db.ready(row):
+        raise RuntimeError(f"Short #{row['id']} waits for your OK: approve it in the Studio first")
 
     sched = slots.plan()
     slot = next_open_slot(MANUAL_LEAD, sched=sched)

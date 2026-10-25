@@ -1,10 +1,10 @@
 """
-Collects today's trend signals for the Writer (agents/writer.py).
+Collects today's trend signals for the Editor (agents/editor.py).
 
 Sources (each is optional; a failing source is reported in "errors", not fatal):
   - Google Trends daily trending searches (public RSS feed, no key)
-  - YouTube's most-popular Comedy chart, or a search for recent comedy Shorts as a
-    fallback (needs the YouTube sign-in from youtube_auth.py)
+  - YouTube's most-popular chart in trends.youtube_category (Education by default), or a search
+    for recent explainer Shorts as a fallback (needs the YouTube sign-in from youtube_auth.py)
   - config/calendar.yaml: upcoming holidays and world days, the season and a weekday vibe
 
 The region is one country code (US, GB, IN...) or ALL. ALL asks every country in WORLD and
@@ -63,10 +63,10 @@ def _video(item: dict) -> dict:
 
 
 def youtube_chart(region: str, limit: int = 25) -> list[dict]:
-    """The most-popular Comedy videos in one country (1 quota unit)."""
+    """The most-popular videos of the configured category in one country (1 quota unit)."""
     items = youtube_auth.yt_get("videos", {
         "part": "snippet,statistics", "chart": "mostPopular", "regionCode": region,
-        "videoCategoryId": "23", "maxResults": limit,
+        "videoCategoryId": str(load_config()["trends"].get("youtube_category", "27")), "maxResults": limit,
     }).get("items", [])
     return [_video(it) for it in items]
 
@@ -82,7 +82,7 @@ def youtube_popular(region: str, limit: int = 25) -> list[dict]:
     items = youtube_auth.yt_get("search", {  # 100 quota units, so only for a single country
         "part": "snippet", "type": "video", "videoDuration": "short", "order": "viewCount",
         "publishedAfter": since, "regionCode": region, "relevanceLanguage": "en",
-        "q": "comedy sketch", "maxResults": limit,
+        "q": "explained case study", "maxResults": limit,
     }).get("items", [])
     return [_video(it) for it in items]
 

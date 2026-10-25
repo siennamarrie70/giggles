@@ -1,33 +1,45 @@
-# Holidays, world days and pet days the Writer can theme a sketch around (it uses one only when it fits).
+# Holidays, world days and anniversaries the Editor can tie a case to (it uses one only when it fits).
 #   date: "MM-DD"                 fixed date
 #   rule: "<n> <weekday> <month>" floating date, e.g. "4 thu 11" = 4th Thursday of November
 
 events:
   - {name: "New Year's Day", date: "01-01"}
+  - {name: "Republic Day (India)", date: "01-26"}
   - {name: "Valentine's Day", date: "02-14"}
-  - {name: "Love Your Pet Day", date: "02-20"}
-  - {name: "National Puppy Day", date: "03-23"}
-  - {name: "National Pet Day", date: "04-11"}
-  - {name: "Hug Your Cat Day", date: "06-04"}
-  - {name: "National Kitten Day", date: "07-10"}
-  - {name: "International Cat Day", date: "08-08"}
-  - {name: "National Dog Day", date: "08-26"}
-  - {name: "World Animal Day", date: "10-04"}
-  - {name: "Black Cat Day", date: "10-27"}
-  - {name: "National Cat Day", date: "10-29"}
+  - {name: "International Women's Day", date: "03-08"}
+  - {name: "Pi Day", date: "03-14"}
+  - {name: "World Consumer Rights Day", date: "03-15"}
+  - {name: "April Fools' Day", date: "04-01"}
+  - {name: "Anniversary of the Titanic's sinking (1912)", date: "04-15"}
+  - {name: "Earth Day", date: "04-22"}
+  - {name: "World Book Day", date: "04-23"}
+  - {name: "International Workers' Day", date: "05-01"}
+  - {name: "Mother's Day (US, India)", rule: "2 sun 5"}
+  - {name: "D-Day anniversary (1944)", date: "06-06"}
+  - {name: "Father's Day (US, UK, India)", rule: "3 sun 6"}
+  - {name: "Independence Day (US)", date: "07-04"}
+  - {name: "World Population Day", date: "07-11"}
+  - {name: "Moon landing anniversary (1969)", date: "07-20"}
+  - {name: "Independence Day (India)", date: "08-15"}
+  - {name: "World Tourism Day", date: "09-27"}
+  - {name: "Black Monday anniversary (1987 crash)", date: "10-19"}
+  - {name: "Wall Street Crash anniversary (1929)", date: "10-29"}
   - {name: "Halloween", date: "10-31"}
+  - {name: "World Savings Day", date: "10-31"}
+  - {name: "Fall of the Berlin Wall anniversary (1989)", date: "11-09"}
+  - {name: "Singles' Day, the biggest shopping day", date: "11-11"}
   - {name: "Thanksgiving (US)", rule: "4 thu 11"}
   - {name: "Christmas", date: "12-25"}
   - {name: "New Year's Eve", date: "12-31"}
 
-# Northern-hemisphere seasons by month, matching a US-centred audience.
+# Northern-hemisphere seasons by month.
 seasons:
   winter: [12, 1, 2]
   spring: [3, 4, 5]
   summer: [6, 7, 8]
   autumn: [9, 10, 11]
 
-# Everyday hooks by weekday (0 = Monday).
+# Everyday moods by weekday (0 = Monday).
 weekday_vibes:
   0: "Monday mood"
   2: "midweek slump"

@@ -33,7 +33,8 @@ def no_brackets(text: str) -> str:
 
 
 def title(text: str, fallback: str = "") -> str:
-    return " ".join(no_brackets(HASHTAG_WORD.sub("", text or "")).split())[:100] or fallback[:100]
+    text = " ".join(no_brackets(HASHTAG_WORD.sub("", text or "")).split())
+    return re.sub(r"\s+([?!.,:;])", r"\1", text)[:100] or fallback[:100]
 
 
 def hashtag(tag: str) -> str | None:

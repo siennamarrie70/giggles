@@ -1,40 +1,48 @@
-// Control room for the cartoon channel. Plain JS, no build step; talks to dashboard/api.py.
+// Control room for the case-study channel. Plain JS, no build step; talks to dashboard/api.py.
 // Every page has the same shape: a header with its actions, a row of numbers, then numbered sections.
-// Pages 01-05 belong to the five agents: Casting, Writer, Animator, Publisher, Analyst.
+// Pages 01-06 belong to the six agents: Editor, Researcher, Writer, Animator, Publisher, Analyst.
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const EMOTIONS = ["neutral", "happy", "annoyed", "surprised", "sad", "smug"];
-const ACTIONS = { talk: "Talks", gesture: "Points", shrug: "Shrugs", facepalm: "Facepalms", cross_arms: "Crosses arms",
-                  think: "Thinks", wave: "Waves", cheer: "Cheers", phone: "On the phone", mug: "Holds a mug",
-                  walk_in: "Walks in" };
-const STATUS = { planned: ["Written", "accent"], making: ["Being made", "run"], scheduled: ["Scheduled", "run"],
-                 live: ["Live", "ok"], failed: ["Failed", "bad"], vetoed: ["Vetoed", "bad"],
+const ACTIONS = { talk: "Talks", point: "Points", shrug: "Shrugs", facepalm: "Facepalms", cross_arms: "Crosses arms",
+                  think: "Thinks", wave: "Waves", cheer: "Cheers" };
+const SHOTS = { studio: "Studio", screen: "Big visual", close: "Close-up" };
+const CATEGORY = { business: "Business", economy: "Economy", trending: "In the news", history: "History", mythology: "Mythology" };
+const WHY_NOW = { trend: "Trending", anniversary: "Anniversary", evergreen: "Evergreen", request: "Your request",
+                  comment: "A viewer's comment", follow_up: "Follow-up" };
+// The fact-check's mark on each line (agents/writer.py).
+const CHECK = { ok: ["Checked", "ok"], fixed: ["Fixed by the fact-check", "warn"], edited: ["Edited by you", "run"],
+                "edited-unsourced": ["Edited: a number isn't in the sources", "bad"] };
+const STATUS = { planned: ["Ready", "run"], waiting: ["Waits for your OK", "warn"], making: ["Being made", "run"],
+                 scheduled: ["Scheduled", "run"], live: ["Live", "ok"], failed: ["Failed", "bad"], vetoed: ["Vetoed", "bad"],
                  discarded: ["Discarded", "idle"], skipped: ["Skipped", "idle"] };
 // What each posting slot says, by its state (see slot_board in tools/jobs.py).
 const SLOT = { posted: ["Posted", "ok"], scheduled: ["Ready", "run"], making: ["Making…", "run"],
                late: ["Late · going out", "warn"], due: ["Up next", "accent"], open: ["Open", "idle"],
                missed: ["No post", "idle"], paused: ["Paused", "warn"] };
 // Which agents a dashboard task puts to work (for the "Working" badge on their cards).
-const TASK_AGENTS = { prepare: ["casting", "writer"], render: ["animator"], publish: ["animator", "publisher"],
-                      autopilot: ["casting", "writer", "animator", "publisher"], stats: ["analyst"] };
-const AGENT_KEYS = ["casting", "writer", "animator", "publisher", "analyst"];
+const TASK_AGENTS = { prepare: ["editor", "researcher", "writer"], render: ["animator"], publish: ["animator", "publisher"],
+                      autopilot: ["editor", "researcher", "writer", "animator", "publisher"], stats: ["analyst"] };
+const AGENT_KEYS = ["editor", "researcher", "writer", "animator", "publisher", "analyst"];
 const TIMEZONES = ["Asia/Kolkata", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
                    "Europe/London", "Europe/Berlin", "Asia/Dubai", "Asia/Singapore", "Asia/Tokyo", "Australia/Sydney", "UTC"];
 const EVERY_HOURS = [1, 1.5, 2, 3, 4, 6, 8, 12];
 const REGIONS = ["US", "GB", "CA", "AU", "IE", "NZ", "IN", "PH", "SG", "ZA", "DE", "FR", "ES", "BR", "MX", "JP"];
-const LIMITS = { hook: 60, line: 90, title: 100 };
-// The same pacing the Writer and the renderer use (agents/writer.py, tools/cartoon_render.py).
-const PACE = { wordsPerSecond: 2.5, leadIn: 0.35, tail: 1.5, gap: 0.28 };
-const VIEWS = ["overview", "cast", "scripts", "studio", "schedule", "results", "music", "youtube", "settings", "activity"];
+const HOW_OFTEN = [[0, "Off"], [0.5, "Rarely"], [1, "Normal"], [2, "Often"]];
+const LIMITS = { line: 160, title: 100, caseTitle: 32, point: 48 };
+// The same pacing the Writer and the renderer use (agents/writer.py, tools/case_render.py).
+const PACE = { wordsPerSecond: 2.3, leadIn: 0.3, tail: 2.2, gap: 0.22, sameGap: 0.12 };
+const VIEWS = ["overview", "topics", "research", "scripts", "studio", "schedule", "results", "music", "hosts", "youtube",
+               "settings", "activity"];
 // The audience is worldwide but US-heavy, so times are also shown for New York next to the schedule's own clock.
 const AUDIENCE_TZ = "America/New_York";
 
 const state = { app: null, videos: [], task: null, watching: null, dirty: new Set(),
                 studio: { filter: "planned", selected: null, picked: false }, scripts: { selected: null },
-                signals: null, signalsPoll: null };
+                research: { selected: null }, signals: null, signalsPoll: null };
 
 // ------------------------------------------------------------------ helpers
 
@@ -113,14 +121,20 @@ const nyTime = iso => new Date(iso).toLocaleTimeString(undefined, { hour: "numer
 const clockIn = (iso, tz) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz });
 const scheduleTz = () => state.app.autopilot.schedule.timezone;
 const secs = s => s ? `${Math.round(s)} s` : "–";
+const category = key => CATEGORY[key] || cap(key || "");
 
-/** A video the dashboard shows as "live" once its publish time has passed. */
-const shownStatus = v => v.status === "scheduled" && v.publish_at && new Date(v.publish_at) <= new Date() ? "live" : v.status;
+/** A video the dashboard shows as "live" once its publish time has passed, or "waiting" for your OK. */
+function shownStatus(v) {
+  if (v.status === "scheduled" && v.publish_at && new Date(v.publish_at) <= new Date()) return "live";
+  if (v.status === "planned" && v.approval === "waiting") return "waiting";
+  return v.status;
+}
 
 /** How long a script will run, the way the Writer estimates it. */
-function estimate(beats, cast) {
-  const words = beats.reduce((n, b) => n + b.line.split(/\s+/).filter(Boolean).length / (cast[b.speaker]?.speed || 1), 0);
-  return words / PACE.wordsPerSecond + PACE.leadIn + PACE.tail + beats.length * PACE.gap;
+function estimate(lines, hosts) {
+  const words = lines.reduce((n, l) => n + l.text.split(/\s+/).filter(Boolean).length / (hosts[l.speaker]?.speed || 1), 0);
+  const gaps = lines.slice(1).reduce((n, l, k) => n + (l.speaker === lines[k].speaker ? PACE.sameGap : PACE.gap), 0);
+  return words / PACE.wordsPerSecond + PACE.leadIn + gaps + PACE.tail;
 }
 
 function pill(text, tone = "idle") {
@@ -132,8 +146,8 @@ function statusPill(v) {
   return pill(text, tone);
 }
 
-function avatars(cast) {
-  return h("span", { class: "avatars" }, cast.map(c => c.image && h("img", { src: c.image, alt: c.name, title: `${c.name}, the ${c.role}` })));
+function avatars(hosts) {
+  return h("span", { class: "avatars" }, (hosts || []).map(c => c.image && h("img", { src: c.image, alt: c.name, title: `${c.name}, the ${c.role}` })));
 }
 
 function pageHead({ eyebrow, agent, title, lede, actions = [] }) {
@@ -178,25 +192,46 @@ function taskButton(kind, label, { primary = false, sm = false, title, videoId, 
                        onclick: () => { if (!confirmText || confirm(confirmText)) runTask(kind, videoId); } }, label);
 }
 
-/** "Make the 14:00 Short now": takes the oldest written episode (or writes one), animates and uploads it. */
-function makeButton({ primary = false, sm = false } = {}) {
+/** "Make the 14:00 Short now": takes the oldest ready case (or makes one), animates and uploads it. */
+function makeButton({ primary = false, sm = false, short = false } = {}) {
   const a = state.app;
   const nextOpen = a.autopilot.next_open;
   const blocked = !a.services.youtube || !nextOpen;
   return h("button", { class: `btn${primary ? " btn-primary" : ""}${sm ? " btn-sm" : ""}`, type: "button",
     "data-needs-idle": true, dataset: { blocked: blocked ? "1" : "0" },
     title: !a.services.youtube ? "Connect YouTube first" : !nextOpen ? "No free slot in the next week"
-         : "Takes the oldest written episode (or writes one), animates it and uploads it for that slot",
+         : "Takes the oldest case that's ready (or makes one), animates it and uploads it for that slot",
     onclick: () => {
       const when = nextOpen ? `${clockIn(nextOpen, scheduleTz())} (${fromNow(nextOpen)})` : "the next free slot";
-      if (confirm(`Make a Short for ${when} now?\n\nAgent 4 takes the oldest written episode (Agents 1 and 2 write one `
-                  + "if none are waiting), Agent 3 animates it, and it's uploaded as private. YouTube makes it public "
-                  + "at that time.")) runTask("autopilot");
-    } }, nextOpen ? `Make the ${clockIn(nextOpen, scheduleTz())} Short now` : "Make the next Short now");
+      if (confirm(`Make a Short for ${when} now?\n\nAgent 5 takes the oldest case that's ready (Agents 1 to 3 make one `
+                  + "if none is waiting; it won't be news or politics, which need your OK), Agent 4 animates it, and it's "
+                  + "uploaded as private. YouTube makes it public at that time.")) runTask("autopilot");
+    } }, short ? "Make it now" : nextOpen ? `Make the ${clockIn(nextOpen, scheduleTz())} Short now` : "Make the next Short now");
 }
 
-const writeButton = (opts = {}) => taskButton("prepare", "Write a new episode",
-  { title: "Agent 1 casts it, Agent 2 writes it from today's trends", ...opts });
+const caseButton = (opts = {}) => taskButton("prepare", "Make a new case",
+  { title: "Agent 1 picks it, Agent 2 researches it, Agent 3 writes and fact-checks it", ...opts });
+
+/** The box where you ask for a case; the Editor takes requests first. */
+function requestBox({ onDone } = {}) {
+  const input = h("input", { class: "input", placeholder: "e.g. Why did Nokia fail?  ·  What if India keeps growing at 7%?",
+                             "aria-label": "Ask for a case", maxlength: 200 });
+  const send = async () => {
+    const text = input.value.trim();
+    if (!text) return input.focus();
+    try {
+      await api("/api/topics", { method: "POST", json: { text } });
+      input.value = "";
+      toast("Added. Agent 1 makes it the next case (unless it breaks the channel's rules).", "ok");
+      await loadState().catch(() => {});
+      if (onDone) onDone();
+    } catch (e) {
+      toast(e.message, "error", 7000);
+    }
+  };
+  input.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+  return h("div", { class: "request-box" }, input, h("button", { class: "btn btn-primary", type: "button", onclick: send }, "Ask"));
+}
 
 // ------------------------------------------------------------------ shell: sidebar, top bar, task
 
@@ -226,8 +261,9 @@ function renderShell() {
       h("span", { class: "inline" }, h("span", { class: "dot", dataset: { tone } }), name), h("small", {}, text)))));
 
   const agent = key => a.agents.find(x => x.key === key);
-  $("#count-cast").textContent = agent("casting")?.count || "";
+  $("#count-topics").textContent = a.requests || "";
   $("#count-scripts").textContent = agent("writer")?.count || "";
+  $("#count-studio").textContent = a.approvals || "";
   $("#count-schedule").textContent = agent("publisher")?.count || "";
   $("#count-music").textContent = s.music || "";
 
@@ -281,7 +317,10 @@ function watchTask(task) {
 function taskSummary(t) {
   const r = t.result || {};
   if (typeof r.skipped === "string") return `Nothing to do: ${r.skipped}.`;
-  if (t.kind === "prepare") return r.planned?.length ? `New episode written: ${r.planned[0].title}` : "Done.";
+  if (t.kind === "prepare") {
+    const p = r.planned?.[0];
+    return p ? `New case: ${p.title}${p.waits_for_approval ? " (it waits for your OK in the Studio)" : ""}` : "Done.";
+  }
   if (t.kind === "render" || r.rendered) return `Video ready (${secs(r.length)}). Press play in the Studio.`;
   if (t.kind === "publish" || t.kind === "autopilot") {
     return r.live_now ? `Posted: ${r.title}. It's live now.` : `Uploaded: ${r.title}. It goes public ${fmtWhen(r.publish_at)}.`;
@@ -290,6 +329,7 @@ function taskSummary(t) {
     if (r.skipped) return r.skipped;
     return `Numbers for ${plural(r.updated || 0, "Short")}.` + (r.learn?.lessons ? " The playbook is updated." : "");
   }
+  if (t.kind === "hosts") return `Your hosts: ${(r.names || []).join(" and ")}.`;
   if (t.kind === "connect") return `YouTube connected: ${r.channel}`;
   return "Done.";
 }
@@ -332,15 +372,19 @@ function runSummary(job, ok, d = {}) {
   if (ok === null) return "Working…";
   if (d.error) return d.error;
   if (typeof d.skipped === "string") return `Skipped: ${d.skipped}`;
-  if (job === "casting" && d.names) return `${cap(d.setting || "")}: ${d.names.join(", ")}`;
-  if (job === "writer" && d.premise) return d.premise;
-  if (job === "animator" && d.length) return `Episode #${d.video_id}: a ${secs(d.length)} video, made in ${secs(d.seconds)}`;
+  if (job === "editor" && d.topic) return `${category(d.category)}: ${d.topic}${d.needs_approval ? " · waits for your OK" : ""}`;
+  if (job === "researcher" && d.facts !== undefined) {
+    return `${plural(d.facts, "fact")} checked (${d.dropped} dropped) from ${plural(d.sources, "source")}, ${plural(d.images, "photo")}`;
+  }
+  if (job === "writer" && d.lines) return `${d.lines} lines, about ${secs(d.estimate)}${d.cut ? ` (${d.cut} cut by the fact-check)` : ""}`;
+  if (job === "hosts" && d.names) return `Hosts: ${d.names.join(" and ")}`;
+  if (job === "animator" && d.length) return `Case #${d.video_id}: a ${secs(d.length)} video, made in ${secs(d.seconds)}`;
   if (d.youtube_id) return `${d.live_now ? "Posted" : "Uploaded"} #${d.video_id} “${d.title}”, ${d.live_now ? "live now" : `goes public ${fmtWhen(d.publish_at)}`}`;
-  if (d.planned) return d.planned.map(p => `#${p.id} ${p.title}`).join(", ") || "Nothing written";
+  if (d.planned) return d.planned.map(p => `#${p.id} ${p.title}`).join(", ") || "Nothing made";
   if (d.rendered) return d.video_id ? `Preview of #${d.video_id} rendered${d.length ? ` (${secs(d.length)})` : ""}`
                                     : `Preview rendered: ${d.title || ""}`;
   if (d.updated !== undefined) return `Numbers for ${plural(d.updated, "Short")}${d.vetoed ? `, ${d.vetoed} vetoed` : ""}`
-    + (d.learn?.lessons ? "; playbook updated" : "");
+    + (d.comments ? `, ${plural(d.comments, "new comment")}` : "") + (d.learn?.lessons ? "; playbook updated" : "");
   return d.what || d.text || "Done";
 }
 
@@ -353,9 +397,11 @@ function agentStatus(agent) {
 }
 
 function agentAction(key) {
-  if (key === "casting" || key === "writer") return writeButton({ sm: true });
+  if (key === "editor") return h("a", { class: "btn btn-sm", href: "#topics" }, "Topics & requests");
+  if (key === "researcher") return h("a", { class: "btn btn-sm", href: "#research" }, "See the research");
+  if (key === "writer") return caseButton({ sm: true });
   if (key === "animator") return h("a", { class: "btn btn-sm", href: "#studio" }, "Open the Studio");
-  if (key === "publisher") return makeButton({ sm: true });
+  if (key === "publisher") return makeButton({ sm: true, short: true });
   return taskButton("stats", "Read the numbers", { sm: true });
 }
 
@@ -388,6 +434,28 @@ function runsTable(runs) {
   }));
 }
 
+/** A tiny line chart of a data series (forecast years dashed). */
+function sparkline(points, forecastFrom) {
+  const w = 160, h_ = 40;
+  if (!points?.length) return null;
+  const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const pt = ([x, y]) => `${((x - x0) / ((x1 - x0) || 1) * (w - 4) + 2).toFixed(1)},${(h_ - 2 - (y - y0) / ((y1 - y0) || 1) * (h_ - 4)).toFixed(1)}`;
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${w} ${h_}`);
+  svg.setAttribute("class", "spark");
+  const line = (pts, dashed) => {
+    if (pts.length < 2) return;
+    const el = document.createElementNS(SVG_NS, "polyline");
+    el.setAttribute("points", pts.map(pt).join(" "));
+    if (dashed) el.setAttribute("stroke-dasharray", "4 3");
+    svg.append(el);
+  };
+  const cut = forecastFrom ? points.findIndex(p => p[0] >= forecastFrom) : -1;
+  if (cut > 0) { line(points.slice(0, cut), false); line(points.slice(cut - 1), true); } else line(points, false);
+  return svg;
+}
+
 // ------------------------------------------------------------------ 00 overview
 
 function slotRows(slots) {
@@ -406,7 +474,7 @@ function slotRows(slots) {
       h("td", { class: "col-time muted" }, nyTime(s.at)),
       h("td", {}, pill(label, tone)),
       h("td", { class: "title-cell" }, v
-        ? [h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title || `Short #${v.id}`)), v.setting && h("small", {}, cap(v.setting))]
+        ? [h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title || `Short #${v.id}`)), v.category && h("small", {}, category(v.category))]
         : h("span", { class: "slot-title muted" }, s.state === "missed" ? "Nothing went out" : "Not made yet")),
       h("td", { class: "col-actions" }, link));
   });
@@ -416,7 +484,7 @@ function overviewLede(a) {
   const sch = a.autopilot.schedule;
   const rhythm = `${plural(sch.posts_per_day, "Short")} a day, one every ${hours(sch.every_hours)} from ${sch.first_post} (${sch.timezone})`;
   if (a.paused) return `The autopilot is paused, so the agents wait for you. Switch it on (top right) for ${rhythm}; `
-                       + "on this PC they also keep episodes written and animated ahead.";
+                       + "on this PC they also keep cases researched, written and animated ahead.";
   if (!a.services.youtube) return "The autopilot is on, but YouTube isn't connected yet, so nothing can be posted.";
   return `The autopilot is on: ${rhythm}.${a.autopilot.here ? "" : " It runs in the cloud."}`;
 }
@@ -426,78 +494,287 @@ async function loadOverview() {
   const ap = a.autopilot;
   const posted = ap.slots.filter(s => s.state === "posted").length;
   const next = ap.next;
-  const written = a.agents.find(x => x.key === "writer")?.count || 0;
   const previews = a.agents.find(x => x.key === "animator")?.count || 0;
   const root = $("#view-overview");
   const today = new Date(ap.slots[0].at).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", timeZone: scheduleTz() });
 
-  root.replaceChildren(
+  root.replaceChildren(...[
     pageHead({ eyebrow: `00 · ${today}`, title: "Overview", lede: overviewLede(a),
-      actions: [writeButton(), makeButton({ primary: true })] }),
+      actions: [caseButton(), makeButton({ primary: true })] }),
+    a.approvals > 0 && h("div", { class: "callout banner", dataset: { tone: "warn" } },
+      h("b", {}, `${plural(a.approvals, "case")} ${a.approvals === 1 ? "waits" : "wait"} for your OK`),
+      " (news or politics). Watch them and approve or discard them in the Studio. ",
+      h("a", { href: "#studio" }, "Open the Studio →")),
+    !a.hosts_ready && h("div", { class: "callout banner" },
+      h("b", {}, "The hosts aren't designed yet. "), "They're designed with the first case, or now on the ",
+      h("a", { href: "#hosts" }, "Hosts page →")),
     kpis([
       { label: "Posted today", value: posted, unit: `/ ${ap.slots.length}` },
       { label: "Next post", value: next ? clockIn(next.at, scheduleTz()) : "–",
         note: next ? `${fromNow(next.at)} · ${nyTime(next.at)} in New York` : "" },
-      { label: "Episodes waiting", value: written, note: `${previews} animated, ready to watch`, tone: written ? null : "warn" },
-      { label: "Characters", value: a.agents.find(x => x.key === "casting")?.count || 0, note: "created by Agent 1" },
+      { label: "Ready to post", value: a.ready, note: `${previews} with a preview to watch`, tone: a.ready ? null : "warn" },
+      { label: "Waiting for your OK", value: a.approvals, note: "news and politics", tone: a.approvals ? "warn" : null },
       { label: "Autopilot", value: a.paused ? "Paused" : "On", tone: a.paused ? "warn" : "ok",
         note: ap.here ? "checks every minute on this PC" : `runs in the cloud${ap.last_check ? `, last ${fromNow(ap.last_check)}` : ""}` },
     ]),
-    section({ num: "01–05", title: "The five agents", text: "In order: each one hands its work to the next.", body: pipelineSteps() }),
+    section({ num: "01–06", title: "The six agents", text: "In order: each one hands its work to the next.", body: pipelineSteps() }),
     h("div", { class: "grid-2-1" },
       section({ num: "A", title: "Today's schedule", text: `On the ${scheduleTz()} clock, with New York time beside it.`,
         actions: h("a", { class: "btn btn-sm", href: "#schedule" }, "Full schedule"),
         body: table([["Time", { class: "col-time" }], ["New York", { class: "col-time" }], "Status", "Short", ["", { class: "col-actions" }]],
                     slotRows(ap.slots)) }),
-      section({ num: "B", title: "Coming up", text: "Holidays and world days the Writer can play on.",
-        body: h("div", { class: "card card-pad" }, a.events.length
-          ? h("ul", { class: "events" }, a.events.slice(0, 8).map(e => h("li", {}, h("span", {}, e.name),
-              h("small", {}, e.in_days === 0 ? "today" : `in ${plural(e.in_days, "day")}`))))
-          : h("p", { class: "note" }, "Nothing in the next few days.")) })),
-    h("div", { id: "overview-activity", style: "margin-top:30px" }));
+      h("div", {},
+        section({ num: "B", title: "Ask for a case", text: a.requests ? `${plural(a.requests, "request")} waiting; Agent 1 takes them first.`
+                                                                       : "Agent 1 makes it next.",
+          body: h("div", { class: "card card-pad" }, requestBox()) }),
+        section({ num: "C", title: "Coming up", text: "Holidays and world days the Editor can tie a case to.",
+          body: h("div", { class: "card card-pad" }, a.events.length
+            ? h("ul", { class: "events" }, a.events.slice(0, 6).map(e => h("li", {}, h("span", {}, e.name),
+                h("small", {}, e.in_days === 0 ? "today" : `in ${plural(e.in_days, "day")}`))))
+            : h("p", { class: "note" }, "Nothing in the next few days.")) }))),
+    h("div", { id: "overview-activity", style: "margin-top:30px" })].filter(Boolean));
   syncButtons();
   const act = await api("/api/activity");
   const box = $("#overview-activity");
-  if (box) box.replaceChildren(section({ num: "C", title: "Latest work", text: "What the agents did most recently.",
+  if (box) box.replaceChildren(section({ num: "D", title: "Latest work", text: "What the agents did most recently.",
     actions: h("a", { class: "btn btn-sm", href: "#activity" }, "All activity"),
     body: runsTable(act.runs.slice(0, 6)) }));
 }
 
-// ------------------------------------------------------------------ 01 cast (Agent 1)
+// ------------------------------------------------------------------ 01 topics (Agent 1)
 
-async function loadCast() {
-  const chars = await api("/api/characters");
-  const queued = chars.filter(c => c.episodes.some(e => e.status === "planned"));
-  const voices = new Set(chars.map(c => c.voice));
-  $("#view-cast").replaceChildren(
-    pageHead({ eyebrow: "01 · Agent 1 · Casting", agent: "casting", title: "Cast",
-      lede: "For every episode Agent 1 picks a setting and designs two or three adult characters whose personalities "
-            + "clash: their look, their voice and their role in the sketch. Every character is kept here.",
-      actions: [writeButton({ primary: true })] }),
+const REQUEST_STATUS = { waiting: ["Waiting", "accent"], used: ["Made", "ok"], dropped: ["Not made", "idle"] };
+
+async function loadTopics() {
+  const t = await api("/api/topics");
+  const month = t.briefs.filter(b => Date.now() - new Date(b.created_at) < 30 * 8.64e7);
+  const waiting = t.requests.filter(r => r.status === "waiting");
+  $("#view-topics").replaceChildren(
+    pageHead({ eyebrow: "01 · Agent 1 · Editor", agent: "editor", title: "Topics",
+      lede: "Agent 1 decides each case: its type (business, the economy, this week's news, history or mythology), "
+            + "the topic and the one question it answers, from today's trends, Wikipedia's news and history pages, your "
+            + "requests (always first), viewers' comments and cases that did well enough for a part 2.",
+      actions: [caseButton({ primary: true })] }),
     kpis([
-      { label: "Characters", value: chars.length },
-      { label: "In waiting episodes", value: queued.length },
-      { label: "Voices used", value: voices.size, unit: "/ 20" },
-      { label: "Newest", value: chars[0] ? chars[0].name : "–", note: chars[0] ? `created ${fromNow(chars[0].created_at)}` : "" },
+      { label: "Your requests", value: waiting.length, note: "waiting; taken first" },
+      { label: "Cases chosen", value: month.length, note: "in the last 30 days" },
+      { label: "From comments", value: t.briefs.filter(b => b.from_comment).length, note: "viewers' ideas made" },
+      { label: "Follow-ups", value: t.briefs.filter(b => b.follow_up_of).length, note: "part 2s of cases that did well" },
     ]),
-    section({ num: "1.1", title: "Characters", text: "Newest first. Press play to hear a character's voice (made on this PC the first time).",
-      body: chars.length
-        ? h("div", { class: "cast-grid" }, chars.map(c => h("article", { class: "card char-card" },
-            h("img", { class: "portrait", src: c.image, alt: `${c.name}, drawn`, loading: "lazy" }),
-            h("div", { class: "char-body" },
-              h("h3", {}, c.name, h("small", {}, c.age)),
-              h("span", { class: "role" }, cap(c.role)),
-              c.personality && h("p", {}, c.personality),
-              h("p", { class: "look" }, c.look.split(": ").slice(1).join(": ")),
-              h("p", { class: "look" }, `Voice: ${c.voice_label}`),
-              h("div", { class: "char-foot" }, h("audio", { src: c.voice_sample, controls: true, preload: "none" })),
-              c.episodes.length > 0 && h("div", { class: "chips" }, c.episodes.map(e =>
-                h("a", { class: "tag", href: e.status === "planned" ? `#scripts/${e.id}` : `#studio/${e.id}` }, `#${e.id}`)))))))
-        : empty("No characters yet", "Press “Write a new episode”: Agent 1 casts it, Agent 2 writes the sketch.") }));
+    section({ num: "1.1", title: "Ask for a case", text: "Type a topic or a question. Agent 1 makes it next, unless it breaks the channel's rules (then it says why).",
+      body: h("div", {}, h("div", { class: "card card-pad" }, requestBox({ onDone: loadTopics })),
+        t.requests.length > 0 && h("div", { style: "margin-top:12px" }, table(
+          [["Asked", { class: "col-time" }], "Request", "Status", ["", { class: "col-actions" }]],
+          t.requests.map(r => {
+            const [label, tone] = REQUEST_STATUS[r.status] || [r.status, "idle"];
+            return h("tr", {},
+              h("td", { class: "col-time small" }, fmtWhen(r.created_at)),
+              h("td", { class: "title-cell" }, h("b", {}, r.text), r.reason && h("small", {}, r.reason)),
+              h("td", {}, r.video_id ? h("a", { href: `#research/${r.video_id}` }, pill(`${label} · #${r.video_id}`, tone)) : pill(label, tone)),
+              h("td", { class: "col-actions" }, r.status === "waiting" && h("button", { class: "btn btn-sm btn-ghost btn-danger", type: "button",
+                onclick: async () => {
+                  try { await api(`/api/topics/${r.id}`, { method: "DELETE" }); loadTopics(); loadState(); }
+                  catch (e) { toast(e.message, "error"); }
+                } }, "Remove")));
+          }))) ) }),
+    section({ num: "1.2", title: "Cases chosen", text: "Newest first. Open one to see its research.",
+      body: t.briefs.length
+        ? table([["#", { class: "col-num" }], "Type", "The question", "Why now", "Status"], t.briefs.map(b => h("tr", {},
+            h("td", { class: "col-num" }, `#${b.id}`),
+            h("td", {}, h("span", { class: "tag", dataset: { cat: b.category } }, category(b.category))),
+            h("td", { class: "title-cell" }, h("a", { href: `#research/${b.id}` }, h("b", {}, b.angle)), h("small", {}, b.topic)),
+            h("td", { class: "small" }, WHY_NOW[b.why_now] || b.why_now, b.trend && h("small", { class: "muted", style: "display:block" }, b.trend)),
+            h("td", {}, statusPill(b)))))
+        : empty("No cases yet", "Press “Make a new case”: Agent 1 picks it, Agent 2 researches it, Agent 3 writes it.") }),
+    h("div", { class: "grid-2 section" },
+      section({ num: "1.3", title: "The mix", text: "How often each type is picked; change it in Settings.",
+        actions: h("a", { class: "btn btn-sm", href: "#settings" }, "Settings"),
+        body: h("div", { class: "card card-pad" }, h("ul", { class: "mix" }, Object.entries(t.categories).map(([key, text]) => {
+          const w = Number(t.weights[key] || 0);
+          return h("li", { dataset: { cat: key } }, h("div", {}, h("b", {}, category(key)), h("p", { class: "hint" }, text)),
+            pill((HOW_OFTEN.find(([n]) => n === w) || [w, `×${w}`])[1], w ? "ok" : "idle"));
+        }))) }),
+      section({ num: "1.4", title: "Viewers' comments", text: t.comment_requests ? "Read daily by Agent 6; Agent 1 can make a case a comment asks for."
+                                                                                  : "Switched off in Settings.",
+        body: t.comments.length
+          ? h("div", { class: "card card-pad" }, h("ul", { class: "events" }, t.comments.slice(0, 12).map(c => h("li", {},
+              h("span", {}, c.text), h("small", {}, c.used_by ? `made: #${c.used_by}` : `♥ ${c.likes || 0}`)))))
+          : empty("No comments yet", "They appear once cases are public and people comment.") })),
+    h("div", { id: "signals" }));
+  syncButtons();
+  if (state.signals) renderSignals();
+  loadSignals();
+}
+
+// The signals Agent 1 reads: out-of-date trends come back at once while today's load in the background
+// (asking every country takes minutes), so the section checks again shortly.
+async function loadSignals(refresh = false) {
+  clearTimeout(state.signalsPoll);
+  if (refresh) { state.signals = { ...(state.signals || {}), fetching: true }; renderSignals(); }
+  try {
+    state.signals = await api(`/api/trends${refresh ? "?refresh=1" : ""}`);
+  } catch (e) {
+    if (refresh || !state.signals) toast(e.message, "error");
+  }
+  if (currentView() !== "topics") return;
+  renderSignals();
+  if (state.signals?.refreshing) state.signalsPoll = setTimeout(() => {
+    if (currentView() === "topics") loadSignals();
+  }, 15000);
+}
+
+function renderSignals() {
+  const box = $("#signals");
+  const t = state.signals;
+  if (!box) return;
+  if (!t || !t.google_trends) {
+    box.replaceChildren(section({ num: "1.5", title: "What the Editor reads today", body: h("p", { class: "loading" }, "Reading today's signals…") }));
+    return;
+  }
+  const world = t.region === "ALL";
+  const note = t.fetching ? "Asking every country for today's trends… this can take a few minutes."
+    : t.refreshing ? `Showing the trends from ${t.fetched_at ? fromNow(t.fetched_at) : "before"} while today's load in the background.`
+    : t.errors?.length ? `Notes: ${t.errors.join(" · ")}` : `Fetched ${t.fetched_at ? fromNow(t.fetched_at) : "–"}; reused for up to 6 hours.`;
+  const ranked = (items, empty_) => items.length ? h("ol", { class: "ranked" }, items) : h("p", { class: "note" }, empty_);
+  box.replaceChildren(section({ num: "1.5", title: "What the Editor reads today", text: note,
+    actions: h("button", { class: "btn btn-sm", type: "button", disabled: !!t.fetching, onclick: () => loadSignals(true) },
+      t.fetching ? "Fetching…" : "Refresh trends"),
+    body: h("div", { class: "grid-2" },
+      h("div", { class: "card card-pad" },
+        h("p", { class: "sub-head" }, "In the news · Wikipedia's Current events"),
+        ranked((t.news || []).slice(0, 10).map(n => h("li", {}, h("span", {}, n.text),
+          h("small", { title: n.outlets.join(", ") }, n.section.split(" ")[0]))), t.news_error || "Nothing found."),
+        h("p", { class: "sub-head" }, "On this day in history"),
+        ranked((t.on_this_day || []).slice(0, 8).map(e => h("li", {}, h("span", {}, e.text), h("small", {}, e.year))),
+               t.on_this_day_error || "Nothing found.")),
+      h("div", { class: "card card-pad" },
+        h("p", { class: "sub-head" }, world ? `Trending searches · ${t.countries ?? "every"} countries` : `Trending searches · ${t.region}`),
+        ranked(t.google_trends.slice(0, 10).map(g => h("li", {}, h("span", {}, g.term),
+          h("small", { title: (g.countries || []).join(", ") }, world ? `${(g.countries || []).length} ctry` : g.traffic || ""))), "Nothing yet."),
+        h("p", { class: "sub-head" }, "Popular explainers on YouTube"),
+        t.youtube_popular.length
+          ? ranked(t.youtube_popular.slice(0, 8).map(p => h("li", {}, h("span", {}, p.title),
+              h("small", {}, p.countries?.length > 1 ? `${p.countries.length} ctry` : p.views ? `${(p.views / 1e6).toFixed(1)}M` : ""))), "")
+          : h("p", { class: "note" }, state.app.services.youtube ? "Nothing came back this time."
+                                      : ["Connect YouTube to see these. ", h("a", { href: "#youtube" }, "How →")]))) }));
+}
+
+// ------------------------------------------------------------------ the case list both 02 and 03 use
+
+function caseList(list, selectedId, onPick, note) {
+  return h("div", { class: "card studio-list" },
+    h("div", { class: "card-head" }, h("h3", {}, plural(list.length, "case")), h("p", {}, note)),
+    h("ul", { class: "vlist" }, list.map(v => h("li", {},
+      h("button", { class: "vrow", type: "button", "aria-current": String(v.id === selectedId), onclick: () => onPick(v.id) },
+        h("span", { class: "vid" }, `#${v.id}`),
+        h("span", { class: "vtitle" }, v.title || v.angle || "A case"),
+        h("span", { class: "vmeta" }, h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)), statusPill(v),
+          v.preview && pill("Animated", "ok")))))));
+}
+
+// ------------------------------------------------------------------ 02 research (Agent 2)
+
+async function loadResearch() {
+  state.videos = await api("/api/videos");
+  const sub = Number(location.hash.split("/")[1]);
+  if (sub) {
+    state.research.selected = sub;
+    history.replaceState(null, "", "#research");
+  }
+  renderResearch();
+}
+
+function renderResearch() {
+  const list = state.videos.filter(v => !v.legacy && v.research);
+  if (!list.some(v => v.id === state.research.selected)) state.research.selected = list[0]?.id ?? null;
+  const selected = list.find(v => v.id === state.research.selected);
+  const waiting = list.filter(v => v.status === "planned");
+  const facts = waiting.reduce((n, v) => n + v.research.facts.length, 0);
+  const dropped = waiting.reduce((n, v) => n + (v.research.dropped || 0), 0);
+  $("#view-research").replaceChildren(
+    pageHead({ eyebrow: "02 · Agent 2 · Researcher", agent: "researcher", title: "Research",
+      lede: "Agent 2 reads free sources (Wikipedia, news sites, IMF and World Bank data, Wikimedia Commons photos) and "
+            + "lists what they say. Code then checks every fact: its quote must really be in its source and its numbers in "
+            + "the quote. The rest are dropped. Photos are checked too: no children, no gore, no logos." }),
+    kpis([
+      { label: "Facts in the queue", value: facts, note: `checked, across ${plural(waiting.length, "case")}` },
+      { label: "Dropped", value: dropped, note: "not found in their sources" },
+      { label: "Photos", value: waiting.reduce((n, v) => n + v.research.images.length, 0), note: "free licences, credited" },
+      { label: "Sources", value: waiting.reduce((n, v) => n + v.research.sources.length, 0), note: "read for the queue" },
+    ]),
+    section({ num: "2.1", title: "Cases", text: "Newest first.",
+      body: !list.length ? empty("No research yet", "Press “Make a new case” on the Topics page.")
+        : h("div", { class: "studio" },
+            caseList(list, state.research.selected, id => { state.research.selected = id; renderResearch(); }, "newest first"),
+            selected && researchDetail(selected)) }));
   syncButtons();
 }
 
-// ------------------------------------------------------------------ 02 scripts (Agent 2)
+function researchDetail(v) {
+  const r = v.research;
+  const sources = Object.fromEntries(r.sources.map(s => [s.id, s]));
+  const sourceChip = id => {
+    const s = sources[id];
+    return s ? h("a", { class: "tag", href: s.url, target: "_blank", rel: "noopener", title: s.title }, s.publisher || s.title, " ↗") : h("span", { class: "tag" }, id);
+  };
+  return h("article", { class: "card" },
+    h("div", { class: "detail-head" },
+      h("div", { class: "row" }, h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)),
+        h("span", { class: "tag" }, WHY_NOW[v.why_now] || v.why_now), statusPill(v),
+        h("span", { class: "muted small" }, `#${v.id} · researched ${fromNow(v.created_at)}`)),
+      h("h2", {}, v.angle),
+      v.trend && h("p", { class: "angle" }, `Why now: ${v.trend}`)),
+    h("div", { class: "detail-body single" },
+      h("div", {},
+        r.answer && h("div", { class: "callout" }, h("b", {}, "What the sources say: "), r.answer),
+        h("dl", { class: "dl", style: "margin-top:14px" },
+          h("dt", {}, "Checked facts"), h("dd", {}, `${r.facts.length}${r.dropped ? ` (${r.dropped} dropped: their quote or numbers weren't in the source)` : ""}`),
+          h("dt", {}, "Sources"), h("dd", {}, r.sources.length),
+          h("dt", {}, "Photos"), h("dd", {}, r.images.length || "none: the case uses drawn visuals"),
+          r.notes.length > 0 && [h("dt", {}, "Notes"), h("dd", { class: "muted" }, r.notes.join(" · "))]),
+        h("p", { class: "sub-head" }, "Facts · each one's quote is in its source"),
+        h("ol", { class: "facts" }, r.facts.map(f => h("li", {},
+          h("span", { class: "fid" }, f.id),
+          h("div", {},
+            h("p", {}, f.claim),
+            h("div", { class: "how" }, h("span", { class: "tag" }, cap(f.kind.replace("_", " "))),
+              f.calculated ? h("span", { class: "tag" }, "Calculated from the data") : sourceChip(f.source)),
+            !f.calculated && h("details", { class: "quote" }, h("summary", {}, "The source's words"), h("blockquote", {}, f.quote)))))),
+        (r.timeline.length > 0 || r.stats.length > 0) && h("div", { class: "grid-2", style: "margin-top:18px" },
+          h("div", {}, h("p", { class: "sub-head" }, "Timeline"), r.timeline.length
+            ? h("ul", { class: "events" }, r.timeline.map(t => h("li", {}, h("span", {}, t.event), h("small", {}, t.when))))
+            : h("p", { class: "note" }, "No dated events.")),
+          h("div", {}, h("p", { class: "sub-head" }, "Big numbers"), r.stats.length
+            ? h("ul", { class: "events" }, r.stats.map(s => h("li", {}, h("span", {}, s.label), h("small", {}, s.value))))
+            : h("p", { class: "note" }, "None picked."))),
+        r.series.length > 0 && [h("p", { class: "sub-head" }, "Data"),
+          table(["Series", "Trend", ["From", { class: "col-right" }], ["To", { class: "col-right" }], "Source"], r.series.map(s => {
+            const [first, last] = [s.points[0], s.points[s.points.length - 1]];
+            return h("tr", {},
+              h("td", { class: "title-cell" }, h("b", {}, `${s.title}, ${s.country}`), h("small", {}, s.unit + (s.forecast_from ? ` · forecasts from ${s.forecast_from}` : ""))),
+              h("td", {}, sparkline(s.points, s.forecast_from)),
+              h("td", { class: "col-right small" }, first ? `${first[1]} (${first[0]})` : "–"),
+              h("td", { class: "col-right small" }, last ? `${last[1]} (${last[0]})` : "–"),
+              h("td", {}, h("a", { href: s.url, target: "_blank", rel: "noopener", class: "small" }, s.source, " ↗")));
+          }))],
+        r.images.length > 0 && [h("p", { class: "sub-head" }, "Photos · free licences, credited in the description"),
+          h("div", { class: "photo-grid" }, r.images.map(i => h("figure", { class: "photo" },
+            h("img", { src: i.url, alt: i.shows, loading: "lazy" }),
+            h("figcaption", {}, h("b", {}, `${i.id} · ${i.shows}`),
+              h("a", { href: i.page, target: "_blank", rel: "noopener" }, `${i.author}, ${i.licence} ↗`)))))],
+        h("p", { class: "sub-head" }, "Sources"),
+        h("ol", { class: "sources" }, r.sources.map(s => h("li", {},
+          h("span", { class: "fid" }, s.id),
+          h("span", {}, h("span", { class: "tag" }, cap(s.kind)), " ",
+            h("a", { href: s.url, target: "_blank", rel: "noopener" }, s.title),
+            s.publisher && s.publisher !== s.title && s.kind !== "wikipedia" && h("small", { class: "muted" }, ` · ${s.publisher}`),
+            s.date && h("small", { class: "muted" }, ` · ${String(s.date).slice(0, 10)}`))))))),
+    h("div", { class: "detail-actions" },
+      h("a", { class: "btn btn-sm btn-primary", href: `#scripts/${v.id}` }, "See the script"),
+      h("a", { class: "btn btn-sm", href: `#studio/${v.id}` }, "Open in the Studio")));
+}
+
+// ------------------------------------------------------------------ 03 scripts (Agent 3)
 
 async function loadScripts() {
   state.videos = await api("/api/videos");
@@ -507,49 +784,41 @@ async function loadScripts() {
     history.replaceState(null, "", "#scripts");
   }
   renderScripts();
-  loadSignals();
 }
 
 function renderScripts() {
   const root = $("#view-scripts");
-  const list = state.videos.filter(v => v.status === "planned" && !v.legacy);
+  const list = state.videos.filter(v => v.status === "planned" && !v.legacy && v.lines);
   if (!list.some(v => v.id === state.scripts.selected)) state.scripts.selected = list[0]?.id ?? null;
   const selected = list.find(v => v.id === state.scripts.selected);
   const avg = list.length ? list.reduce((n, v) => n + (v.estimate || 0), 0) / list.length : 0;
 
   root.replaceChildren(
-    pageHead({ eyebrow: "02 · Agent 2 · Writer", agent: "writer", title: "Scripts",
-      lede: "Agent 2 writes each sketch for its cast: a hook for the top of the screen and 3 to 6 lines that end on a "
-            + "punchline, using today's trends when one fits. Edit any line before it's animated.",
-      actions: [writeButton({ primary: true })] }),
+    pageHead({ eyebrow: "03 · Agent 3 · Writer", agent: "writer", title: "Scripts",
+      lede: "Agent 3 turns the research into the hosts' dialogue: the presenter tells the case, the co-host asks what "
+            + "viewers would ask. Every line cites its facts, picks what's on screen, and is read again by a fact-checker. "
+            + "Edit anything before it's animated.",
+      actions: [caseButton({ primary: true })] }),
     kpis([
       { label: "Waiting", value: list.length, note: "written, not posted yet", tone: list.length ? null : "warn" },
-      { label: "Animated", value: list.filter(v => v.preview).length, note: "ready to watch in the Studio" },
+      { label: "Waiting for your OK", value: list.filter(v => v.approval === "waiting").length, note: "news and politics" },
       { label: "Average length", value: avg ? Math.round(avg) : "–", unit: avg ? "s" : "", note: "estimated from the words" },
-      { label: "Using a trend", value: list.filter(v => v.trend).length, note: "the rest are evergreen" },
+      { label: "Fixed or cut", value: list.reduce((n, v) => n + (v.cut || 0) + v.lines.filter(l => l.check === "fixed").length, 0),
+        note: "lines the fact-check changed" },
     ]),
-    section({ num: "2.1", title: "Episodes waiting", text: "The autopilot posts these oldest first.",
+    section({ num: "3.1", title: "Cases waiting", text: "The autopilot posts the ready ones oldest first.",
       body: !list.length
-        ? empty("Nothing written yet", "Press “Write a new episode”. On this PC the agents also keep a few written ahead while the autopilot is on.")
+        ? empty("Nothing written yet", "Press “Make a new case”. On this PC the agents also keep a few ready while the autopilot is on.")
         : h("div", { class: "studio" },
-            h("div", { class: "card studio-list" },
-              h("div", { class: "card-head" }, h("h3", {}, plural(list.length, "episode")), h("p", {}, "oldest first")),
-              h("ul", { class: "vlist" }, [...list].reverse().map(v => h("li", {},
-                h("button", { class: "vrow", type: "button", "aria-current": String(v.id === state.scripts.selected),
-                              onclick: () => leaveDirty(state.scripts.selected, () => { state.scripts.selected = v.id; renderScripts(); }) },
-                  h("span", { class: "vid" }, `#${v.id}`),
-                  h("span", { class: "vtitle" }, v.title || v.premise),
-                  h("span", { class: "vmeta" }, avatars(v.cast), h("span", { class: "tag" }, cap(v.setting)),
-                    h("span", {}, `~${Math.round(v.estimate || 0)} s`), v.preview && pill("Animated", "ok"))))))),
-            selected && scriptEditor(selected)) }),
-    h("div", { id: "signals" }));
-  if (state.signals) renderSignals();
+            caseList([...list].reverse(), state.scripts.selected,
+                     id => leaveDirty(state.scripts.selected, () => { state.scripts.selected = id; renderScripts(); }), "oldest last"),
+            selected && scriptEditor(selected)) }));
   syncButtons();
 }
 
 /** Asks before throwing away unsaved edits. */
 function leaveDirty(id, go) {
-  if (state.dirty.has(id) && !confirm("Leave without saving your changes to this episode?")) return;
+  if (state.dirty.has(id) && !confirm("Leave without saving your changes to this case?")) return;
   state.dirty.delete(id);
   go();
 }
@@ -568,41 +837,47 @@ function counted(input, limit) {
 
 function scriptEditor(v) {
   const root = h("article", { class: "card" });
-  const beats = v.beats.map(b => ({ ...b }));
+  const lines = v.lines.map(l => ({ ...l }));
+  const facts = Object.fromEntries(v.research.facts.map(f => [f.id, f]));
   const lengthNote = h("span", { class: "muted small" });
   const markDirty = () => {
     state.dirty.add(v.id);
-    lengthNote.textContent = `~${Math.round(estimate(beats.filter(b => b.line.trim()), v.cast))} s when spoken`;
+    lengthNote.textContent = `~${Math.round(estimate(lines.filter(l => l.text.trim()), v.hosts))} s when spoken`;
   };
-  const select = (options, value, onchange, label) => {
-    const el = h("select", { class: "input", "aria-label": label, onchange: e => { onchange(e.target.value); markDirty(); } },
+  const select = (options, value, onchange, label) =>
+    h("select", { class: "input", "aria-label": label, onchange: e => { onchange(e.target.value); markDirty(); } },
       options.map(([val, text]) => h("option", { value: val, selected: String(val) === String(value) }, text)));
-    return el;
-  };
   const body = h("ol", { class: "beat-list" });
   const labelled = (text, control) => h("label", {}, text, control);
-  const drawBeats = () => body.replaceChildren(...beats.map((b, k) => {
-    const line = h("input", { class: "input", value: b.line, "aria-label": `Line ${k + 1}`,
-                              oninput: e => { b.line = e.target.value; markDirty(); } });
-    return h("li", { class: `beat${k + 1 === beats.length ? " punch" : ""}` },
-      h("span", { class: "k" }, k + 1 === beats.length ? "★" : k + 1),
+  const visuals = Object.entries(v.visuals).map(([key, text]) => [key, `${key} · ${text}`.slice(0, 90)]);
+  const drawLines = () => body.replaceChildren(...lines.map((l, k) => {
+    const text = h("input", { class: "input", value: l.text, "aria-label": `Line ${k + 1}`,
+                              oninput: e => { l.text = e.target.value; markDirty(); } });
+    const [checkText, checkTone] = CHECK[l.check] || ["Not checked", "idle"];
+    return h("li", { class: `beat${k + 1 === lines.length ? " punch" : ""}${k === 0 ? " hook" : ""}` },
+      h("span", { class: "k" }, k === 0 ? "H" : k + 1 === lines.length ? "★" : k + 1),
       h("div", { class: "beat-main" },
-        select(v.cast.map((c, i) => [i, c.name]), b.speaker, x => { b.speaker = Number(x); }, "Who speaks"),
-        h("div", {}, line, counted(line, LIMITS.line))),
+        select(v.hosts.map((c, i) => [i, c.name]), l.speaker, x => { l.speaker = Number(x); }, "Who speaks"),
+        h("div", {}, text, h("div", { class: "line-foot" }, counted(text, LIMITS.line),
+          pill(checkText, checkTone), l.was && h("span", { class: "muted small", title: l.was }, "was: ", l.was.slice(0, 60), "…"),
+          (l.facts || []).map(id => h("span", { class: "tag fact-chip", title: facts[id]?.claim || "" }, id))))),
       h("button", { class: "btn btn-sm btn-ghost btn-danger", type: "button", title: "Remove this line",
-        disabled: beats.length <= 2, onclick: () => { beats.splice(k, 1); markDirty(); drawBeats(); } }, "✕"),
-      h("div", { class: "beat-how" },
-        labelled("Emotion", select(EMOTIONS.map(e => [e, cap(e)]), b.emotion, x => { b.emotion = x; }, "Their emotion")),
-        labelled("Action", select(Object.entries(ACTIONS), b.action, x => { b.action = x; }, "What they do")),
-        labelled("Camera", select([["wide", "Wide"], ["close", "Close-up"]], b.camera, x => { b.camera = x; }, "Camera")),
-        labelled("Others react", select(EMOTIONS.map(e => [e, cap(e)]), b.listener_emotion, x => { b.listener_emotion = x; },
-                                        "The others react"))));
+        disabled: lines.length <= 4, onclick: () => { lines.splice(k, 1); markDirty(); drawLines(); } }, "✕"),
+      h("div", { class: "beat-how five" },
+        labelled("On screen", select(visuals, l.visual, x => { l.visual = x; }, "What's on screen")),
+        labelled("Shot", select(Object.entries(SHOTS), l.shot, x => { l.shot = x; }, "Shot")),
+        labelled("Emotion", select(EMOTIONS.map(e => [e, cap(e)]), l.emotion, x => { l.emotion = x; }, "Their emotion")),
+        labelled("Action", select(Object.entries(ACTIONS), l.action, x => { l.action = x; }, "What they do")),
+        labelled("Other host", select(EMOTIONS.map(e => [e, cap(e)]), l.listener_emotion, x => { l.listener_emotion = x; },
+                                      "How the other host reacts"))));
   }));
-  drawBeats();
+  drawLines();
 
-  const hook = h("input", { class: "input", value: v.hook, oninput: markDirty, "aria-label": "Hook" });
+  const caseTitle = h("input", { class: "input", value: v.case_title, oninput: markDirty, "aria-label": "Case title on screen" });
+  const points = [0, 1, 2].map(i => h("input", { class: "input", value: v.key_points[i] || "", oninput: markDirty,
+                                                "aria-label": `Key point ${i + 1}`, placeholder: `Point ${i + 1}` }));
   const title = h("input", { class: "input", value: v.title, oninput: markDirty, "aria-label": "YouTube title" });
-  const description = h("textarea", { class: "input", rows: 6, oninput: markDirty, "aria-label": "Description" });
+  const description = h("textarea", { class: "input", rows: 4, oninput: markDirty, "aria-label": "Description" });
   description.value = v.description || "";
   markDirty();
   state.dirty.delete(v.id);  // measuring the length isn't an edit
@@ -610,13 +885,14 @@ function scriptEditor(v) {
   const save = async () => {
     try {
       const updated = await api(`/api/videos/${v.id}`, { method: "PATCH", json: {
-        hook: hook.value, title: title.value, description: description.value,
-        beats: beats.map(b => ({ ...b, speaker: Number(b.speaker) })) } });
+        case_title: caseTitle.value, title: title.value, description: description.value,
+        key_points: points.map(p => p.value).filter(Boolean),
+        lines: lines.filter(l => l.text.trim()).map(l => ({ ...l, speaker: Number(l.speaker) })) } });
       state.dirty.delete(v.id);
       const i = state.videos.findIndex(x => x.id === v.id);
       if (i >= 0) state.videos[i] = updated;
       renderScripts();
-      toast("Saved. Agent 3 animates the new version (or press Animate in the Studio).", "ok");
+      toast("Saved. Agent 4 animates the new version (or press Animate in the Studio).", "ok");
     } catch (e) {
       toast(e.message, "error", 7000);
     }
@@ -624,90 +900,44 @@ function scriptEditor(v) {
 
   root.append(
     h("div", { class: "detail-head" },
-      h("div", { class: "row" }, avatars(v.cast), h("span", { class: "tag" }, cap(v.setting)), statusPill(v),
-        v.trend ? h("span", { class: "tag" }, `Trend: ${v.trend}`) : h("span", { class: "tag" }, "Evergreen"),
-        h("span", { class: "muted small" }, `#${v.id} · written ${fromNow(v.created_at)}`)),
-      h("h2", {}, v.premise),
-      h("p", { class: "angle" }, v.cast.map(c => `${c.name} (${c.role})`).join(" · "))),
+      h("div", { class: "row" }, avatars(v.hosts), h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)),
+        statusPill(v), h("span", { class: "muted small" }, `#${v.id} · written ${fromNow(v.created_at)}`)),
+      h("h2", {}, v.angle),
+      h("p", { class: "angle" }, v.hosts.map(c => `${c.name} (${c.role})`).join(" · "))),
     h("div", { class: "detail-body single" },
       h("div", {},
-        h("div", { class: "field" }, h("label", {}, h("span", {}, "Hook · on top of the whole video"), counted(hook, LIMITS.hook)), hook),
-        h("p", { class: "sub-head" }, "The sketch · ★ is the punchline"),
+        v.approval === "waiting" && h("div", { class: "callout", dataset: { tone: "warn" } },
+          "This case is about the news or politics, so it waits for your OK: watch it in the Studio, then approve it there."),
+        h("div", { class: "field" }, h("label", {}, h("span", {}, "Case title · on screen the whole time"), counted(caseTitle, LIMITS.caseTitle)), caseTitle),
+        h("p", { class: "sub-head" }, "The dialogue · H is the hook, ★ the takeaway"),
         body,
         h("div", { class: "row", style: "margin-top:10px" },
-          h("button", { class: "btn btn-sm", type: "button", disabled: beats.length >= 6, onclick: () => {
-            const last = beats[beats.length - 1];
-            beats.push({ speaker: (Number(last.speaker) + 1) % v.cast.length, line: "", emotion: "neutral", action: "talk",
-                         camera: "wide", listener_emotion: "neutral" });
+          h("button", { class: "btn btn-sm", type: "button", disabled: lines.length >= 18, onclick: () => {
+            const last = lines[lines.length - 1];
+            lines.push({ speaker: 1 - Number(last.speaker), text: "", facts: [], visual: "hosts", shot: "studio",
+                         emotion: "neutral", action: "talk", listener_emotion: "neutral", check: "edited" });
             markDirty();
-            drawBeats();
+            drawLines();
           } }, "Add a line"),
           lengthNote),
+        h("p", { class: "hint", style: "margin-top:6px" }, "A line you change is marked “edited by you”: the fact-checker doesn't read it again, so keep its numbers to the facts (F1, F2…) it cites."),
+        h("p", { class: "sub-head" }, "Key points · for the list visual"),
+        h("div", { class: "inline-fields" }, points),
         h("p", { class: "sub-head" }, "On YouTube"),
         h("div", { class: "field" }, h("label", {}, h("span", {}, "Title"), counted(title, LIMITS.title)), title),
-        h("details", { class: "more" }, h("summary", {}, "Description & hashtags"),
-          h("div", { class: "field" }, description),
-          h("p", { class: "hint", style: "margin-top:8px" }, "The music's credit line is added at upload, as its licence asks.")))),
+        h("div", { class: "field" }, h("label", {}, h("span", {}, "Summary")), description),
+        h("details", { class: "more" }, h("summary", {}, "The whole description at upload (sources, photo credits, music)"),
+          h("p", { class: "desc-ro" }, v.full_description || "")))),
     h("div", { class: "detail-actions" },
       h("button", { class: "btn btn-sm btn-primary", type: "button", onclick: save }, "Save changes"),
       h("a", { class: "btn btn-sm", href: `#studio/${v.id}` }, v.preview ? "Watch in the Studio" : "Animate in the Studio"),
+      h("a", { class: "btn btn-sm", href: `#research/${v.id}` }, "The research"),
       h("span", { class: "spacer" }),
       h("button", { class: "btn btn-sm btn-ghost btn-danger", type: "button", onclick: () => discard(v) }, "Discard")));
   return root;
 }
 
-// The trends Agent 2 reads: shown below the scripts. Out-of-date trends come back at once while today's
-// load in the background (asking every country takes minutes), so the section checks again shortly.
-async function loadSignals(refresh = false) {
-  clearTimeout(state.signalsPoll);
-  if (refresh) { state.signals = { ...(state.signals || {}), fetching: true }; renderSignals(); }
-  try {
-    state.signals = await api(`/api/trends${refresh ? "?refresh=1" : ""}`);
-  } catch (e) {
-    if (refresh || !state.signals) toast(e.message, "error");
-  }
-  if (currentView() !== "scripts") return;
-  renderSignals();
-  if (state.signals?.refreshing) state.signalsPoll = setTimeout(() => {
-    if (currentView() === "scripts") loadSignals();
-  }, 15000);
-}
-
-function renderSignals() {
-  const box = $("#signals");
-  const t = state.signals;
-  if (!box) return;
-  if (!t || !t.google_trends) {
-    box.replaceChildren(section({ num: "2.2", title: "What the Writer reads today", body: h("p", { class: "loading" }, "Reading today's trends…") }));
-    return;
-  }
-  const world = t.region === "ALL";
-  const note = t.fetching ? "Asking every country for today's trends… this can take a few minutes."
-    : t.refreshing ? `Showing the trends from ${t.fetched_at ? fromNow(t.fetched_at) : "before"} while today's load in the background.`
-    : t.errors?.length ? `Notes: ${t.errors.join(" · ")}` : `Fetched ${t.fetched_at ? fromNow(t.fetched_at) : "–"}; reused for up to 6 hours.`;
-  box.replaceChildren(section({ num: "2.2", title: "What the Writer reads today", text: note,
-    actions: h("button", { class: "btn btn-sm", type: "button", disabled: !!t.fetching, onclick: () => loadSignals(true) },
-      t.fetching ? "Fetching…" : "Refresh trends"),
-    body: h("div", { class: "grid-2" },
-      h("div", { class: "card card-pad" },
-        h("p", { class: "sub-head" }, world ? `Trending searches · ${t.countries ?? "every"} countries` : `Trending searches · ${t.region}`),
-        t.google_trends.length
-          ? h("ol", { class: "ranked" }, t.google_trends.slice(0, 12).map(g => h("li", {}, h("span", {}, g.term),
-              h("small", { title: (g.countries || []).join(", ") }, world ? `${(g.countries || []).length} ctry` : g.traffic || ""))))
-          : h("p", { class: "note" }, "Nothing yet.")),
-      h("div", { class: "card card-pad" },
-        h("p", { class: "sub-head" }, "Popular comedy on YouTube"),
-        t.youtube_popular.length
-          ? h("ol", { class: "ranked" }, t.youtube_popular.slice(0, 12).map(p => h("li", {}, h("span", {}, p.title),
-              h("small", {}, p.countries?.length > 1 ? `${p.countries.length} ctry` : p.views ? `${(p.views / 1e6).toFixed(1)}M` : ""))))
-          : h("p", { class: "note" }, state.app.services.youtube ? "Nothing came back this time."
-                                      : ["Connect YouTube to see these. ", h("a", { href: "#youtube" }, "How →")]),
-        t.events?.length > 0 && [h("p", { class: "sub-head" }, "Coming up"),
-          h("ul", { class: "events" }, t.events.slice(0, 5).map(e => h("li", {}, h("span", {}, e.name),
-            h("small", {}, e.in_days === 0 ? "today" : `in ${plural(e.in_days, "day")}`))))])) }));
-}
-
-// ------------------------------------------------------------------ 03 studio (Agent 3)
+// ------------------------------------------------------------------ 04 studio (Agent 4)
 
 const STUDIO_FILTERS = [
   ["planned", "Waiting", v => v.status === "planned"],
@@ -716,10 +946,10 @@ const STUDIO_FILTERS = [
   ["stopped", "Stopped", v => ["failed", "vetoed", "discarded", "skipped"].includes(v.status)],
 ];
 const STUDIO_TEXT = {
-  planned: "Written episodes. Animate one to watch it before its turn; the autopilot posts them oldest first.",
+  planned: "Written cases. Animate one to watch it before its turn; news and politics wait for your OK.",
   coming: "Uploaded as private. Each goes public at its slot; delete it in YouTube Studio before then to veto it.",
   published: "Public on YouTube.",
-  stopped: "Episodes that failed, were vetoed or were discarded.",
+  stopped: "Cases that failed, were vetoed or were discarded.",
 };
 
 async function loadStudio() {
@@ -751,29 +981,32 @@ function renderStudio() {
       label, h("span", { class: "n" }, counts[key]))));
 
   root.replaceChildren(
-    pageHead({ eyebrow: "03 · Agent 3 · Animator", agent: "animator", title: "Studio",
-      lede: "Agent 3 gives every line its character's voice (Kokoro, on this PC), moves the mouths with the words "
-            + "(Rhubarb), adds music in the script's mood and animates the sketch. Free and private: nothing leaves this PC.",
+    pageHead({ eyebrow: "04 · Agent 4 · Animator", agent: "animator", title: "Studio",
+      lede: "Agent 4 records every line in its host's voice (Kokoro, on this PC), moves the mouths with the words "
+            + "(Rhubarb), draws the studio, the photos, charts, maps and timelines, adds music in the script's mood, "
+            + "and makes the video. Free and private: nothing leaves this PC.",
       actions: [makeButton()] }),
     kpis([
-      { label: "Animated", value: waiting.filter(v => v.preview).length, unit: `/ ${waiting.length}`, note: "waiting episodes ready to watch" },
+      { label: "Animated", value: waiting.filter(v => v.preview).length, unit: `/ ${waiting.length}`, note: "waiting cases ready to watch" },
+      { label: "Waiting for your OK", value: waiting.filter(v => v.approval === "waiting").length, note: "news and politics",
+        tone: waiting.some(v => v.approval === "waiting") ? "warn" : null },
       { label: "Coming up", value: counts.coming, note: "uploaded, not public yet" },
       { label: "Published", value: counts.published, note: "in the last 60 Shorts" },
-      { label: "Stopped", value: counts.stopped, note: "failed, vetoed or discarded" },
     ]),
-    section({ num: "3.1", title: "Episodes", text: STUDIO_TEXT[filter], actions: tabs,
+    section({ num: "4.1", title: "Cases", text: STUDIO_TEXT[filter], actions: tabs,
       body: !state.videos.length
-        ? empty("No episodes yet", "Press “Write a new episode” on the Scripts page, then animate it here.")
+        ? empty("No cases yet", "Press “Make a new case” on the Topics page, then animate it here.")
         : !list.length ? empty(`Nothing ${STUDIO_FILTERS.find(([k]) => k === filter)[1].toLowerCase()}`, STUDIO_TEXT[filter])
         : h("div", { class: "studio" },
             h("div", { class: "card studio-list" },
-              h("div", { class: "card-head" }, h("h3", {}, plural(list.length, "episode")), h("p", {}, "newest first")),
+              h("div", { class: "card-head" }, h("h3", {}, plural(list.length, "Short")), h("p", {}, "newest first")),
               h("ul", { class: "vlist" }, list.map(v => h("li", {},
                 h("button", { class: "vrow", type: "button", "aria-current": String(v.id === state.studio.selected),
                               onclick: () => { state.studio.selected = v.id; renderStudio(); } },
                   h("span", { class: "vid" }, `#${v.id}`),
-                  h("span", { class: "vtitle" }, v.title || v.premise || "A new episode"),
-                  h("span", { class: "vmeta" }, avatars(v.cast), statusPill(v), v.legacy && h("span", { class: "tag" }, "Cute-animal version"),
+                  h("span", { class: "vtitle" }, v.title || v.angle || "A case"),
+                  h("span", { class: "vmeta" }, avatars(v.hosts), statusPill(v),
+                    v.legacy ? h("span", { class: "tag" }, v.legacy) : h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)),
                     v.slot && v.status !== "planned" && h("span", {}, clockIn(v.slot, scheduleTz())),
                     v.status === "planned" && !v.legacy && (v.preview ? pill("Animated", "ok") : h("span", {}, "not animated"))) ))))),
             selected && studioDetail(selected)) }));
@@ -789,54 +1022,59 @@ function scheduledBox(v) {
 }
 
 function scriptView(v) {
-  return h("ol", { class: "script" }, v.beats.map((b, k) => {
-    const who = v.cast[b.speaker] || {};
-    return h("li", { class: k === v.beats.length - 1 ? "punch" : "" },
+  return h("ol", { class: "script" }, v.lines.map((l, k) => {
+    const who = v.hosts[l.speaker] || {};
+    const [checkText, checkTone] = CHECK[l.check] || ["Not checked", "idle"];
+    return h("li", { class: k === v.lines.length - 1 ? "punch" : "" },
       who.image ? h("img", { src: who.image, alt: "" }) : h("span"),
       h("div", {},
         h("span", { class: "who" }, who.name || "?"),
-        h("p", { class: "line" }, b.line),
-        h("div", { class: "how" }, h("span", { class: "tag" }, cap(b.emotion)), h("span", { class: "tag" }, ACTIONS[b.action] || b.action),
-          h("span", { class: "tag" }, b.camera === "close" ? "Close-up" : "Wide"),
-          h("span", { class: "tag" }, h("small", {}, "others:"), cap(b.listener_emotion)))));
+        h("p", { class: "line" }, l.text),
+        h("div", { class: "how" }, h("span", { class: "tag" }, SHOTS[l.shot] || l.shot), h("span", { class: "tag" }, l.visual),
+          h("span", { class: "tag" }, cap(l.emotion)), l.check !== "ok" && pill(checkText, checkTone))));
   }));
 }
 
 function studioDetail(v) {
   if (v.legacy) return legacyDetail(v);
   const editable = v.status === "planned";
+  const waits = v.approval === "waiting";
   const s = state.app.services;
   const nextOpen = state.app.autopilot.next_open;
-  const blocked = !s.youtube || !nextOpen;
+  const blocked = !s.youtube || !nextOpen || waits;
   const phone = h("div", { class: "phone" },
     v.preview ? h("video", { src: v.preview, controls: true, playsinline: true, preload: "metadata", poster: v.cover || undefined })
       : v.cover ? [h("img", { src: v.cover, alt: "" }), h("span", { class: "phone-badge" }, "Uploaded; preview cleared")]
-      : h("div", { class: "phone-blank" }, editable ? "Not animated yet. Press “Animate” below: about a minute." : "No video here."));
+      : h("div", { class: "phone-blank" }, editable ? "Not animated yet. Press “Animate” below: two or three minutes." : "No video here."));
   return h("article", { class: "card" },
     h("div", { class: "detail-head" },
-      h("div", { class: "row" }, avatars(v.cast), h("span", { class: "tag" }, cap(v.setting)), statusPill(v),
+      h("div", { class: "row" }, avatars(v.hosts), h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)), statusPill(v),
         h("span", { class: "muted small" }, `#${v.id} · ${v.duration ? secs(v.duration) : `~${secs(v.estimate)}`}`
           + (v.music ? ` · ♪ ${v.music.replace(/\.[^.]+$/, "")}` : ""))),
-      h("h2", {}, v.title || v.premise),
-      v.hook && h("p", { class: "angle" }, `Hook: “${v.hook}”`)),
+      h("h2", {}, v.title || v.angle),
+      h("p", { class: "angle" }, v.angle)),
     h("div", { class: "detail-body" },
       phone,
       h("div", {},
+        editable && waits && h("div", { class: "callout", dataset: { tone: "warn" } },
+          h("b", {}, "Waits for your OK. "), "It's about the news or politics: watch it, check the research, then approve it "
+          + "(it then goes up at its turn) or discard it. Unapproved, it's discarded after a couple of days."),
+        v.approval === "approved" && editable && h("div", { class: "callout", dataset: { tone: "ok" } }, `Approved ${fromNow(v.approved_at)}.`),
         v.status === "making" && v.slot && h("div", { class: "callout", dataset: { tone: "warn" } }, "Being made for the ",
           h("b", {}, clockIn(v.slot, scheduleTz())), " slot right now."),
         v.status === "scheduled" && scheduledBox(v),
         v.error && h("div", { class: "callout", dataset: { tone: "bad" } }, v.error),
-        h("p", { class: "sub-head" }, "The sketch"),
+        h("p", { class: "sub-head" }, "The script"),
         scriptView(v),
-        h("details", { class: "more" }, h("summary", {}, "Description, credits & hashtags"),
-          h("p", { class: "desc-ro" }, v.description || ""),
-          v.music_credit && h("p", { class: "desc-ro muted", style: "margin-top:8px" }, `Added at upload:\n${v.music_credit}`)))),
+        h("details", { class: "more" }, h("summary", {}, "Description, sources & credits"),
+          h("p", { class: "desc-ro" }, v.full_description || v.description || "")))),
     editable && h("div", { class: "detail-actions" },
+      waits && h("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => approve(v) }, "Approve"),
       h("button", { class: "btn btn-sm", type: "button", "data-needs-idle": true, onclick: () => runTask("render", v.id) },
         v.preview ? "Animate again" : "Animate"),
       h("a", { class: "btn btn-sm", href: `#scripts/${v.id}` }, "Edit the script"),
-      h("button", { class: "btn btn-sm btn-primary", type: "button", "data-needs-idle": true, dataset: { blocked: blocked ? "1" : "0" },
-        title: !s.youtube ? "Connect YouTube first" : !nextOpen ? "No free slot in the next week"
+      h("button", { class: `btn btn-sm${waits ? "" : " btn-primary"}`, type: "button", "data-needs-idle": true, dataset: { blocked: blocked ? "1" : "0" },
+        title: waits ? "Approve it first" : !s.youtube ? "Connect YouTube first" : !nextOpen ? "No free slot in the next week"
              : `Uploads as private, scheduled for the next free slot (${clockIn(nextOpen, scheduleTz())})`,
         onclick: () => upload(v) }, "Upload & schedule"),
       h("span", { class: "spacer" }),
@@ -844,14 +1082,14 @@ function studioDetail(v) {
       h("button", { class: "btn btn-sm btn-ghost btn-danger", type: "button", onclick: () => discard(v) }, "Discard")));
 }
 
-/** A Short made by the cute-animal version: it can still go up as it is, but the agents don't make this kind. */
+/** A Short made by an earlier version: it can still go up as it is, but the agents don't make this kind. */
 function legacyDetail(v) {
   const s = state.app.services;
   const canUpload = v.status === "planned" && v.preview && s.youtube && state.app.autopilot.next_open;
   return h("article", { class: "card" },
     h("div", { class: "detail-head" },
-      h("div", { class: "row" }, statusPill(v), h("span", { class: "tag" }, "Cute-animal version"), h("span", { class: "muted small" }, `#${v.id}`)),
-      h("h2", {}, v.title || v.premise || "A Short")),
+      h("div", { class: "row" }, statusPill(v), h("span", { class: "tag" }, v.legacy), h("span", { class: "muted small" }, `#${v.id}`)),
+      h("h2", {}, v.title || "A Short")),
     h("div", { class: "detail-body" },
       h("div", { class: "phone" }, v.preview
         ? h("video", { src: v.preview, controls: true, playsinline: true, preload: "metadata" })
@@ -859,7 +1097,7 @@ function legacyDetail(v) {
       h("div", {},
         v.status === "scheduled" && scheduledBox(v),
         v.status === "planned" && h("div", { class: "callout", dataset: { tone: "warn" } },
-          "Made by the cute-animal version, before the cartoons. It can still go up exactly as it is"
+          `Made by the ${v.legacy.toLowerCase()}, before the case studies. It can still go up exactly as it is`
           + (v.preview ? "" : " (but its video wasn't kept)") + ", or be discarded; the agents don't make this kind any more."),
         h("details", { class: "more" }, h("summary", {}, "Description"), h("p", { class: "desc-ro" }, v.description || "")))),
     v.status === "planned" && h("div", { class: "detail-actions" },
@@ -867,6 +1105,18 @@ function legacyDetail(v) {
         onclick: () => upload(v) }, "Upload & schedule"),
       h("span", { class: "spacer" }),
       h("button", { class: "btn btn-sm btn-ghost btn-danger", type: "button", onclick: () => discard(v) }, "Discard")));
+}
+
+async function approve(v) {
+  if (!confirm(`Approve “${v.title}”?\n\nIt then goes up at its turn like any other case (or now, with “Upload & schedule”).`)) return;
+  try {
+    await api(`/api/videos/${v.id}/approve`, { method: "POST" });
+    toast("Approved.", "ok");
+    await loadState();
+    loaders[currentView()]();
+  } catch (e) {
+    toast(e.message, "error");
+  }
 }
 
 function upload(v) {
@@ -878,7 +1128,7 @@ function upload(v) {
 }
 
 async function discard(v) {
-  if (!confirm(`Discard “${v.title || v.premise}”? It won't be posted.`)) return;
+  if (!confirm(`Discard “${v.title || v.angle}”? It won't be posted.`)) return;
   try {
     await api(`/api/videos/${v.id}`, { method: "DELETE" });
     state.dirty.delete(v.id);
@@ -890,7 +1140,7 @@ async function discard(v) {
   }
 }
 
-// ------------------------------------------------------------------ 04 schedule (Agent 4)
+// ------------------------------------------------------------------ 05 schedule (Agent 5)
 
 async function loadSchedule() {
   const a = state.app;
@@ -901,9 +1151,10 @@ async function loadSchedule() {
     .sort((x, y) => new Date(x.publish_at) - new Date(y.publish_at));
   const posted = ap.slots.filter(s => s.state === "posted").length;
   $("#view-schedule").replaceChildren(
-    pageHead({ eyebrow: "04 · Agent 4 · Publisher", agent: "publisher", title: "Schedule",
-      lede: "Agent 4 uploads each Short as private with its slot as the publish time, so YouTube makes it public on the "
-            + "minute, and adds the music's credit line. Until then you can delete it in YouTube Studio: that's your veto.",
+    pageHead({ eyebrow: "05 · Agent 5 · Publisher", agent: "publisher", title: "Schedule",
+      lede: "Agent 5 uploads each case as private with its slot as the publish time, so YouTube makes it public on the "
+            + "minute, with its sources, photo credits and the music's credit in the description. News and politics go "
+            + "up only after your OK. Until a Short is public you can delete it in YouTube Studio: that's your veto.",
       actions: [h("a", { class: "btn", href: "#settings" }, "Change the timetable"), makeButton({ primary: true })] }),
     kpis([
       { label: "Posted today", value: posted, unit: `/ ${ap.slots.length}` },
@@ -912,14 +1163,14 @@ async function loadSchedule() {
       { label: "Next free slot", value: ap.next_open ? clockIn(ap.next_open, scheduleTz()) : "–",
         note: ap.next_open ? fromNow(ap.next_open) : "every slot this week is taken" },
     ]),
-    section({ num: "4.1", title: "Today's slots", text: `${plural(ap.schedule.posts_per_day, "Short")} a day, one every ${hours(ap.schedule.every_hours)} from ${ap.schedule.first_post} (${scheduleTz()}).`,
+    section({ num: "5.1", title: "Today's slots", text: `${plural(ap.schedule.posts_per_day, "Short")} a day, one every ${hours(ap.schedule.every_hours)} from ${ap.schedule.first_post} (${scheduleTz()}).`,
       body: table([["Time", { class: "col-time" }], ["New York", { class: "col-time" }], "Status", "Short", ["", { class: "col-actions" }]],
                   slotRows(ap.slots)) }),
-    section({ num: "4.2", title: "Uploaded, going public soon", text: "Private on YouTube until their time.",
+    section({ num: "5.2", title: "Uploaded, going public soon", text: "Private on YouTube until their time.",
       body: ahead.length
         ? table([["Goes public", { class: "col-time" }], "Short", ["", { class: "col-actions" }]], ahead.map(v => h("tr", {},
             h("td", { class: "col-time" }, fmtWhen(v.publish_at), h("small", { class: "muted", style: "display:block" }, fromNow(v.publish_at))),
-            h("td", { class: "title-cell" }, h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title)), h("small", {}, cap(v.setting))),
+            h("td", { class: "title-cell" }, h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title)), h("small", {}, v.legacy || category(v.category))),
             h("td", { class: "col-actions" }, v.studio_url && h("a", { class: "platform", dataset: { tone: "run" }, href: v.studio_url,
               target: "_blank", rel: "noopener" }, "Studio ↗")))))
         : empty("Nothing scheduled ahead", a.paused ? "The autopilot is paused. Switch it on, or press “Make the next Short now”."
@@ -927,20 +1178,20 @@ async function loadSchedule() {
   syncButtons();
 }
 
-// ------------------------------------------------------------------ 05 results (Agent 5)
+// ------------------------------------------------------------------ 06 results (Agent 6)
 
-const LIFT_KINDS = [["setting", "Setting"], ["role", "Character role"], ["voice", "Voice"], ["outfit", "Outfit"],
-                    ["length", "Length"], ["beats", "Number of lines"], ["trend", "Trend or evergreen"], ["hour", "Posting time"]];
+const LIFT_KINDS = [["category", "Case type"], ["why_now", "Why now"], ["hook", "Kind of hook"], ["visuals", "Visuals used"],
+                    ["length", "Length"], ["lines", "Number of lines"], ["follow_up", "Follow-up or first case"], ["hour", "Posting time"]];
 
-function liftCard(title, weights) {
+function liftCard(title, weights, names = {}) {
   const entries = Object.entries(weights || {}).sort((a, b) => b[1] - a[1]);
   return h("div", { class: "card card-pad lift" }, h("p", { class: "sub-head" }, title),
     entries.length ? h("ul", {}, entries.map(([name, x]) => {
       const pct = Math.min(Math.abs(x - 1), 1) * 50;
-      return h("li", {}, h("span", { class: "lift-name", title: name }, cap(name)),
+      return h("li", {}, h("span", { class: "lift-name", title: name }, names[name] || cap(name)),
         h("span", { class: "lift-bar" }, h("span", { class: x >= 1 ? "up" : "down", style: `width:${pct}%` })),
         h("span", { class: "lift-num" }, `${x.toFixed(2)}x`));
-    })) : h("p", { class: "note" }, "Not enough Shorts in any group yet."));
+    })) : h("p", { class: "note" }, "Not enough cases in any group yet."));
 }
 
 async function loadResults() {
@@ -952,38 +1203,46 @@ async function loadResults() {
   const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
   const pcts = rows.map(x => x.avg_view_pct).filter(x => x !== null && x !== undefined);
   $("#view-results").replaceChildren(
-    pageHead({ eyebrow: "05 · Agent 5 · Analyst", agent: "analyst", title: "Results",
-      lede: "Agent 5 reads YouTube's numbers every day and, once a week, writes the playbook: what does better than "
-            + "the channel's usual, by setting, kind of character, voice, length and posting time. Agents 1 and 2 follow it "
-            + "three times out of four, so the channel keeps trying new things.",
+    pageHead({ eyebrow: "06 · Agent 6 · Analyst", agent: "analyst", title: "Results",
+      lede: "Agent 6 reads YouTube's numbers and the newest comments every day and, once a week, writes the playbook: "
+            + "what does better than the channel's usual, by case type, hook, visuals, length and posting time. Agents 1 and "
+            + "3 follow it three times out of four, so the channel keeps trying new things.",
       actions: [taskButton("stats", "Read the numbers now", { primary: true })] }),
     kpis([
-      { label: "Shorts published", value: rows.length },
+      { label: "Cases published", value: rows.length },
       { label: "Views", value: views.reduce((a, b) => a + b, 0).toLocaleString() },
       { label: "Median views", value: median.toLocaleString(), note: "the playbook's yardstick" },
       { label: "Average watched", value: pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length) : "–",
         unit: pcts.length ? "%" : "", note: "YouTube Analytics, ~2 days late" },
+      { label: "Comments saved", value: r.comments, note: "for the Editor's topic ideas" },
     ]),
-    section({ num: "5.1", title: "The playbook", text: book.updated_at ? `Written ${fromNow(book.updated_at)} from ${plural(book.samples, "Short")}.` : "",
+    section({ num: "6.1", title: "The playbook", text: book.updated_at ? `Written ${fromNow(book.updated_at)} from ${plural(book.samples, "case")}.` : "",
       body: book.samples
         ? h("div", { class: "card card-pad" }, book.summary && h("p", {}, book.summary),
             book.lessons?.length > 0 && h("ol", { class: "lessons", style: "margin-top:10px" }, book.lessons.map(l => h("li", {}, l))))
-        : empty("No playbook yet", `Agent 5 writes one once ${r.min_samples} Shorts are at least 2 days old (${r.judged} so far).`) }),
-    section({ num: "5.2", title: "What does better than usual", text: `Median views of each group against the channel's median; a group needs ${r.min_samples} Shorts.`,
-      body: h("div", { class: "lift-grid" }, LIFT_KINDS.map(([key, title]) => liftCard(title, book.weights?.[key]))) }),
-    section({ num: "5.3", title: "Shorts and their numbers", text: "Newest first.",
+        : empty("No playbook yet", `Agent 6 writes one once ${r.min_samples} cases are at least 2 days old (${r.judged} so far).`) }),
+    section({ num: "6.2", title: "What does better than usual", text: `Median views of each group against the channel's median; a group needs ${r.min_samples} cases.`,
+      body: h("div", { class: "lift-grid" }, LIFT_KINDS.map(([key, title]) =>
+        liftCard(title, book.weights?.[key], key === "category" ? CATEGORY : key === "why_now" ? WHY_NOW : {}))) }),
+    section({ num: "6.3", title: "Follow-up candidates", text: "Cases with 1.5 times the usual views and no part 2 yet. Agent 1 may make one.",
+      body: r.follow_ups.length
+        ? table(["Case", ["Views vs usual", { class: "col-right" }]], r.follow_ups.map(f => h("tr", {},
+            h("td", { class: "title-cell" }, h("a", { href: `#studio/${f.id}` }, h("b", {}, f.title))),
+            h("td", { class: "col-right" }, `${f.views_vs_usual}x`))))
+        : empty("None yet", "They appear once some cases clearly beat the channel's usual.") }),
+    section({ num: "6.4", title: "Cases and their numbers", text: "Newest first.",
       body: rows.length
-        ? table(["Short", ["Published", { class: "col-time" }], ["Views", { class: "col-right" }], ["Likes", { class: "col-right" }],
+        ? table(["Case", ["Published", { class: "col-time" }], ["Views", { class: "col-right" }], ["Likes", { class: "col-right" }],
                  ["Comments", { class: "col-right" }], ["Watched", { class: "col-right" }]],
             [...rows].reverse().map(x => h("tr", {},
               h("td", { class: "title-cell" }, h("a", { href: `#studio/${x.id}` }, h("b", {}, x.title)),
-                h("small", {}, cap(x.traits.setting?.[0] || ""))),
+                h("small", {}, category(x.traits.category?.[0]))),
               h("td", { class: "col-time small" }, fmtWhen(x.publish_at)),
               h("td", { class: "col-right" }, x.views.toLocaleString()),
               h("td", { class: "col-right" }, x.likes.toLocaleString()),
               h("td", { class: "col-right" }, x.comments.toLocaleString()),
               h("td", { class: "col-right" }, x.avg_view_pct !== null && x.avg_view_pct !== undefined ? `${Math.round(x.avg_view_pct)}%` : "–"))))
-        : empty("No numbers yet", "They appear once Shorts are public and Agent 5 has read YouTube's numbers.") }));
+        : empty("No numbers yet", "They appear once cases are public and Agent 6 has read YouTube's numbers.") }));
   syncButtons();
 }
 
@@ -995,7 +1254,7 @@ async function loadMusic() {
                              onchange: e => addTracks([...e.target.files]) });
   const zone = h("label", { class: "dropzone" }, input,
     h("b", {}, "Drop music files here, or click to choose"),
-    h("small", {}, "Agent 3 picks one in the script's mood (tracks.yaml), or any at random. Use only music you may post "
+    h("small", {}, "Agent 4 picks one in the script's mood (tracks.yaml), or any at random. Use only music you may post "
                    + "on YouTube; a track that needs a credit gets its line added at upload."));
   zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("over"); });
   zone.addEventListener("dragleave", () => zone.classList.remove("over"));
@@ -1004,7 +1263,7 @@ async function loadMusic() {
 
   $("#view-music").replaceChildren(
     pageHead({ eyebrow: "L1 · Library", title: "Music",
-      lede: "The music under the voices. It dips while someone speaks and comes back in the pauses." }),
+      lede: "The music under the hosts. It dips while someone speaks and comes back in the pauses." }),
     kpis([
       { label: "Tracks", value: tracks.length, tone: tracks.length ? null : "warn", note: tracks.length ? "one per Short" : "Shorts have no music" },
       { label: "With a credit line", value: tracks.filter(t => t.credit).length, note: "added to the description at upload" },
@@ -1046,6 +1305,68 @@ async function removeTrack(t) {
   }
 }
 
+// ------------------------------------------------------------------ L2 hosts
+
+const LOOK_PARTS = [["face", "Face"], ["eyes", "Eyes"], ["nose", "Nose"], ["hair", "Hair"], ["hair_color", "Hair colour"],
+                    ["facial_hair", "Facial hair"], ["glasses", "Glasses"], ["skin", "Skin"], ["body", "Body"], ["height", "Height"],
+                    ["outfit", "Outfit"], ["outfit_color", "Outfit colour"], ["accent_color", "Inner layer"], ["accessory", "Accessory"]];
+
+async function loadHosts() {
+  const d = await api("/api/hosts");
+  const ro = !state.app.local;
+  const options = part => part === "skin" ? d.skin : part === "hair_color" ? d.hair_color
+    : ["outfit_color", "accent_color"].includes(part) ? d.colors : d.parts[part];
+  const hostCard = host => {
+    const form = h("form", { class: "host-form", onsubmit: e => saveHost(e, host.role_key) });
+    const field = (label, control) => h("label", { class: "field" }, h("span", { class: "small muted" }, label), control);
+    form.append(
+      h("div", { class: "inline-fields" },
+        field("Name", h("input", { class: "input", name: "name", value: host.name, maxlength: 24, disabled: ro })),
+        field("Voice", h("select", { class: "input", name: "voice", disabled: ro }, Object.entries(d.voices).map(([key, label]) =>
+          h("option", { value: key, selected: key === host.voice }, `${key} · ${label}`)))),
+        field("Speed", h("input", { class: "input", name: "speed", type: "number", min: 0.9, max: 1.2, step: 0.01, value: host.speed, disabled: ro }))),
+      field("Personality", h("input", { class: "input", name: "personality", value: host.personality, maxlength: 180, disabled: ro })),
+      h("details", { class: "more" }, h("summary", {}, "Look"),
+        h("div", { class: "inline-fields", style: "margin-top:10px" }, LOOK_PARTS.map(([part, label]) =>
+          field(label, h("select", { class: "input", name: part, disabled: ro }, (options(part) || []).map(o =>
+            h("option", { value: o, selected: o === host[part] }, cap(o)))))))),
+      h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "btn btn-sm btn-primary", type: "submit", disabled: ro }, "Save"),
+        h("span", { class: "note" }, "Saved as a new version: cases already written keep the host they were written with.")));
+    return h("article", { class: "card host-card" },
+      h("img", { class: "portrait", src: host.image, alt: `${host.name}, drawn` }),
+      h("div", { class: "char-body" },
+        h("h3", {}, host.name, h("small", {}, host.role)),
+        h("p", {}, host.personality),
+        h("p", { class: "look" }, host.look.split(": ").slice(1).join(": ")),
+        h("p", { class: "look" }, `Voice: ${host.voice_label} (${host.voice}, speed ${host.speed})`),
+        h("audio", { src: host.voice_sample, controls: true, preload: "none" }),
+        form));
+  };
+  $("#view-hosts").replaceChildren(
+    pageHead({ eyebrow: "L2 · Library", title: "Hosts",
+      lede: "The two cartoon hosts who present every case: the presenter tells it, the co-host asks what viewers would ask. "
+            + "Same two every time, so viewers get to know them. Change anything about them here.",
+      actions: [taskButton("hosts", d.hosts.length ? "Design new hosts" : "Design the hosts",
+        { primary: !d.hosts.length, confirmText: d.hosts.length ? "Design two new hosts? Cases already written keep the current ones." : null })] }),
+    d.hosts.length
+      ? h("div", { class: "host-grid" }, d.hosts.map(hostCard))
+      : empty("No hosts yet", "Press “Design the hosts” (one free Gemini call), or just make a case: they're designed with the first one."));
+  syncButtons();
+}
+
+async function saveHost(event, role) {
+  event.preventDefault();
+  const f = new FormData(event.target);
+  const changes = Object.fromEntries([...f.entries()].map(([k, v]) => [k, k === "speed" ? Number(v) : v]));
+  try {
+    await api(`/api/hosts/${role}`, { method: "PATCH", json: changes });
+    toast("Saved.", "ok");
+    loadHosts();
+  } catch (e) {
+    toast(e.message, "error", 7000);
+  }
+}
+
 // ------------------------------------------------------------------ S1 YouTube
 
 async function loadYouTube(refresh = false) {
@@ -1066,7 +1387,7 @@ async function loadYouTube(refresh = false) {
                   "Check connection")] }),
     kpis([
       { label: "Channel", value: ok ? (y.channel || "Connected") : "Not connected", tone: ok ? "ok" : "warn",
-        note: ok ? "uploads and stats are ready" : y.error ? `saved sign-in didn't work: ${y.error}` : "finish the steps below" },
+        note: ok ? "uploads, stats and comments are ready" : y.error ? `saved sign-in didn't work: ${y.error}` : "finish the steps below" },
       { label: "OAuth client file", value: y.client_file ? "Saved" : "Missing", tone: y.client_file ? "ok" : "warn", note: "credentials.json" },
     ]),
     section({ num: "S1.1", title: "Connect in three steps",
@@ -1090,7 +1411,7 @@ async function loadYouTube(refresh = false) {
         step(3, ok, "Connect your channel",
           y.connected
             ? (y.error ? h("div", { class: "callout", dataset: { tone: "bad" } }, `Saved sign-in didn't work: ${y.error}`)
-                       : h("p", {}, "Connected to ", h("b", {}, y.channel || "your channel"), ". Uploads and stats are ready."))
+                       : h("p", {}, "Connected to ", h("b", {}, y.channel || "your channel"), ". Uploads, stats and comments are ready."))
             : h("p", {}, "A Google page opens in your browser: choose your channel and allow access."),
           h("div", { class: "row" },
             h("button", { class: "btn btn-primary btn-sm", type: "button", disabled: !y.client_file || !y.local || connecting,
@@ -1115,7 +1436,7 @@ async function loadSettings() {
   const s = await api("/api/settings");
   const ro = !s.editable;
   const sch = s.schedule;
-  const ep = s.episodes;
+  const cs = s.cases;
   const row = (label, hint, control, forId) => h("div", { class: "form-row" },
     h("div", {}, h("label", { class: "label", for: forId }, label), hint && h("p", { class: "hint" }, hint)),
     h("div", {}, control));
@@ -1126,6 +1447,8 @@ async function loadSettings() {
       h("input", { type: "range", id: `s-${name}`, name, min, max, step, value, disabled: ro,
                    oninput: e => { out.textContent = `${e.target.value}${unit}`; } }), out);
   };
+  const toggle = (name, checked, label) => h("label", { class: "check" },
+    h("input", { type: "checkbox", id: `s-${name}`, name, checked, disabled: ro }), h("span", {}, label));
   const preview = h("div", { class: "slot-preview", "aria-live": "polite" });
   const form = h("form", { class: "settings-sections", novalidate: true, onsubmit: saveSettings });
   const showSlots = () => preview.replaceChildren(...slotPreview($("#s-first_post", form).value,
@@ -1141,12 +1464,14 @@ async function loadSettings() {
   form.append(
     card("channel", "S2.1", "Channel",
       row("Channel name", null, text("name", s.channel.name), "s-name"),
+      row("Name on the videos", "The end card says “Follow <name> for a new case every day”. Off: just “A new case every day”.",
+          toggle("show_name", !!s.channel.show_name, "Show the channel's name on the end card")),
       row("Public contact email", h("span", {}, "Optional. Shown on your public ", h("a", { href: "/about", target: "_blank" }, "About"), " and ",
             h("a", { href: "/privacy", target: "_blank" }, "Privacy"), " pages, which Google asks for."),
           text("contact_email", s.channel.contact_email), "s-contact_email"),
-      row("Who it's for", "Agents 1 and 2 write for these viewers.", text("audience", s.channel.audience), "s-audience"),
-      row("Humour and voice", "Agents 1 and 2 follow this in every cast and every line.",
-          h("textarea", { class: "input", id: "s-voice", name: "voice", rows: 4, disabled: ro, value: s.channel.voice }), "s-voice")),
+      row("Who it's for", "The agents choose and write cases for these viewers.", text("audience", s.channel.audience), "s-audience"),
+      row("Voice and rules", "The tone and limits Agents 1 and 3 follow in every case.",
+          h("textarea", { class: "input", id: "s-voice", name: "voice", rows: 5, disabled: ro, value: s.channel.voice }), "s-voice")),
     card("posting", "S2.2", "Posting",
       row("Daily schedule", "Each Short is made in the hours before its time and goes public on the minute.",
         h("div", {},
@@ -1161,30 +1486,43 @@ async function loadSettings() {
             h("div", { class: "field" }, h("label", { for: "s-timezone" }, "On the clock of"),
               select("timezone", zones.map(z => [z, z === browserZone ? `${z} (this device)` : z]), sch.timezone, showSlots))),
           preview))),
-    card("episodes", "S2.3", "Episodes",
-      row("Where sketches happen", "Agent 1 picks one of these for each episode.",
-        h("div", { class: "option-grid" }, Object.entries(s.settings_available).map(([key, label]) =>
-          h("label", { class: "option" },
-            h("input", { type: "checkbox", name: "settings", value: key, checked: ep.settings.includes(key), disabled: ro }),
-            h("b", {}, key), h("span", {}, label))))),
-      row("Characters per episode", "At most; Agent 1 casts 2 or 3.",
-          select("max_cast", [[2, "Up to 2"], [3, "Up to 3"]], ep.max_cast), "s-max_cast"),
-      row("Longest sketch", "Agent 2 keeps each sketch under this.", range("max_seconds", ep.max_seconds, 20, 60, 1, " s"), "s-max_seconds"),
-      row("Written ahead", "While the autopilot is on, this PC keeps this many episodes written and animated, so you can watch them first.",
-          select("queue", [0, 1, 2, 3, 4, 5].map(n => [n, n === 0 ? "None (write each at its slot)" : plural(n, "episode")]), ep.queue), "s-queue")),
-    card("reach", "S2.4", "Trends and hashtags",
+    card("cases", "S2.3", "Cases",
+      row("Case types", "How often Agent 1 picks each type.",
+        h("div", { class: "weight-list" }, Object.entries(s.categories_available).map(([key, label]) =>
+          h("div", { class: "weight", dataset: { cat: key } },
+            h("div", {}, h("b", {}, category(key)), h("small", {}, label)),
+            select(`cat-${key}`, HOW_OFTEN, Number(cs.categories?.[key] ?? 0)))))),
+      row("Your OK first", "These cases wait in the Studio until you approve them.",
+        h("div", { style: "display:grid;gap:8px" },
+          toggle("approve_trending", cs.approval?.trending !== false, "Cases about this week's news"),
+          toggle("approve_politics", cs.approval?.politics !== false, "Cases that touch politics (any type)"))),
+      row("Approval wait", "A case still waiting this long is discarded: news goes stale.",
+          select("approval_expires_days", [1, 2, 3, 5, 7].map(n => [n, plural(n, "day")]), cs.approval_expires_days), "s-approval_expires_days"),
+      row("Length", "Agent 3 aims for the target and never writes past the longest.",
+        h("div", { style: "display:grid;gap:10px" },
+          h("div", {}, h("span", { class: "small muted" }, "Target"), range("target_seconds", cs.target_seconds, 40, 75, 1, " s")),
+          h("div", {}, h("span", { class: "small muted" }, "Longest"), range("max_seconds", cs.max_seconds, 45, 90, 1, " s")))),
+      row("Ready ahead", "While the autopilot is on, this PC keeps this many cases ready (researched, written, animated) so you can watch them first.",
+          select("queue", [0, 1, 2, 3, 4, 5].map(n => [n, n === 0 ? "None (make each at its slot)" : plural(n, "case")]), cs.queue), "s-queue"),
+      row("Ideas", null, h("div", { style: "display:grid;gap:8px" },
+        toggle("follow_ups", cs.follow_ups !== false, "Part 2s: a case that did well can get a follow-up"),
+        toggle("comment_requests", cs.comment_requests !== false, "Viewers' comments can suggest the next case")))),
+    card("research", "S2.4", "Research",
+      row("Share-alike photos", "CC BY-SA photos arguably make the whole video share-alike too, so they're off unless you allow them.",
+          toggle("share_alike_images", !!s.research?.share_alike_images, "Also use CC BY-SA photos"))),
+    card("reach", "S2.5", "Trends and hashtags",
       row("Trends from", "Worldwide asks every country and puts the trends shared by the most countries first.",
           select("region", [...new Set(["ALL", s.trends.region, ...REGIONS])].map(r => [r, r === "ALL" ? "All countries (worldwide)" : r]), s.trends.region),
           "s-region"),
-      row("Hashtags on every Short", "Up to 4, like #shorts #animation.", text("hashtags", s.metadata.base_hashtags.join(" ")), "s-hashtags")),
-    card("music", "S2.5", "Music",
+      row("Hashtags on every Short", "Up to 4, like #shorts #casestudy. Each case adds its type's own.", text("hashtags", s.metadata.base_hashtags.join(" ")), "s-hashtags")),
+    card("music", "S2.6", "Music",
       row("Music volume", "Under the voices; 0 turns music off.", range("volume", s.music.volume, 0, 1.5, 0.05), "s-volume")),
     h("div", { class: "savebar" },
-      h("p", { class: "note" }, ro ? "Settings can only be changed on your computer." : "Changes apply to the next episode."),
+      h("p", { class: "note" }, ro ? "Settings can only be changed on your computer." : "Changes apply to the next case."),
       h("button", { class: "btn btn-primary", type: "submit", disabled: ro }, "Save settings")));
 
-  const nav = [["channel", "S2.1", "Channel"], ["posting", "S2.2", "Posting"], ["episodes", "S2.3", "Episodes"],
-               ["reach", "S2.4", "Trends and hashtags"], ["music", "S2.5", "Music"]];
+  const nav = [["channel", "S2.1", "Channel"], ["posting", "S2.2", "Posting"], ["cases", "S2.3", "Cases"],
+               ["research", "S2.4", "Research"], ["reach", "S2.5", "Trends and hashtags"], ["music", "S2.6", "Music"]];
   $("#view-settings").replaceChildren(
     pageHead({ eyebrow: "S2 · Setup", title: "Settings", lede: "How the channel behaves. Saved to config/channel.yaml." }),
     h("div", { class: "settings" },
@@ -1214,12 +1552,18 @@ async function saveSettings(event) {
   const f = new FormData(event.target);
   const list = (value, sep = ",") => String(value || "").split(sep).map(x => x.trim()).filter(Boolean);
   const body = {
-    channel: { name: f.get("name"), contact_email: f.get("contact_email"), audience: f.get("audience"),
-               voice: f.get("voice") },
+    channel: { name: f.get("name"), show_name: f.get("show_name") === "on", contact_email: f.get("contact_email"),
+               audience: f.get("audience"), voice: f.get("voice") },
     schedule: { timezone: f.get("timezone"), first_post: f.get("first_post"), every_hours: Number(f.get("every_hours")),
                 posts_per_day: Number(f.get("posts_per_day")) },
-    episodes: { settings: f.getAll("settings"), max_cast: Number(f.get("max_cast")), max_seconds: Number(f.get("max_seconds")),
-                queue: Number(f.get("queue")) },
+    cases: {
+      categories: Object.fromEntries(Object.keys(CATEGORY).map(k => [k, Number(f.get(`cat-${k}`) || 0)])),
+      approval: { trending: f.get("approve_trending") === "on", politics: f.get("approve_politics") === "on" },
+      approval_expires_days: Number(f.get("approval_expires_days")), target_seconds: Number(f.get("target_seconds")),
+      max_seconds: Number(f.get("max_seconds")), queue: Number(f.get("queue")),
+      follow_ups: f.get("follow_ups") === "on", comment_requests: f.get("comment_requests") === "on",
+    },
+    research: { share_alike_images: f.get("share_alike_images") === "on" },
     trends: { region: f.get("region") },
     metadata: { base_hashtags: list(f.get("hashtags"), " ") },
     music: { volume: Number(f.get("volume")) },
@@ -1267,14 +1611,14 @@ async function loadActivity() {
 
 // ------------------------------------------------------------------ routing
 
-const loaders = { overview: loadOverview, cast: loadCast, scripts: loadScripts, studio: loadStudio, schedule: loadSchedule,
-                  results: loadResults, music: loadMusic, youtube: () => loadYouTube(), settings: loadSettings,
-                  activity: loadActivity };
+const loaders = { overview: loadOverview, topics: loadTopics, research: loadResearch, scripts: loadScripts, studio: loadStudio,
+                  schedule: loadSchedule, results: loadResults, music: loadMusic, hosts: loadHosts, youtube: () => loadYouTube(),
+                  settings: loadSettings, activity: loadActivity };
 
 /** "#studio/12" -> "studio"; older page names land on their new pages. */
 function currentView() {
   const view = location.hash.slice(1).split("/")[0];
-  const name = { shorts: "studio", queue: "studio", trends: "scripts" }[view] || view;
+  const name = { shorts: "studio", queue: "studio", trends: "topics", cast: "hosts" }[view] || view;
   return VIEWS.includes(name) ? name : "overview";
 }
 
@@ -1282,7 +1626,7 @@ let lastView = null;
 async function route() {
   const view = currentView();
   if (lastView === "scripts" && view !== "scripts" && state.scripts.selected && state.dirty.has(state.scripts.selected)
-      && !confirm("Leave without saving your changes to this episode?")) {
+      && !confirm("Leave without saving your changes to this case?")) {
     history.replaceState(null, "", "#scripts");
     return;
   }
@@ -1321,7 +1665,7 @@ function init() {
   $("#autopost").addEventListener("change", async e => {
     try {
       await api("/api/pause", { method: "POST", json: { paused: !e.target.checked } });
-      toast(e.target.checked ? "Autopilot on. The agents get to work: posting on time, and writing and animating ahead."
+      toast(e.target.checked ? "Autopilot on. The agents get to work: posting on time, and keeping cases ready ahead."
                              : "Autopilot paused. The agents wait; your own buttons still work.", "ok");
     } catch (err) {
       e.target.checked = !e.target.checked;

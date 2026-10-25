@@ -10,7 +10,7 @@ runs the autopilot itself (dashboard/api.py), so the channel posts without Verce
 
 Vercel sends `Authorization: Bearer <CRON_SECRET>` with every cron request; any request
 without it gets a 401. /api/health (same secret) checks the deployment has its config,
-font, music and a working ffmpeg.
+fonts, world map, music and a working ffmpeg.
 """
 
 import hmac
@@ -24,6 +24,7 @@ from fastapi import FastAPI, Header, HTTPException
 ROOT = Path(__file__).resolve().parent
 sys.path[:0] = [str(ROOT / "tools"), str(ROOT)]
 
+import infographics  # noqa: E402
 import jobs  # noqa: E402
 import lipsync  # noqa: E402
 import short_render  # noqa: E402
@@ -69,7 +70,8 @@ def health(authorization: str | None = Header(default=None)):
     ffmpeg = subprocess.run([short_render.ffmpeg_exe(), "-version"], capture_output=True, text=True, timeout=30)
     return {
         "config": bool(load_config().get("channel")),
-        "font": short_render.FONT_PATH.exists(),
+        "fonts": all(f.exists() for f in (short_render.FONT_PATH, infographics.HEAD_FONT, infographics.BODY_FONT)),
+        "world_map": infographics.MAP_FILE.exists(),
         "music_tracks": len(short_render.music_tracks()),
         "voice_model": voice_tts.ready(),
         "lipsync": lipsync.ready(),

@@ -4,9 +4,9 @@ JSON API it calls.
 
 Locally it's at http://localhost:8000 and answers only on this computer. On Vercel it's
 switched off unless DASHBOARD_PASSWORD is set (the browser then asks for it).
-Writing, animating and uploading run in a background thread; the page polls progress.
+Making cases, animating and uploading run in a background thread; the page polls progress.
 While the database is on this computer, a loop here also runs the channel every minute: a due
-slot first, then keeping episodes written ahead, their previews rendered, and the day's numbers
+slot first, then keeping cases ready to post, their previews rendered, and the day's numbers
 (jobs.next_chore).
 """
 
@@ -33,25 +33,26 @@ import jobs
 import lipsync
 import notify
 import puppet
+import research_fetch
 import short_render
 import slots
 import trends_fetch
 import voice_tts
 import youtube_auth
-from agents import AGENTS, analyst, animator, writer
-from agents.base import playbook
-from common import CONFIG_DIR, ON_VERCEL, ROOT, env, is_true, load_config, tmp_path
+from agents import AGENTS, analyst, animator, editor, hosts, publisher, researcher, writer
+from agents.base import act, playbook
+from common import ON_VERCEL, ROOT, env, is_true, load_config, tmp_path, update_config
 
 UI_DIR = Path(__file__).resolve().parent
 UI_FILES = {
     "app.css": (UI_DIR / "app.css", "text/css"),
     "app.js": (UI_DIR / "app.js", "text/javascript"),
-    "caption-font.ttf": (short_render.FONT_PATH, "font/ttf"),
 }
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
 CLIENT_FILE = ROOT / "credentials.json"
 MAX_MUSIC_BYTES = 30 * 1024 * 1024
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9 ._()-]+")
+LEGACY = {"sketch": "Cartoon version"}  # other earlier formats were the cute-animal version
 _basic = HTTPBasic(auto_error=False)
 
 
@@ -150,10 +151,10 @@ def _chore_label(name: str, kwargs: dict) -> str:
         slot = jobs.due_slot()
         return f"Autopilot: making the {jobs.clock(slot, slots.plan())} Short" if slot else "Autopilot"
     if name == "prepare":
-        return "Agents 1 and 2: writing the next episode"
+        return "Agents 1-3: making the next case"
     if name == "publish":
-        return f"Agent 3: animating episode #{kwargs['video_id']}"
-    return "Agent 5: reading the numbers"
+        return f"Agent 4: animating case #{kwargs['video_id']}"
+    return "Agent 6: reading the numbers"
 
 
 def _autopilot_loop() -> None:
@@ -207,7 +208,8 @@ def _slot_video(v: dict | None) -> dict | None:
         return None
     meta = v["plan"].get("metadata", {})
     return {"id": v["id"], "status": v["status"], "title": meta.get("title") or v["theme"],
-            "setting": v["plan"].get("setting"), "youtube_id": v["youtube_id"], "publish_at": v["publish_at"]}
+            "category": (v["plan"].get("brief") or {}).get("category"), "youtube_id": v["youtube_id"],
+            "publish_at": v["publish_at"]}
 
 
 def _autopilot_state(cfg: dict) -> dict:
@@ -244,15 +246,18 @@ def _agents(planned: list[dict]) -> list[dict]:
     """Each agent's card: its last run and the size of its part of the pipeline."""
     videos = db.list_videos(300)
     now = datetime.now(timezone.utc)
+    cases = [v for v in videos if v["format"] == db.FORMAT and v["status"] != "skipped"]
     scheduled = [v for v in videos if v["status"] == "scheduled" and v["publish_at"] and slots.parse(v["publish_at"]) > now]
     previews = [v for v in planned if animator.preview_path(v["id"]).exists()]
+    facts = sum(len((v["plan"].get("research") or {}).get("facts") or []) for v in planned)
     book = playbook()
     metric = {
-        "casting": (len(db.list_characters(10_000)), "characters created"),
-        "writer": (len(planned), "episodes written and waiting"),
+        "editor": (len(cases), "cases chosen"),
+        "researcher": (facts, "facts checked for the queue"),
+        "writer": (len(planned), "scripts waiting"),
         "animator": (len(previews), "previews ready to watch"),
         "publisher": (len(scheduled), "Shorts scheduled ahead"),
-        "analyst": (book.get("samples") or 0, "Shorts in the playbook"),
+        "analyst": (book.get("samples") or 0, "cases in the playbook"),
     }
     out = []
     for agent in AGENTS:
@@ -265,6 +270,7 @@ def _agents(planned: list[dict]) -> list[dict]:
 def state():
     cfg = load_config()
     planned = db.planned_videos()
+    ids = cfg.get("hosts") or {}
     return {
         "channel": cfg["channel"]["name"],
         "local": not ON_VERCEL,
@@ -282,6 +288,10 @@ def state():
         "events": trends_fetch.calendar_signals(datetime.now(timezone.utc).date(), 10)["events"],
         "counts": db.status_counts(),
         "agents": _agents(planned),
+        "approvals": sum(1 for v in planned if v["plan"].get("approval") == "waiting"),
+        "ready": sum(1 for v in planned if db.ready(v)),
+        "requests": len(db.list_topics("waiting")),
+        "hosts_ready": bool(ids.get("presenter") and ids.get("cohost")),
         "task": next((_public(t) for t in _tasks.values() if t["status"] == "running"), None),
     }
 
@@ -295,36 +305,59 @@ async def set_pause(request: Request):
     return {"paused": paused}
 
 
-# --- episodes -------------------------------------------------------------
+# --- cases ------------------------------------------------------------------
 
 def _stamp(path: Path) -> str:
     return f"?v={int(path.stat().st_mtime)}"
 
 
-def _cast_json(c: dict) -> dict:
-    return {"id": c.get("id"), "name": c["name"], "role": c["role"], "voice": c["voice"], "speed": c.get("speed", 1.0),
-            "image": f"/media/character/{c['id']}.png" if c.get("id") else None}
+def _host_json(spec: dict) -> dict:
+    return {"id": spec.get("id"), "name": spec["name"], "role": spec["role"], "voice": spec["voice"],
+            "speed": spec.get("speed", 1.0), "image": f"/media/character/{spec['id']}.png" if spec.get("id") else None}
+
+
+def _research_json(video_id: int, pack: dict) -> dict:
+    return {
+        "sources": pack.get("sources") or [], "timeline": pack.get("timeline") or [], "stats": pack.get("stats") or [],
+        "facts": [{k: f.get(k) for k in ("id", "claim", "source", "quote", "kind", "calculated")} for f in pack.get("facts") or []],
+        "series": [{k: s.get(k) for k in ("id", "title", "country", "unit", "points", "forecast_from", "source", "url")}
+                   for s in pack.get("series") or []],
+        "images": [{**{k: i.get(k) for k in ("id", "shows", "title", "author", "licence", "page")},
+                    "url": f"/media/research/{video_id}/{i['id']}.jpg"} for i in pack.get("images") or []],
+        "dropped": pack.get("dropped", 0), "notes": pack.get("notes") or [], "answer": pack.get("answer", ""),
+    }
 
 
 def _video_json(v: dict) -> dict:
     plan = v["plan"]
-    script, meta, cast = plan.get("script") or {}, plan.get("metadata") or {}, plan.get("cast") or []
+    meta = plan.get("metadata") or {}
     preview, cover = animator.preview_path(v["id"]), animator.cover_path(v["id"])
-    beats = script.get("beats") or []
-    return {
+    out = {
         "id": v["id"], "status": v["status"], "created_at": v["created_at"], "publish_at": v["publish_at"],
-        "legacy": v["format"] != "sketch",  # made by the cute-animal version
         "slot": v["slot"], "error": v["error"], "youtube_id": v["youtube_id"],
         "studio_url": f"https://studio.youtube.com/video/{v['youtube_id']}/edit" if v["youtube_id"] else None,
-        "setting": plan.get("setting"), "premise": script.get("premise") or v["theme"],
-        "trend": script.get("trend_used") or v["trend"], "hook": script.get("hook") or "", "beats": beats,
-        "music_mood": script.get("music_mood"), "cast": [_cast_json(c) for c in cast],
-        "title": meta.get("title"), "description": meta.get("description"), "hashtags": meta.get("hashtags") or [],
-        "duration": (plan.get("render") or {}).get("seconds"),
-        "estimate": round(writer.estimate_seconds(beats, cast), 1) if beats and cast else None,
+        "legacy": None if v["format"] == db.FORMAT else LEGACY.get(v["format"], "Cute-animal version"),
+        "title": meta.get("title") or v["theme"], "description": meta.get("description"),
+        "hashtags": meta.get("hashtags") or [], "duration": (plan.get("render") or {}).get("seconds"),
         "music": plan.get("music"), "music_credit": short_render.music_credit(plan.get("music")),
         "preview": f"/media/preview/{v['id']}.mp4{_stamp(preview)}" if preview.exists() else None,
         "cover": f"/media/cover/{v['id']}.jpg{_stamp(cover)}" if cover.exists() else None,
+    }
+    if out["legacy"] or not plan.get("script"):
+        return out
+    brief, script, pack = plan["brief"], plan["script"], plan.get("research") or {}
+    return {
+        **out,
+        "category": brief.get("category"), "topic": brief.get("topic"), "angle": brief.get("angle"),
+        "why_now": brief.get("why_now"), "trend": brief.get("trend"), "follow_up_of": brief.get("follow_up_of"),
+        "from_request": bool(brief.get("request_id")), "from_comment": bool(brief.get("comment_id")),
+        "approval": plan.get("approval"), "approved_at": plan.get("approved_at"),
+        "case_title": script.get("case_title"), "lines": script.get("lines") or [], "key_points": script.get("key_points") or [],
+        "music_mood": script.get("music_mood"), "estimate": script.get("seconds"), "cut": script.get("cut", 0),
+        "hosts": [_host_json(h) for h in plan.get("hosts") or []],
+        "research": _research_json(v["id"], pack),
+        "visuals": writer.visual_menu(pack, brief),
+        "full_description": publisher.description(meta, plan),
     }
 
 
@@ -333,7 +366,7 @@ def _planned_or_409(video_id) -> dict:
     if not video:
         raise HTTPException(404, "No such Short.")
     if video["status"] != "planned":
-        raise HTTPException(409, f"Short #{video['id']} is {video['status']}; only queued episodes can be changed.")
+        raise HTTPException(409, f"Short #{video['id']} is {video['status']}; only queued cases can be changed.")
     return video
 
 
@@ -345,12 +378,23 @@ def videos(limit: int = 60):
 @router.patch("/api/videos/{video_id}")
 async def edit_video(video_id: int, request: Request):
     video = _planned_or_409(video_id)
+    if video["format"] != db.FORMAT:
+        raise HTTPException(409, "Shorts from earlier versions can't be edited here.")
     try:
         plan = writer.apply_edits(video["plan"], await request.json())
     except (ValueError, IndexError, KeyError) as e:
         raise HTTPException(422, str(e))
     db.update_video(video_id, plan=plan)
     animator.preview_path(video_id).unlink(missing_ok=True)  # the old render no longer matches the script
+    return _video_json(db.get_video(video_id))
+
+
+@router.post("/api/videos/{video_id}/approve")
+def approve_video(video_id: int):
+    try:
+        publisher.approve(video_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return _video_json(db.get_video(video_id))
 
 
@@ -378,7 +422,57 @@ def cover(video_id: int):
     return FileResponse(path, media_type="image/jpeg")
 
 
-# --- the cast -------------------------------------------------------------
+@router.get("/media/research/{video_id}/{image_id}.jpg", include_in_schema=False)
+def research_image(video_id: int, image_id: str):
+    video = db.get_video(video_id)
+    image = next((i for i in ((video or {}).get("plan", {}).get("research") or {}).get("images") or []
+                  if i["id"] == image_id), None)
+    if not image:
+        raise HTTPException(404)
+    path = researcher.image_path(image)
+    if not path.exists():
+        raise HTTPException(404)
+    return FileResponse(path, media_type="image/jpeg")
+
+
+# --- topics: your requests, viewers' comments, the Editor's choices -----------
+
+@router.get("/api/topics")
+def topics():
+    cfg = load_config()
+    briefs = []
+    for v in db.list_videos(80):
+        brief = v["plan"].get("brief")
+        if v["format"] == db.FORMAT and brief:
+            briefs.append({"id": v["id"], "created_at": v["created_at"], "status": v["status"],
+                           "approval": v["plan"].get("approval"), "title": v["plan"].get("metadata", {}).get("title"),
+                           **{k: brief.get(k) for k in ("category", "topic", "angle", "why_now", "trend", "follow_up_of",
+                                                        "needs_approval")},
+                           "from_request": bool(brief.get("request_id")), "from_comment": bool(brief.get("comment_id"))})
+    return {"requests": db.list_topics(limit=60), "comments": db.recent_comments(days=60, limit=60, unused=False),
+            "briefs": briefs, "categories": editor.CATEGORIES, "weights": cfg["cases"].get("categories") or {},
+            "follow_ups": cfg["cases"].get("follow_ups", True), "comment_requests": cfg["cases"].get("comment_requests", True)}
+
+
+@router.post("/api/topics")
+async def add_topic(request: Request):
+    text = " ".join(str((await request.json()).get("text", "")).split())
+    if not 3 <= len(text) <= 200:
+        raise HTTPException(422, "Describe the case in 3 to 200 characters, e.g. “Why Nokia failed”.")
+    topic_id = db.add_topic(text)
+    return {"id": topic_id, "text": text}
+
+
+@router.delete("/api/topics/{topic_id}")
+def drop_topic(topic_id: int):
+    found = next((t for t in db.list_topics("waiting", limit=500) if t["id"] == topic_id), None)
+    if not found:
+        raise HTTPException(409, "That request isn't waiting any more.")
+    db.set_topic(topic_id, "dropped", reason="Removed by you")
+    return {"ok": True}
+
+
+# --- the hosts --------------------------------------------------------------
 
 def _character_or_404(character_id: int) -> dict:
     found = db.get_characters([character_id])
@@ -387,16 +481,29 @@ def _character_or_404(character_id: int) -> dict:
     return found[0]
 
 
-@router.get("/api/characters")
-def characters(limit: int = 120):
-    appearances: dict[int, list[dict]] = {}
-    for v in db.list_videos(1000):
-        for c in v["plan"].get("cast") or []:
-            if c.get("id"):
-                appearances.setdefault(c["id"], []).append({"id": v["id"], "status": v["status"]})
-    return [{**c, "look": character_spec.describe(c), "voice_label": character_spec.VOICES.get(c["voice"], c["voice"]),
-             "image": f"/media/character/{c['id']}.png", "voice_sample": f"/media/voice/{c['id']}.wav",
-             "episodes": appearances.get(c["id"], [])} for c in db.list_characters(limit)]
+@router.get("/api/hosts")
+def get_hosts():
+    ids = load_config().get("hosts") or {}
+    found = db.get_characters([ids[r] for r in hosts.ROLES if ids.get(r)])
+    return {
+        "hosts": [{**spec, "role_key": role, "look": character_spec.describe(spec),
+                   "voice_label": character_spec.VOICES.get(spec["voice"], spec["voice"]),
+                   "image": f"/media/character/{spec['id']}.png", "voice_sample": f"/media/voice/{spec['id']}.wav"}
+                  for role, spec in zip(hosts.ROLES, found)] if len(found) == 2 else [],
+        "parts": character_spec.PARTS, "skin": list(character_spec.SKIN_TONES),
+        "hair_color": list(character_spec.HAIR_COLORS), "colors": list(character_spec.COLORS),
+        "voices": character_spec.VOICES,
+    }
+
+
+@router.patch("/api/hosts/{role}")
+async def edit_host(role: str, request: Request):
+    _local_only("Changing the hosts")
+    try:
+        hosts.update(role, await request.json())
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return get_hosts()
 
 
 @router.get("/media/character/{character_id}.png", include_in_schema=False)
@@ -423,28 +530,34 @@ def voice_sample(character_id: int):
 async def start_task(kind: str, request: Request):
     # On Vercel a thread can be frozen once the response is sent, and /tmp previews don't persist,
     # so this work only runs from the dashboard on your computer.
-    _local_only("Writing, animating and uploading from the dashboard")
+    _local_only("Making, animating and uploading from the dashboard")
     body = json.loads(await request.body() or b"{}")
     video_id = body.get("video_id")
     if kind == "prepare":
-        return _start_task(kind, "Agents 1 and 2: writing a new episode",
+        return _start_task(kind, "Agents 1-3: making a new case",
                            lambda p: jobs.run_job("prepare", count=1, progress=p))
     if kind == "render":
-        _planned_or_409(video_id)
-        return _start_task(kind, f"Agent 3: animating episode #{video_id}",
+        video = _planned_or_409(video_id)
+        if video["format"] != db.FORMAT:
+            raise HTTPException(409, "Shorts from earlier versions can't be animated again.")
+        return _start_task(kind, f"Agent 4: animating case #{video_id}",
                            lambda p: jobs.run_job("publish", dry_run=True, video_id=video_id, progress=p), video_id)
     if kind == "publish":
-        _planned_or_409(video_id)
+        video = _planned_or_409(video_id)
         if not youtube_auth.is_configured():
             raise HTTPException(409, "Connect YouTube first (the YouTube page).")
-        return _start_task(kind, f"Agent 4: uploading episode #{video_id}",
+        if video["format"] == db.FORMAT and not db.ready(video):
+            raise HTTPException(409, "This case waits for your OK: approve it first.")
+        return _start_task(kind, f"Agent 5: uploading case #{video_id}",
                            lambda p: jobs.run_job("publish", video_id=video_id, progress=p), video_id)
     if kind == "autopilot":
         if not youtube_auth.is_configured():
             raise HTTPException(409, "Connect YouTube first (the YouTube page).")
         return _start_task(kind, "Making the next Short now", _make_next_now)
     if kind == "stats":
-        return _start_task(kind, "Agent 5: reading the numbers", lambda p: jobs.run_job("stats", learn=True, progress=p))
+        return _start_task(kind, "Agent 6: reading the numbers", lambda p: jobs.run_job("stats", learn=True, progress=p))
+    if kind == "hosts":
+        return _start_task(kind, "Designing the hosts", lambda p: act("hosts", "Design the hosts", hosts.design, progress=p))
     if kind == "connect":
         if not CLIENT_FILE.exists():
             raise HTTPException(409, "Add your OAuth client file first (step 2).")
@@ -460,7 +573,7 @@ def task_status(task_id: str):
     return _public(task)
 
 
-# --- trends, results, activity --------------------------------------------
+# --- signals, results, activity -----------------------------------------------
 
 _trends_lock = threading.Lock()
 
@@ -472,22 +585,38 @@ def _fetch_trends(cfg: dict, refresh: bool) -> dict:
         return jobs.trend_signals(cfg, days_ahead=10, refresh=refresh)
 
 
+def _wikipedia_signals() -> dict:
+    """What the Editor also reads: Wikipedia's Current events and "On this day" (cached by research_fetch)."""
+    out = {"news": [], "on_this_day": []}
+    try:
+        out["news"] = [{"date": e["date"], "section": e["section"], "text": e["text"], "outlets": [l["outlet"] for l in e["links"]]}
+                       for e in research_fetch.current_events(3)][:25]
+    except Exception as e:
+        out["news_error"] = str(e)
+    try:
+        out["on_this_day"] = research_fetch.on_this_day()[:12]
+    except Exception as e:
+        out["on_this_day_error"] = str(e)
+    return out
+
+
 @router.get("/api/trends")
 def trends(refresh: bool = False):
     cfg = load_config()
     if refresh or ON_VERCEL or db.fresh_note("trends", jobs.TRENDS_FRESH):
-        return _fetch_trends(cfg, refresh)
+        return {**_fetch_trends(cfg, refresh), **_wikipedia_signals()}
     # Out of date: show the last fetch now and get today's in the background; the page asks again.
     if not _trends_lock.locked():
         threading.Thread(target=_fetch_trends, args=(cfg, False), name="trends", daemon=True).start()
-    return {**jobs.trend_signals(cfg, days_ahead=10, cached_only=True), "refreshing": True}
+    return {**jobs.trend_signals(cfg, days_ahead=10, cached_only=True), **_wikipedia_signals(), "refreshing": True}
 
 
 @router.get("/api/results")
 def results():
     table = analyst.rows(min_age=timedelta(0))
     return {"playbook": playbook(), "rows": table, "min_samples": analyst.MIN_SAMPLES,
-            "judged": len(analyst.rows())}
+            "judged": len(analyst.rows()), "follow_ups": analyst.follow_up_candidates(),
+            "comments": len(db.recent_comments(days=60, limit=10_000, unused=False))}
 
 
 @router.get("/api/activity")
@@ -595,12 +724,22 @@ def music_file(name: str):
 
 @router.get("/api/settings")
 def get_settings():
-    return {**load_config(), "settings_available": character_spec.SETTINGS, "editable": not ON_VERCEL}
+    return {**load_config(), "categories_available": editor.CATEGORIES, "editable": not ON_VERCEL}
+
+
+def _number(value, name: str, low: float, high: float, whole: bool = True):
+    try:
+        n = int(value) if whole else float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a number.")
+    if not low <= n <= high:
+        raise ValueError(f"{name}: {low:g} to {high:g}.")
+    return n
 
 
 def _validated(s: dict) -> dict:
     section = lambda name: s.get(name) or {}
-    channel, episodes = section("channel"), section("episodes")
+    channel, cases = section("channel"), section("cases")
     name = str(channel.get("name", "")).strip()
     if not 1 <= len(name) <= 60:
         raise ValueError("Channel name: 1 to 60 characters.")
@@ -608,28 +747,31 @@ def _validated(s: dict) -> dict:
     if contact and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", contact):
         raise ValueError("Contact email doesn't look like an email address.")
     schedule = slots.validate(section("schedule"))
-    settings = [str(x).strip() for x in episodes.get("settings", []) if str(x).strip() in character_spec.SETTINGS]
-    if not settings:
-        raise ValueError("Settings: pick at least one place for the sketches.")
+    weights = {c: round(_number((cases.get("categories") or {}).get(c, 0), f"How often: {c}", 0, 5, whole=False), 1)
+               for c in editor.CATEGORIES}
+    if not any(weights.values()):
+        raise ValueError("Case types: switch at least one on.")
+    approval = cases.get("approval") or {}
+    target = _number(cases.get("target_seconds"), "Target length", 40, 75)
+    longest = _number(cases.get("max_seconds"), "Longest case", target, 90)
     hashtags = []
     for tag in section("metadata").get("base_hashtags", []):
         tag = "#" + re.sub(r"[^0-9a-z_]", "", str(tag).lower())
         if len(tag) > 1 and tag not in hashtags:
             hashtags.append(tag)
     region = str(section("trends").get("region", "US")).strip().upper()
-    try:
-        max_cast, seconds, queue = int(episodes.get("max_cast")), int(episodes.get("max_seconds")), int(episodes.get("queue"))
-        volume = float(section("music").get("volume"))
-    except (TypeError, ValueError):
-        raise ValueError("Characters, length, queue and volume must be numbers.")
-    if max_cast not in (2, 3) or not 20 <= seconds <= 60 or not 0 <= queue <= 5 or not 0 <= volume <= 1.5:
-        raise ValueError("Characters 2 or 3, length 20-60 seconds, queue 0-5, volume 0-1.5.")
     if region != "ALL" and not re.fullmatch(r"[A-Z]{2}", region):
         raise ValueError("Trends: ALL (every country) or a two-letter country code like US or GB.")
-    return {"name": name, "contact": contact, "audience": str(channel.get("audience", "")).strip(),
-            "voice": " ".join(str(channel.get("voice", "")).split()), "schedule": schedule, "settings": settings,
-            "max_cast": max_cast, "seconds": seconds, "queue": queue, "region": region, "hashtags": hashtags[:4],
-            "volume": round(volume, 2)}
+    return {"name": name, "show_name": bool(channel.get("show_name")), "contact": contact,
+            "audience": str(channel.get("audience", "")).strip(), "voice": " ".join(str(channel.get("voice", "")).split()),
+            "schedule": schedule, "weights": weights,
+            "approval": {"trending": bool(approval.get("trending")), "politics": bool(approval.get("politics"))},
+            "expires": _number(cases.get("approval_expires_days"), "Approval wait", 1, 14),
+            "target": target, "longest": longest, "queue": _number(cases.get("queue"), "Ready ahead", 0, 5),
+            "follow_ups": bool(cases.get("follow_ups")), "comment_requests": bool(cases.get("comment_requests")),
+            "share_alike": bool(section("research").get("share_alike_images")),
+            "region": region, "hashtags": hashtags[:4],
+            "volume": round(_number(section("music").get("volume"), "Music volume", 0, 1.5, whole=False), 2)}
 
 
 @router.put("/api/settings")
@@ -642,7 +784,6 @@ async def save_settings(request: Request):
 
     # ruamel keeps the comments in channel.yaml; every user string is quoted so values like
     # 23:00 or NO can't be misread as numbers or booleans when the file is loaded again.
-    from ruamel.yaml import YAML
     from ruamel.yaml.comments import CommentedSeq
     from ruamel.yaml.scalarstring import DoubleQuotedScalarString as Q, FoldedScalarString
 
@@ -651,23 +792,23 @@ async def save_settings(request: Request):
         seq.fa.set_flow_style()
         return seq
 
-    yaml = YAML()
-    yaml.width = 100
-    path = CONFIG_DIR / "channel.yaml"
-    data = yaml.load(path.read_text(encoding="utf-8"))
-    data["channel"]["name"], data["channel"]["audience"] = Q(v["name"]), Q(v["audience"])
-    data["channel"]["contact_email"] = Q(v["contact"])
-    data["channel"]["voice"] = FoldedScalarString(v["voice"])
-    for key in ("timezone", "first_post"):
-        data["schedule"][key] = Q(v["schedule"][key])
-    for key in ("every_hours", "posts_per_day"):
-        data["schedule"][key] = v["schedule"][key]
-    data["episodes"]["settings"] = flow(v["settings"])
-    data["episodes"]["max_cast"], data["episodes"]["max_seconds"] = v["max_cast"], v["seconds"]
-    data["episodes"]["queue"] = v["queue"]
-    data["trends"]["region"] = Q(v["region"])
-    data["metadata"]["base_hashtags"] = flow(v["hashtags"])
-    data["music"]["volume"] = v["volume"]
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f)
+    def change(data):
+        ch, cases = data["channel"], data["cases"]
+        ch["name"], ch["audience"], ch["contact_email"] = Q(v["name"]), Q(v["audience"]), Q(v["contact"])
+        ch["show_name"], ch["voice"] = v["show_name"], FoldedScalarString(v["voice"])
+        for key in ("timezone", "first_post"):
+            data["schedule"][key] = Q(v["schedule"][key])
+        for key in ("every_hours", "posts_per_day"):
+            data["schedule"][key] = v["schedule"][key]
+        for key, weight in v["weights"].items():
+            cases["categories"][key] = int(weight) if weight == int(weight) else weight
+        cases["approval"]["trending"], cases["approval"]["politics"] = v["approval"]["trending"], v["approval"]["politics"]
+        cases["approval_expires_days"], cases["queue"] = v["expires"], v["queue"]
+        cases["target_seconds"], cases["max_seconds"] = v["target"], v["longest"]
+        cases["follow_ups"], cases["comment_requests"] = v["follow_ups"], v["comment_requests"]
+        data["research"]["share_alike_images"] = v["share_alike"]
+        data["trends"]["region"] = Q(v["region"])
+        data["metadata"]["base_hashtags"] = flow(v["hashtags"])
+        data["music"]["volume"] = v["volume"]
+    update_config(change)
     return get_settings()

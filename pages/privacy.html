@@ -48,7 +48,8 @@
       <li><b>Upload videos</b> (<code>youtube.upload</code>): to upload Shorts to the owner’s channel and set their title,
         description, tags and publish time.</li>
       <li><b>View the YouTube account</b> (<code>youtube.readonly</code>): to read the channel’s name, its videos’ view,
-        like and comment counts, and the public list of popular Comedy videos.</li>
+        like and comment counts, the text of public comments on its own Shorts (to find topics viewers ask for; who wrote
+        them isn’t kept), and the public list of popular Education videos.</li>
       <li><b>View YouTube Analytics reports</b> (<code>yt-analytics.readonly</code>): to read aggregate statistics for the
         channel’s own videos, such as the average percentage watched and subscribers gained.</li>
     </ul>
@@ -66,19 +67,22 @@
     <ul>
       <li>The sign-in token is kept as an encrypted environment variable at the app’s host (Vercel) and in a settings
         file on the owner’s computer.</li>
-      <li>Video titles, upload and publish times, and the statistics above are kept in the app’s database (Neon Postgres)
-        or, when it runs on the owner’s computer, in a local database file.</li>
+      <li>Video titles, upload and publish times, the statistics above and the text and like counts of public comments
+        on the channel’s Shorts (without their authors) are kept in the app’s database (Neon Postgres) or, when it runs on
+        the owner’s computer, in a local database file.</li>
     </ul>
 
     <h2>Sharing</h2>
     <p>Google user data isn’t shared or sold. The companies that host the app (Vercel) and its database (Neon) store it
-      on the app’s behalf. The characters, the sketches and weekly performance notes are written with Google’s Gemini
-      API, which receives the channel’s settings, trend topics, the sketches and the public view, like and comment counts
-      of the channel’s Shorts, never private analytics or anything else from the owner’s Google account. The characters’
-      voices, their lip movements and the animation are made on the owner’s computer by open-source software (Kokoro,
-      Rhubarb Lip Sync), so nothing about them is sent anywhere. Background music is downloaded from incompetech.com,
-      which receives no data about the channel or its viewers. The app shows no ads and lets no third party collect
-      information through it.</p>
+      on the app’s behalf. The cases, their research and weekly performance notes are prepared with Google’s Gemini API,
+      which receives the channel’s settings, trend topics, text from public sources (Wikipedia, news articles, IMF and
+      World Bank data), candidate photos from Wikimedia Commons, the scripts, the public view, like and comment counts of
+      the channel’s Shorts and the text of public comments on them (never who wrote them); it never receives private
+      analytics or anything else from the owner’s Google account. The hosts’ voices, their lip movements and the
+      animation are made on the owner’s computer by open-source software (Kokoro, Rhubarb Lip Sync), so nothing about
+      them is sent anywhere. Photos are downloaded from Wikimedia Commons, data from the IMF and the World Bank, news
+      articles from their publishers’ sites and music from incompetech.com; none of them receive data about the channel
+      or its viewers. The app shows no ads and lets no third party collect information through it.</p>
 
     <h2>Keeping and deleting data</h2>
     <p>Data is kept while the channel uses the app. Access can be revoked at any time on Google’s security settings page,

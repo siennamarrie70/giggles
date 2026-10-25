@@ -1,11 +1,12 @@
 """
-Gives each character a voice: Kokoro (open-source, Apache 2.0 licence) turns a line into speech
+Gives each host a voice: Kokoro (open-source, Apache 2.0 licence) turns a line into speech
 on this computer's CPU, so nothing is sent anywhere and nothing costs money.
 
 The model (~120 MB) is downloaded once into .tmp/models/kokoro the first time it's needed.
 Measured 2026-10-25 on this PC: ~3x faster than real time (a 3 s line in ~1 s), plus ~1.5 s to
 load the model once. Silence at the start and end of each line is trimmed, so the timing of the
-sketch comes from the renderer's pauses, not from the model.
+dialogue comes from the renderer's pauses, not from the model. Money is read the way people say it
+("$5.4 billion" as "5.4 billion dollars").
 
 Usage:
     python tools/voice_tts.py --voice af_heart --text "Hello there" --out .tmp/out/hello.wav
@@ -70,8 +71,20 @@ def _kokoro():
     return _engine
 
 
+CURRENCY = {"$": "dollars", "€": "euros", "£": "pounds", "₹": "rupees", "¥": "yen"}
+MONEY = re.compile(r"(US|A|C|HK)?([$€£₹¥])\s?(\d[\d,]*(?:\.\d+)?)(\s?(?:thousand|million|billion|trillion|bn|m)\b)?")
+
+
+def _money(m: re.Match) -> str:
+    """"$5.4 billion" -> "5.4 billion dollars", "US$7.8bn" -> "7.8 billion US dollars"."""
+    scale = {"bn": " billion", "m": " million"}.get((m.group(4) or "").strip(), m.group(4) or "")
+    country = {"US": "US ", "A": "Australian ", "C": "Canadian ", "HK": "Hong Kong "}.get(m.group(1) or "", "")
+    return f"{m.group(3)}{scale} {country}{CURRENCY[m.group(2)]}"
+
+
 def _spoken(text: str) -> str:
-    """What the model reads aloud: symbols as words, no emoji."""
+    """What the model reads aloud: money and symbols as words, no emoji."""
+    text = MONEY.sub(_money, text)
     text = text.replace("&", " and ").replace("%", " percent").replace("@", " at ")
     text = re.sub(r"[\U0001F000-\U0001FFFF☀-➿️‍]", "", text)
     return " ".join(text.split())
