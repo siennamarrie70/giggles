@@ -1,46 +1,40 @@
-# Channel settings read by the daily jobs. Edit, commit, and Vercel redeploys.
+# Channel settings read by the agents. Edit here or in the dashboard's Settings page.
 
 channel:
-  name: "Paws & Giggles"   # placeholder: change to your channel's name
-  audience: "global English-speaking viewers who love wholesome, funny animal moments"
+  name: "Paws & Giggles"   # kept for now; rename it in Settings when you choose the cartoon channel's name
+  audience: "adults worldwide who enjoy short, relatable comedy sketches"
   voice: >-
-    Warm, playful and a little cheeky. Short punchy lines a viewer reads in one glance. Relatable everyday
-    humour (Mondays, snacks, naps, bosses, chores). Never mean to the animals, never mocks people, no
-    politics, no tragedy, no brand names.
+    Dry, warm and quick. Everyday adult life: work, bills, flatmates, dating, the gym, Mondays, family
+    group chats. The punchline lands on the last line. Clean enough for any advertiser: no slurs, nothing
+    sexual, no politics, no tragedy, no real people or brands. Never aimed at children.
   contact_email: ""          # shown on the public /about and /privacy pages; optional
 
 schedule:
-  # The autopilot posts posts_per_day Shorts: the first at first_post, then one every every_hours,
-  # on this time zone's clock (08:00 every 2 hours x10 = 08:00 to 02:00). Each Short is made in
-  # the hours before its slot and YouTube publishes it on the minute. `python tools/slots.py` lists them.
+  # The autopilot posts posts_per_day Shorts: the first at first_post, then one every every_hours, on this
+  # time zone's clock (08:00, 14:00 and 20:00 here). Each Short is made in the hours before its slot and
+  # YouTube publishes it on the minute. `python tools/slots.py` lists them.
   timezone: "Asia/Kolkata"
   first_post: "08:00"
-  every_hours: 2
-  posts_per_day: 10
+  every_hours: 6
+  posts_per_day: 3
 
-formats:
-  # Rotates in this order, one format per Short.
-  #   punchline: one clip, hook on top, punchline appears halfway through
-  #   pov:       one clip, "POV: ..." caption on top
-  #   top3:      three clips counting down 3-2-1, hook on top, numbered captions
-  rotation: ["punchline", "top3", "pov"]
-
-content:
-  animals: ["cat", "kitten", "dog", "puppy", "rabbit", "hamster", "guinea pig", "parrot", "duckling",
-    "goat", "otter", "panda", "fox", "horse"]
-  allow_people: false        # true would allow adults in frame; children are always rejected
-  min_clip_seconds: 4
-  max_short_seconds: 40
-  min_check_score: 7         # 0-10 score from the frame check; clips below this are skipped
+episodes:
+  # Agent 1 picks one of these settings for each episode and casts 2 to max_cast characters;
+  # Agent 2 keeps each sketch under max_seconds. The dashboard on this computer keeps `queue`
+  # episodes written ahead and renders their previews, so you can watch them before they go up.
+  settings: ["office", "flat", "kitchen", "cafe", "gym", "street", "park"]
+  max_cast: 3
+  max_seconds: 60
+  queue: 2
 
 trends:
   region: "ALL"              # ALL = every country, the most widespread trends first; or one code like US
-  calendar_days_ahead: 3     # theme around pet days and holidays this many days early
+  calendar_days_ahead: 3     # theme around holidays and world days this many days early
 
 metadata:
-  category_id: '15'          # Pets & Animals
-  base_hashtags: ["#shorts", "#cuteanimals"]
+  category_id: '23'          # Comedy
+  base_hashtags: ["#shorts", "#animation", "#comedy"]
   language: en
 
 music:
-  volume: 1.0                # music is the only audio track
+  volume: 1.0                # the music under the voices (0 = none); it dips while someone speaks

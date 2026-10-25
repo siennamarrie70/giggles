@@ -4,10 +4,11 @@ Thin wrapper around Gemini (free tier) that returns JSON matching a schema.
 Every model call in the project goes through generate_json(), so changing provider
 or model means editing this one file. Models are tried in order: free-tier quotas
 are per model, so a quota error or timeout on one falls through to the next.
-Measured 2026-10-24 on the free tier: gemini-3.5-flash-lite answers in 2-5 s;
-gemini-3.8-flash took ~100 s per request (queueing), too slow for a 300 s cloud job.
+Measured 2026-10-24 on the free tier: gemini-3.5-flash-lite answers in 2-6 s, gemini-3.1-flash-lite
+and gemini-3.5-flash in ~2 s; gemini-3.8-flash took ~100 s per request (queueing), so it's the last
+resort. gemini-2.5-flash is "no longer available to new users" (404).
 Note: on the free tier Google may use prompts to improve its products. Nothing
-private goes in here, just captions and stock-footage frames.
+private goes in here: the channel's settings, trend topics, characters and scripts.
 
 Usage (check the key works):
     python tools/llm.py --prompt "Give me a two-word name for a cat"
@@ -25,12 +26,13 @@ from google.genai import errors, types
 from common import env
 
 # Free-tier models, fastest first. GEMINI_MODEL in .env overrides the first choice.
-DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"]
-# Captions and frame checks need little reasoning; less thinking = faster answers.
+DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"]
+# Casting and writing need little reasoning; less thinking = faster answers.
 THINKING = {
     "gemini-3.5-flash-lite": types.ThinkingConfig(thinking_level="MINIMAL"),
+    "gemini-3.1-flash-lite": types.ThinkingConfig(thinking_level="MINIMAL"),
+    "gemini-3.5-flash": types.ThinkingConfig(thinking_level="MINIMAL"),
     "gemini-3.8-flash": types.ThinkingConfig(thinking_level="LOW"),  # MINIMAL isn't supported here
-    "gemini-2.5-flash": types.ThinkingConfig(thinking_budget=0),
 }
 TIMEOUT_MS = 60_000
 

@@ -10,7 +10,7 @@ Everything here is free; no step needs a credit card.
 
 ## Tools
 - `tools/youtube_auth.py`: one-time YouTube sign-in, writes tokens to `.env`
-- `tools/llm.py`, `tools/clips_search.py`, `tools/notify.py`: quick checks that each key works
+- `tools/llm.py`, `tools/voice_tts.py`, `tools/notify.py`: quick checks that each key and model works
 
 All commands run from the project folder with the venv's Python: `.venv/Scripts/python tools/<tool>.py`.
 
@@ -40,14 +40,17 @@ All commands run from the project folder with the venv's Python: `.venv/Scripts/
    Without the dashboard: save the file as `credentials.json` and run `.venv/Scripts/python tools/youtube_auth.py`.
 6. Check: the YouTube tab shows your channel name (or `.venv/Scripts/python tools/youtube_auth.py --check`).
 
-### 3. Gemini key (AI writing + frame checks)
+### 3. Gemini key (Agents 1, 2 and 5: casting, writing, weekly lessons)
 1. aistudio.google.com → **Get API key → Create API key** → put it in `.env` as `GEMINI_API_KEY`.
 2. Check: `.venv/Scripts/python tools/llm.py --prompt "Give me a two-word name for a cat"`.
 
-### 4. Stock footage keys
-1. pexels.com/api → sign up → copy your key → `PEXELS_API_KEY` (required).
-2. pixabay.com/api/docs → log in; the key is shown on that page → `PIXABAY_API_KEY` (optional backup).
-3. Check: `.venv/Scripts/python tools/clips_search.py --query "kitten yawning"`.
+### 4. Voices and lip-sync (no account; downloads by itself)
+1. Nothing to sign up for: Agent 3 downloads the Kokoro voice model (~120 MB, Apache 2.0) and Rhubarb Lip Sync
+   (~90 MB, MIT) into `.tmp/models/` the first time it animates. Both run on this computer.
+2. Check: `.venv/Scripts/python tools/voice_tts.py --voice af_heart --text "Hello there"` writes a WAV you can play.
+   The dashboard's sidebar shows "Kokoro ready" and "Rhubarb ready" once they're downloaded.
+3. Pexels and Pixabay keys (`PEXELS_API_KEY`, `PIXABAY_API_KEY`) were for the cute-animal version's stock clips; the
+   cartoons don't use them, so they can stay in `.env` or go.
 
 ### 5. Phone alerts (optional, Telegram)
 1. In Telegram, message **@BotFather** → `/newbot` → follow the prompts → copy the token → `TELEGRAM_BOT_TOKEN`.
@@ -55,19 +58,27 @@ All commands run from the project folder with the venv's Python: `.venv/Scripts/
 3. Check: `.venv/Scripts/python tools/notify.py --text "hello"`.
 
 ### 6. Music
-1. YouTube Studio → **Audio Library** → filter **Attribution not required**.
-2. Download 10–15 upbeat, playful tracks (moods like Happy, Bright, Funny) into `assets/music/`.
-   Only use this library: it's the safest against copyright claims. No popular songs.
+1. `assets/music/` already has 36 tracks by Kevin MacLeod (incompetech.com, CC BY 4.0), 3 for each of 12 moods, with
+   their credit lines in `assets/music/tracks.yaml`. The Publisher adds the right line to every description: keep it,
+   his tracks are in YouTube's Content ID.
+2. To add your own: the dashboard's **Music** page, or drop files into `assets/music/` (YouTube Audio Library tracks
+   marked "Attribution not required" are the safest). Add a `mood` (and a `credit` if the licence asks) for each in
+   `tracks.yaml` so the Animator can match it to a script's mood. No popular songs.
 
 ### 7. First Short, locally
-Follow `workflows/produce_short.md` until one Short is uploaded as private and looks right in YouTube Studio.
+Follow `workflows/produce_short.md`: write an episode, animate it, watch it in the Studio, then upload it as private
+and check it in YouTube Studio. Only then switch the autopilot on.
 
-### 8. Cloud (Vercel, free Hobby plan)
+### 8. Cloud (Vercel, free Hobby plan): not for the cartoons yet
+The cartoons are made on this computer: the voices, lip-sync and drawing need more than Vercel's free plan allows
+(4 CPU-hours a month, 250 MB per function). The steps below are kept for the public `/about` and `/privacy` pages
+Google asks for (step 2.3) and for a later cloud setup, e.g. GitHub Actions running the same jobs.
 1. Put the project in a **private** GitHub repo (Claude can do this with git once you say so).
 2. vercel.com → sign up with GitHub (Hobby) → **Add New → Project** → import the repo → Deploy.
 3. Project → **Storage → Create Database → Neon (Free)** → connect it to the project. This sets `DATABASE_URL`.
 4. Project → **Settings → Environment Variables**: add every filled-in key from your `.env`
-   (Gemini, Pexels, Pixabay, the three YouTube values, `CRON_SECRET`, Telegram, `PAUSED=false`). Then **Redeploy**.
+   (Gemini, the three YouTube values, `CRON_SECRET`, Telegram, `PAUSED=true` while the cartoons run locally).
+   Then **Redeploy**.
    Optional: `DASHBOARD_PASSWORD` turns on the dashboard at your Vercel URL (browser asks for the password) so you
    can check and edit the queue from anywhere. Planning, rendering, uploading, settings, music and the YouTube
    sign-in only work from the dashboard on your computer; in the cloud the hourly autopilot does that work.
@@ -76,7 +87,8 @@ Follow `workflows/produce_short.md` until one Short is uploaded as private and l
    stops, because two autopilots on two databases would post every slot twice.
 6. Check the deployment (replace the URL and secret):
    `curl -H "Authorization: Bearer <CRON_SECRET>" https://<project>.vercel.app/api/health`
-   It should show `font: true`, your music count, an ffmpeg version and `true` for each key.
+   It should show `font: true`, your music count, an ffmpeg version and `true` for each key (the voice model and
+   lip-sync show `false` there: they only exist on this computer).
 7. Project → **Settings → Cron Jobs**: within the 2½ hours before a slot, run one of the **autopilot** entries and watch
    **Logs**. A private Short scheduled for that slot should appear in YouTube Studio. Outside that window the run
    answers "no slot is due yet", which is also correct.
@@ -94,4 +106,4 @@ Follow `workflows/produce_short.md` until one Short is uploaded as private and l
 - **Hobby cron runs once a day per entry, at a random minute of its hour (2026-10-24).** That's why `vercel.json` has
   24 autopilot entries (one per hour) and why each Short is made ahead and scheduled: YouTube publishes it on the
   minute even though the check itself is imprecise.
-- **Gemini free tier**: Google may use free-tier prompts to improve its products. Nothing private is sent, only captions and stock frames.
+- **Gemini free tier**: Google may use free-tier prompts to improve its products. Nothing private is sent: the channel's settings, trend topics, characters, scripts and public view counts.

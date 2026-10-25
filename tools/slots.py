@@ -64,6 +64,11 @@ def plan(cfg: dict | None = None) -> dict:
             "count": s["posts_per_day"], **s}
 
 
+def clock(slot: datetime, sched: dict) -> str:
+    """A slot as the schedule's clock shows it, e.g. 10:00."""
+    return slot.astimezone(sched["tz"]).strftime("%H:%M")
+
+
 def day_slots(day: date, sched: dict) -> list[datetime]:
     """The slots of the posting day that starts on `day` (a date on the schedule's clock), in UTC."""
     start = datetime.combine(day, sched["first"], tzinfo=sched["tz"])

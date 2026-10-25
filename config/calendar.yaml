@@ -1,4 +1,4 @@
-# Pet days and holidays the concept writer can theme a Short around.
+# Holidays, world days and pet days the Writer can theme a sketch around (it uses one only when it fits).
 #   date: "MM-DD"                 fixed date
 #   rule: "<n> <weekday> <month>" floating date, e.g. "4 thu 11" = 4th Thursday of November
 

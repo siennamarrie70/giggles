@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Control room</title>
   <meta name="theme-color" content="#f3f3ef">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23151513'/%3E%3Cg fill='%23e5482b'%3E%3Cellipse cx='32' cy='41' rx='11' ry='9.5'/%3E%3Cellipse cx='17' cy='29' rx='4.6' ry='6'/%3E%3Cellipse cx='26' cy='20' rx='4.6' ry='6.2'/%3E%3Cellipse cx='38' cy='20' rx='4.6' ry='6.2'/%3E%3Cellipse cx='47' cy='29' rx='4.6' ry='6'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23151513'/%3E%3Cpath d='M25 19v26l21-13z' fill='%23e5482b'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
@@ -13,16 +13,13 @@
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-    <symbol id="paw" viewBox="0 0 64 64">
-      <path fill="currentColor" d="M32 31c8.5 0 16 8.2 16 15.3 0 5.5-4.4 7.7-9.2 7.7-2.7 0-4.6-1.3-6.8-1.3s-4.1 1.3-6.8 1.3C20.4 54 16 51.8 16 46.3 16 39.2 23.5 31 32 31z"/>
-      <ellipse fill="currentColor" cx="13.5" cy="27.5" rx="5.8" ry="7.6" transform="rotate(-22 13.5 27.5)"/>
-      <ellipse fill="currentColor" cx="24.5" cy="15.5" rx="5.8" ry="7.8" transform="rotate(-8 24.5 15.5)"/>
-      <ellipse fill="currentColor" cx="39.5" cy="15.5" rx="5.8" ry="7.8" transform="rotate(8 39.5 15.5)"/>
-      <ellipse fill="currentColor" cx="50.5" cy="27.5" rx="5.8" ry="7.6" transform="rotate(22 50.5 27.5)"/>
-    </symbol>
+    <!-- one emblem per agent, plus the navigation icons -->
+    <symbol id="em-casting" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.3-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16.5 14.6c2.6.1 4.5 1.7 5 4.4"/></g></symbol>
+    <symbol id="em-writer" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4.5-1.1L19 8.4 15.6 5 5.1 15.5z"/><path d="M13.6 7l3.4 3.4"/></g></symbol>
+    <symbol id="em-animator" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9.5" width="18" height="10.5" rx="2"/><path d="M3.6 9.5 5.4 4.8l15 2.7-.9 2"/><path d="M8.6 5.4l1.7 4M13.6 6.3l1.7 3.2"/></g></symbol>
+    <symbol id="em-publisher" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3.5 3 10.6l7.2 2.6 2.7 7.3z"/><path d="M10.2 13.2 21 3.5"/></g></symbol>
+    <symbol id="em-analyst" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.5h18"/><path d="M6.5 17v-5M11.5 17V6.5M16.5 17v-8"/></g></symbol>
     <symbol id="ic-overview" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></g></symbol>
-    <symbol id="ic-shorts" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10.5 9.5v5l4-2.5z" fill="currentColor"/></g></symbol>
-    <symbol id="ic-trends" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></g></symbol>
     <symbol id="ic-music" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></g></symbol>
     <symbol id="ic-youtube" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2.5" y="5.5" width="19" height="13" rx="3.5"/><path d="M10.5 9.5v5l4.5-2.5z" fill="currentColor"/></g></symbol>
     <symbol id="ic-settings" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></g></symbol>
@@ -35,17 +32,20 @@
   <div class="app">
     <aside class="sidebar" id="sidebar" aria-label="Sections">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true"><svg><use href="#paw"/></svg></span>
+        <span class="brand-mark" aria-hidden="true"></span>
         <div>
           <p class="brand-eyebrow">Control room</p>
           <p class="brand-name" id="channel-name">Your channel</p>
         </div>
       </div>
       <nav class="nav" id="nav">
-        <a href="#overview" data-view="overview"><span class="nav-num">00</span><svg class="nav-ic"><use href="#ic-overview"/></svg><span class="nav-label">Overview<small>Today at a glance</small></span></a>
-        <p class="nav-group">Make</p>
-        <a href="#shorts" data-view="shorts"><span class="nav-num">01</span><svg class="nav-ic"><use href="#ic-shorts"/></svg><span class="nav-label">Shorts<small>Plan, check, upload</small></span><span class="nav-count" id="count-shorts"></span></a>
-        <a href="#trends" data-view="trends"><span class="nav-num">02</span><svg class="nav-ic"><use href="#ic-trends"/></svg><span class="nav-label">Trends<small>What the planner sees</small></span></a>
+        <a href="#overview" data-view="overview"><span class="nav-num">00</span><svg class="nav-ic"><use href="#ic-overview"/></svg><span class="nav-label">Overview<small>The five agents today</small></span></a>
+        <p class="nav-group">Pipeline · the five agents</p>
+        <a href="#cast" data-view="cast" data-agent="casting"><span class="nav-num">01</span><svg class="nav-ic"><use href="#em-casting"/></svg><span class="nav-label">Cast<small>Agent 1 · Casting</small></span><span class="nav-count" id="count-cast"></span></a>
+        <a href="#scripts" data-view="scripts" data-agent="writer"><span class="nav-num">02</span><svg class="nav-ic"><use href="#em-writer"/></svg><span class="nav-label">Scripts<small>Agent 2 · Writer</small></span><span class="nav-count" id="count-scripts"></span></a>
+        <a href="#studio" data-view="studio" data-agent="animator"><span class="nav-num">03</span><svg class="nav-ic"><use href="#em-animator"/></svg><span class="nav-label">Studio<small>Agent 3 · Animator</small></span></a>
+        <a href="#schedule" data-view="schedule" data-agent="publisher"><span class="nav-num">04</span><svg class="nav-ic"><use href="#em-publisher"/></svg><span class="nav-label">Schedule<small>Agent 4 · Publisher</small></span><span class="nav-count" id="count-schedule"></span></a>
+        <a href="#results" data-view="results" data-agent="analyst"><span class="nav-num">05</span><svg class="nav-ic"><use href="#em-analyst"/></svg><span class="nav-label">Results<small>Agent 5 · Analyst</small></span></a>
         <p class="nav-group">Library</p>
         <a href="#music" data-view="music"><span class="nav-num">L1</span><svg class="nav-ic"><use href="#ic-music"/></svg><span class="nav-label">Music</span><span class="nav-count" id="count-music"></span></a>
         <p class="nav-group">Setup</p>
@@ -73,8 +73,11 @@
 
       <main id="main" tabindex="-1">
         <section class="view" id="view-overview" aria-label="Overview"></section>
-        <section class="view" id="view-shorts" aria-label="Shorts" hidden></section>
-        <section class="view" id="view-trends" aria-label="Trends" hidden></section>
+        <section class="view" id="view-cast" aria-label="Cast" hidden></section>
+        <section class="view" id="view-scripts" aria-label="Scripts" hidden></section>
+        <section class="view" id="view-studio" aria-label="Studio" hidden></section>
+        <section class="view" id="view-schedule" aria-label="Schedule" hidden></section>
+        <section class="view" id="view-results" aria-label="Results" hidden></section>
         <section class="view" id="view-music" aria-label="Music" hidden></section>
         <section class="view" id="view-youtube" aria-label="YouTube" hidden></section>
         <section class="view" id="view-settings" aria-label="Settings" hidden></section>

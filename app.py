@@ -25,7 +25,9 @@ ROOT = Path(__file__).resolve().parent
 sys.path[:0] = [str(ROOT / "tools"), str(ROOT)]
 
 import jobs  # noqa: E402
+import lipsync  # noqa: E402
 import short_render  # noqa: E402
+import voice_tts  # noqa: E402
 from common import ON_VERCEL, env, load_config  # noqa: E402
 from dashboard.api import router as dashboard, start_autopilot_loop  # noqa: E402
 from pages.routes import router as public_pages  # noqa: E402
@@ -68,9 +70,11 @@ def health(authorization: str | None = Header(default=None)):
     return {
         "config": bool(load_config().get("channel")),
         "font": short_render.FONT_PATH.exists(),
-        "music_tracks": len([p for p in short_render.MUSIC_DIR.glob("*") if p.suffix.lower() in short_render.MUSIC_EXTS]),
+        "music_tracks": len(short_render.music_tracks()),
+        "voice_model": voice_tts.ready(),
+        "lipsync": lipsync.ready(),
         "ffmpeg": ffmpeg.stdout.splitlines()[0] if ffmpeg.returncode == 0 else ffmpeg.stderr[-300:],
-        "keys": {k: bool(env(k)) for k in ("GEMINI_API_KEY", "PEXELS_API_KEY", "PIXABAY_API_KEY", "YOUTUBE_REFRESH_TOKEN",
-                                           "DATABASE_URL", "TELEGRAM_BOT_TOKEN")},
+        "keys": {k: bool(env(k)) for k in ("GEMINI_API_KEY", "YOUTUBE_REFRESH_TOKEN", "DATABASE_URL",
+                                           "TELEGRAM_BOT_TOKEN")},
         "paused": jobs.is_true("PAUSED"),
     }
