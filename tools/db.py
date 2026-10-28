@@ -7,8 +7,8 @@ Tables are created automatically on first use, and new columns are added to old 
 (only ever added, so an older version of the app still works on the same database).
 
 What the agents hand each other lives here: videos whose plan holds the brief (Agent 1), the
-research pack (Agent 2), the script (Agent 3), the render and the upload (Agents 4 and 5); stats and
-viewers' comments (Agent 6); topics you ask for; the two hosts (characters); and notes (the
+research pack (Agent 2), the script (Agent 3), the render, its review and the upload (Agents 4, 5 and 6); stats
+and viewers' comments (Agent 7); topics you ask for; the two hosts (characters); and notes (the
 playbook, caches, heartbeats). Only rows of FORMAT are the case studies: older versions' Shorts
 share the database and are left alone.
 
@@ -26,7 +26,7 @@ import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from common import ON_VERCEL, env, tmp_path
+from common import ON_VERCEL, env, redact, tmp_path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS videos (
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS comments (
     used_by INTEGER
 )
 """
-FORMAT = "case"  # the case studies' rows; earlier versions' Shorts have other formats
+FORMAT = "doc"  # the documentary cases' rows (v5); "case" rows are v4's cartoon-host cases, other formats earlier versions'
 # Columns added after the first release, for databases created before them.
 NEW_COLUMNS = {"slot": "TEXT", "claimed_at": "TEXT"}
 SLOT_INDEX = ("CREATE UNIQUE INDEX IF NOT EXISTS one_short_per_slot ON videos (slot) "
@@ -192,8 +192,10 @@ def update_video(video_id: int, **fields) -> None:
     unknown = set(fields) - VIDEO_FIELDS
     if unknown:
         raise ValueError(f"unknown video fields: {unknown}")
-    if "plan" in fields:
-        fields["plan"] = json.dumps(fields["plan"])
+    if "plan" in fields:  # (secrets never go into the database: an error kept on a case can quote a web address)
+        fields["plan"] = redact(json.dumps(fields["plan"]), addresses=False)
+    if fields.get("error"):
+        fields["error"] = redact(fields["error"])
     with connect() as db:
         db.query(f"UPDATE videos SET {', '.join(f'{k} = %s' for k in fields)} WHERE id = %s",
                  (*fields.values(), video_id))
@@ -245,8 +247,10 @@ def planned_videos(limit: int = 50) -> list[dict]:
 
 
 def ready(video: dict) -> bool:
-    """Can it go up without anyone's OK: approved, or it never needed approval."""
-    return video["plan"].get("approval") in (None, "approved")
+    """Can it go up without anyone's OK: approved (or it never needed approval), and not held by the Reviewer
+    (agents/reviewer.py: a video that still failed after the Animator's fixes is made again by itself first)."""
+    plan = video["plan"]
+    return plan.get("approval") in (None, "approved") and not (plan.get("review") or {}).get("held")
 
 
 def next_planned() -> dict | None:
@@ -298,6 +302,14 @@ def published_videos(days: int = 60) -> list[dict]:
     return [_video(r) for r in rows]
 
 
+def scheduled_videos(days: int = 3) -> list[dict]:
+    """Shorts on YouTube whose publish time is still to come, or passed at most `days` ago."""
+    with connect() as db:
+        rows = db.query("SELECT * FROM videos WHERE status = 'scheduled' AND youtube_id IS NOT NULL "
+                        "AND publish_at >= %s ORDER BY publish_at", (now_iso(-timedelta(days=days)),))
+    return [_video(r) for r in rows]
+
+
 # --- clips, stats, notes, runs --------------------------------------------
 
 def used_clip_keys() -> set[str]:
@@ -327,7 +339,7 @@ def save_stats(rows: list[dict], taken_on: str) -> None:
 def add_note(kind: str, body: dict | list | str) -> None:
     with connect() as db:
         db.query("INSERT INTO notes (kind, body, created_at) VALUES (%s, %s, %s)",
-                 (kind, json.dumps(body), now_iso()))
+                 (kind, redact(json.dumps(body), addresses=False), now_iso()))
 
 
 def latest_note(kind: str):
@@ -338,10 +350,20 @@ def latest_note(kind: str):
 
 def keep_note(kind: str, body: dict | list | str) -> None:
     """Like add_note, for notes where only the latest matters: one row, replaced each time."""
+    body = redact(json.dumps(body), addresses=False)
     with connect() as db:
         if not db.query("UPDATE notes SET body = %s, created_at = %s WHERE kind = %s RETURNING id",
-                        (json.dumps(body), now_iso(), kind)):
-            db.query("INSERT INTO notes (kind, body, created_at) VALUES (%s, %s, %s)", (kind, json.dumps(body), now_iso()))
+                        (body, now_iso(), kind)):
+            db.query("INSERT INTO notes (kind, body, created_at) VALUES (%s, %s, %s)", (kind, body, now_iso()))
+
+
+def paused() -> bool:
+    """The dashboard's pause switch, kept here so it also stops the morning run in the cloud."""
+    return bool((latest_note("paused") or {}).get("on"))
+
+
+def set_paused(on: bool) -> None:
+    keep_note("paused", {"on": bool(on), "at": now_iso()})
 
 
 def fresh_note(kind: str, max_age: timedelta):
@@ -465,7 +487,14 @@ def start_run(job: str) -> int:
 def finish_run(run_id: int, ok: bool, detail: dict) -> None:
     with connect() as db:
         db.query("UPDATE runs SET finished_at = %s, ok = %s, detail = %s WHERE id = %s",
-                 (now_iso(), int(ok), json.dumps(detail, default=str)[:4000], run_id))
+                 (now_iso(), int(ok), redact(json.dumps(detail, default=str))[:4000], run_id))
+
+
+def abandon_runs() -> int:
+    """Runs still open when the program starts were cut off when it stopped: they're marked as failed."""
+    with connect() as db:
+        return len(db.query("UPDATE runs SET finished_at = %s, ok = 0, detail = %s WHERE finished_at IS NULL RETURNING id",
+                            (now_iso(), json.dumps({"error": "Interrupted: the program stopped while this was running"}))))
 
 
 def main() -> int:

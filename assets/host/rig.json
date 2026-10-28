@@ -1,0 +1,60 @@
+{
+ "source": "sheet.png, Headshot [930, 0, 1225, 352], upscaled 2x",
+ "size": [
+  590,
+  704
+ ],
+ "pivot": [
+  300,
+  690
+ ],
+ "face": [
+  180,
+  60,
+  460,
+  600
+ ],
+ "mouth": [
+  330,
+  469.0
+ ],
+ "mouths": [
+  {
+   "file": "mouth_1.png",
+   "at": [
+    172,
+    459
+   ]
+  },
+  {
+   "file": "mouth_2.png",
+   "at": [
+    170,
+    459
+   ]
+  },
+  {
+   "file": "mouth_3.png",
+   "at": [
+    169,
+    459
+   ]
+  }
+ ],
+ "eyes": {
+  "half": {
+   "file": "eyes_half.png",
+   "at": [
+    235,
+    298
+   ]
+  },
+  "closed": {
+   "file": "eyes_closed.png",
+   "at": [
+    235,
+    298
+   ]
+  }
+ }
+}

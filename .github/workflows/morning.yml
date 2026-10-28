@@ -1,0 +1,129 @@
+# The morning run in the cloud. Every day at 06:55 India time GitHub starts a Linux machine (free for
+# public repositories: 4 cores, 16 GB) that makes the day's Shorts one after another until every slot is
+# scheduled on YouTube (python tools/jobs.py morning), then stops. The catch-up runs at 13:00 and 19:00
+# fill any slot the morning couldn't, and end within minutes otherwise. "Run workflow" on the Actions tab
+# starts it by hand; with "test" it makes and reviews one video and uploads nothing.
+# Keys come from the repository's secrets (Settings -> Secrets and variables -> Actions); the PAUSED
+# variable, or the dashboard's pause switch, stops it.
+# Instagram: a Reel whose slot comes while the run goes is posted by the run itself; at its end the videos
+# of the Reels still waiting are kept with the run, encrypted (tools/kept.py), for the Reels workflow
+# (reels.yml) to post at their slots.
+name: Morning run
+
+on:
+  schedule:
+    - cron: "25 1 * * *"   # 06:55 India time: the run waits for 07:00 (schedule.make_at)
+    - cron: "30 7 * * *"   # 13:00: catch-up
+    - cron: "30 13 * * *"  # 19:00: catch-up
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Test: make and review one video, upload nothing"
+        type: boolean
+        default: false
+
+concurrency:
+  group: morning-run
+  cancel-in-progress: false  # a catch-up waits for a morning run still going
+
+permissions:
+  contents: read
+  actions: write  # only for the keep-alive step at the end
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358  # GitHub's limit is 6 hours; the run stops at 5 h 40 min, then keeps its Reels' videos
+    env:
+      PYTHONUNBUFFERED: "1"
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+      PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}  # the drawn look's scenes (tools/draw.py)
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}  # Reels (posting needs no app ID or secret)
+      INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+      INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
+      REELS_KEY: ${{ secrets.REELS_KEY }}  # encrypts the Reels' videos kept with the run (tools/kept.py)
+      PAUSED: ${{ vars.PAUSED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # (the run never pushes: no GitHub key left on the machine for it)
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install (requirements-worker.txt, the dashboard's packages and the video-making ones)
+        run: pip install -r requirements-worker.txt
+
+      - name: Restore the models (whisper, depth, voice, lip-sync; about 1 GB, kept between runs)
+        id: models
+        uses: actions/cache/restore@v4
+        with:
+          path: .tmp/models
+          key: models-v1
+
+      - name: Every model on this machine (the missing ones download once)
+        working-directory: tools
+        run: python -c "import depth, lipsync, narration; depth.model_path(); lipsync.ensure_rhubarb(); narration._model()"
+
+      - name: Keep the models for the next run
+        if: ${{ steps.models.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .tmp/models
+          key: models-v1
+
+      - name: ffmpeg with the rubberband filter (it makes his voice deeper)
+        run: |
+          if python -c "import imageio_ffmpeg, subprocess, sys; sys.exit(0 if 'rubberband' in subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-filters'], capture_output=True, text=True).stdout else 1)"; then
+            echo "The bundled ffmpeg has rubberband"
+          else
+            echo "The bundled ffmpeg has no rubberband: using Ubuntu's"
+            sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+            echo "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" >> "$GITHUB_ENV"
+          fi
+
+      - name: Test (one video made and reviewed, nothing uploaded)
+        if: ${{ inputs.test }}
+        run: |
+          python tools/jobs.py prepare
+          python tools/jobs.py publish --dry-run
+
+      - name: Morning run
+        if: ${{ !inputs.test }}
+        run: python tools/jobs.py morning
+
+      - name: Keep the videos of the Reels still to post (encrypted)
+        if: ${{ always() && !inputs.test }}
+        run: python tools/jobs.py keep
+
+      - name: Store them with this run for 3 days (the Reels workflow posts them at their slots)
+        if: ${{ always() && !inputs.test }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: shorts-${{ github.run_id }}
+          path: .tmp/kept/
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: ignore
+          overwrite: true
+
+      - name: Keep the schedule switched on (GitHub turns off a public repository's schedules after 60 days without a commit)
+        if: ${{ always() && github.event_name == 'schedule' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/morning.yml/enable"
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/reels.yml/enable"

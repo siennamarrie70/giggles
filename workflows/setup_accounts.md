@@ -1,8 +1,9 @@
 # Workflow: One-time account setup
 
 ## Objective
-Get every free account and key the channel needs, test each one locally, then deploy to Vercel.
-Everything here is free; no step needs a credit card.
+Get every free account and key the channel needs, test each one locally, then hand the daily work to the cloud:
+GitHub Actions makes the Shorts every morning, Neon keeps the data, and Vercel can show the dashboard. Everything
+here is free; no step needs a credit card.
 
 ## Required Inputs
 - A Google account (for YouTube, Google Cloud and Gemini)
@@ -10,6 +11,7 @@ Everything here is free; no step needs a credit card.
 
 ## Tools
 - `tools/youtube_auth.py`: one-time YouTube sign-in, writes tokens to `.env`
+- `tools/instagram.py`: one-time Instagram connection (optional), writes its token and account to `.env`
 - `tools/llm.py`, `tools/voice_tts.py`, `tools/notify.py`: quick checks that each key and model works
 
 All commands run from the project folder with the venv's Python: `.venv/Scripts/python tools/<tool>.py`.
@@ -38,19 +40,70 @@ All commands run from the project folder with the venv's Python: `.venv/Scripts/
    gitignored), then **Connect YouTube**. In the browser pick the account **and the channel**.
    Google warns the app is unverified because it's your own private app: **Advanced → Go to … (unsafe)** → Allow.
    Without the dashboard: save the file as `credentials.json` and run `.venv/Scripts/python tools/youtube_auth.py`.
-6. Check: the YouTube tab shows your channel name (or `.venv/Scripts/python tools/youtube_auth.py --check`).
+6. Check: the Channels page shows your channel name (or `.venv/Scripts/python tools/youtube_auth.py --check`).
+7. Optional, for custom thumbnails: verify the channel by phone at youtube.com/verify. Without it YouTube refuses the
+   Animator's thumbnails (the uploads still work; YouTube picks a frame).
 
-### 3. Gemini key (Agents 1, 2, 3 and 6: choosing cases, research, writing, weekly lessons)
+### 2a. Instagram Reels (optional, free)
+Each Short can also go up as a Reel on your Instagram at its slot. It uses Instagram's own API ("Instagram API with
+Facebook Login"), from an app you own; nothing is shared with anyone else.
+1. In Instagram: **Settings → Account type and tools → Switch to professional account** (Creator or Business).
+2. Link it to a Facebook Page you manage (create one if needed): the Page's settings → **Linked accounts →
+   Instagram**.
+3. developers.facebook.com → **My Apps → Create app** → use case **Other** → type **Business**. Add the product
+   **Instagram** (API setup with Facebook login). Development mode is enough: it works for accounts that have a role
+   on the app, which yours does.
+4. **Graph API Explorer** (developers.facebook.com/tools/explorer): pick your app, **User or Page → Get User Access
+   Token**, add the permissions `instagram_basic`, `instagram_content_publish`, `pages_show_list`,
+   `pages_read_engagement` and `business_management`, plus `instagram_manage_contents` for the Schedule page's Delete
+   of a posted Reel (2026-10-27; without it posting still works), press **Generate Access Token** and, in Facebook's
+   window, tick your Page, your Instagram account and your business. Copy the token. (An empty permission list means the app
+   lacks the Instagram use case: developers.facebook.com/apps → the app → Use cases → Manage messaging & content on
+   Instagram → API setup with Facebook login. A Page in a Business portfolio isn't found without
+   `business_management`: connect() then also looks through the portfolio's Pages, and its error names the Pages the
+   token sees and the permissions it lacks. 2026-10-27.)
+5. The app's **App ID** and **App secret**: App settings → Basic.
+6. In the dashboard: **Channels → Instagram Reels**: paste the token, App ID and App secret → **Connect Instagram**.
+   It exchanges the token for a long-lived one, finds the Page your Instagram is linked to and keeps the Page's token
+   (it doesn't expire) in `.env` (`INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, `INSTAGRAM_USERNAME`,
+   `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`). Without the dashboard:
+   `.venv/Scripts/python tools/instagram.py --connect <token> --app-id <id> --app-secret <secret>`.
+7. Check: the page shows `@yourname` (or `.venv/Scripts/python tools/instagram.py --status`). Then **Switch on** Reels
+   (`instagram.enabled` in `config/channel.yaml`). Posting needs this computer on at the slot time, until the
+   cloud move (step 8): then GitHub posts them (`.github/workflows/reels.yml`).
+
+### 3. Gemini key (Agents 1, 2, 3, 5 and 7: choosing cases, research, writing, the review's look, weekly lessons)
 1. aistudio.google.com → **Get API key → Create API key** → put it in `.env` as `GEMINI_API_KEY`.
 2. Check: `.venv/Scripts/python tools/llm.py --prompt "Give me a two-word name for a cat"`.
 
-### 4. Voices and lip-sync (no account; downloads by itself)
-1. Nothing to sign up for: Agent 3 downloads the Kokoro voice model (~120 MB, Apache 2.0) and Rhubarb Lip Sync
-   (~90 MB, MIT) into `.tmp/models/` the first time it animates. Both run on this computer.
-2. Check: `.venv/Scripts/python tools/voice_tts.py --voice af_heart --text "Hello there"` writes a WAV you can play.
-   The dashboard's sidebar shows "Kokoro ready" and "Rhubarb ready" once they're downloaded.
-3. Pexels and Pixabay keys (`PEXELS_API_KEY`, `PIXABAY_API_KEY`) were for the cute-animal version's stock clips; the
-   case studies don't use them, so they can stay in `.env` or go.
+### 4. The Professor's voice, lip-sync and word timings (no new account)
+1. His voice is Gemini's text-to-speech on the free tier: the same `GEMINI_API_KEY` as step 3, nothing to add. The
+   dashboard's **Host** page plays samples of Gemini's deep voices and picks his (`voice` in `config/channel.yaml`).
+2. The rest downloads itself into `.tmp/models/` the first time it's needed and runs on this computer: faster-whisper's
+   small.en model (word timings, ~250 MB, MIT), Rhubarb Lip Sync (his mouth, ~90 MB, MIT), Depth Anything V2 Small
+   (photos that move, ~100 MB, Apache 2.0). (Kokoro, the old backup voice, was removed on 2026-10-27; its ~120 MB
+   in `.tmp/models/kokoro` can be deleted.)
+3. Check: `.venv/Scripts/python tools/host.py` writes `.tmp/out/host_test.mp4`: him saying his line from the sheet in
+   his voice (one free Gemini call). Or press **Make a test clip** on the Host page.
+
+### 4a. Stock footage keys (free)
+1. pexels.com → sign up → **Image & Video API** → copy the key → `PEXELS_API_KEY` in `.env`.
+2. Optional: pixabay.com → sign up → **API** docs page shows your key → `PIXABAY_API_KEY`.
+3. Both licences allow free use on YouTube, edited and monetised, with no credit required; the description credits
+   every creator anyway and marks the clips as illustrative.
+4. Check: `.venv/Scripts/python tools/footage.py --query "stock market screen"` lists clips. Archive film (the
+   Internet Archive, NASA) needs no key: `... footage.py --archive Tupperware`.
+
+### 4a-2. Cloudflare: the drawn look's scenes (free, no card)
+1. dash.cloudflare.com → sign up with an email (the Free plan; no card asked).
+2. In the dashboard: **AI → Workers AI → Use REST API → Create a Workers AI API token**. The token form's permission
+   rows: Workers AI **Read** (the row showing "0" can be set to Read or deleted); Account Resources: your account; TTL
+   empty. Copy the token once (it isn't shown again) and the **Account ID** from the same page.
+3. Paste them into `.env` as `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (never into a chat).
+4. Check: `.venv/Scripts/python tools/draw.py --check` draws `.tmp/out/draw_check.jpg` in about 3 s and says
+   today's neurons (about 58 of the free 10,000).
+5. The free plan gives 10,000 neurons a day (renewed at 00:00 UTC) and never charges: past the allocation Cloudflare
+   refuses. `draw.py` stops at 9,000. Turn the drawn look on in **Settings → The look**.
 
 ### 4b. Research sources (no accounts)
 1. Nothing to sign up for: Agent 2 reads Wikipedia, Wikimedia Commons (photos with free licences), the IMF and World
@@ -60,9 +113,10 @@ All commands run from the project folder with the venv's Python: `.venv/Scripts/
 3. Viewers' comments are read with the YouTube permission from step 2 ("View your YouTube account"). If the Activity
    page shows a comments error after the first cases go public, press **Reconnect** on the YouTube page once.
 
-### 4c. The two hosts
-1. They're designed by themselves with the first case (one Gemini call), or press **Design the hosts** on the
-   dashboard's Hosts page. Change their look, voice or speed there any time.
+### 4c. The host
+1. Nothing to do: the Professor's drawings are in `assets/host/`, made once from the user's character sheet
+   (`assets/host/sheet.png`) by `tools/host_prep.py`. The Host page sets his name (for the dashboard only), his size
+   and his voice.
 
 ### 5. Phone alerts (optional, Telegram)
 1. In Telegram, message **@BotFather** → `/newbot` → follow the prompts → copy the token → `TELEGRAM_BOT_TOKEN`.
@@ -82,41 +136,79 @@ Follow `workflows/produce_short.md`: make a case (or ask for one on the Topics p
 animate it, watch it in the Studio, then upload it as private and check it in YouTube Studio. Only then switch the
 autopilot on.
 
-### 8. Cloud (Vercel, free Hobby plan): not for the case studies yet
-The case studies are made on this computer: the voices, lip-sync and drawing need more than Vercel's free plan allows
-(4 CPU-hours a month, 250 MB per function). The steps below are kept for the public `/about` and `/privacy` pages
-Google asks for (step 2.3) and for a later cloud setup, e.g. GitHub Actions running the same jobs.
-1. Put the project in a **private** GitHub repo (Claude can do this with git once you say so).
-2. vercel.com → sign up with GitHub (Hobby) → **Add New → Project** → import the repo → Deploy.
-3. Project → **Storage → Create Database → Neon (Free)** → connect it to the project. This sets `DATABASE_URL`.
-4. Project → **Settings → Environment Variables**: add every filled-in key from your `.env`
-   (Gemini, the three YouTube values, `CRON_SECRET`, Telegram, `PAUSED=true` while the cases are made locally).
-   Then **Redeploy**.
-   Optional: `DASHBOARD_PASSWORD` turns on the dashboard at your Vercel URL (browser asks for the password) so you
-   can check and edit the queue from anywhere. Planning, rendering, uploading, settings, music and the YouTube
-   sign-in only work from the dashboard on your computer; in the cloud the hourly autopilot does that work.
-5. **Hand the autopilot to the cloud:** copy `DATABASE_URL` from Vercel (Settings → Environment Variables) into your
-   local `.env` and restart the local server. Your dashboard then shows the cloud's queue, and its own autopilot loop
-   stops, because two autopilots on two databases would post every slot twice.
-6. Check the deployment (replace the URL and secret):
-   `curl -H "Authorization: Bearer <CRON_SECRET>" https://<project>.vercel.app/api/health`
-   It should show `font: true`, your music count, an ffmpeg version and `true` for each key (the voice model and
-   lip-sync show `false` there: they only exist on this computer).
-7. Project → **Settings → Cron Jobs**: within the 2½ hours before a slot, run one of the **autopilot** entries and watch
-   **Logs**. A private Short scheduled for that slot should appear in YouTube Studio. Outside that window the run
-   answers "no slot is due yet", which is also correct.
+### 8. Cloud: the morning run on GitHub Actions (free for a public repository)
+One Short needs 10-15 minutes and about 1.6 GB of models and packages. Vercel's free functions stop after 5 minutes
+and a Python function may be 500 MB unzipped (2026), so Vercel only shows the dashboard: it installs
+`requirements.txt` alone (the dashboard's packages), and the morning run `requirements-worker.txt` (those plus the
+video-making ones, ~650 MB). GitHub Actions is free for public repositories (4 cores,
+16 GB, up to 6 hours a job); a private one gets 2,000 minutes a month, about 3 Shorts a day (2026-10-26).
+1. **Database (Neon, free):** neon.tech → sign up with GitHub → create a project (region near you, e.g. Singapore) →
+   copy its connection string. Put it in `.env` as `DATABASE_URL`, then copy this computer's data there once:
+   `.venv/Scripts/python tools/db_copy.py` (every row keeps its number; the counts are checked). Restart the dashboard:
+   it now shows the cloud's data, and its own autopilot stays off, so only the cloud posts. Keep `DATABASE_URL` in
+   `.env` from then on.
+2. **GitHub:** `winget install GitHub.cli`, then `gh auth login` (sign in once in the browser). Then (Claude can do
+   it) `gh repo create <name> --public --source . --push`. Before the repository goes public: `.env`,
+   `credentials.json`, `token.json`, `.tmp/` and `backups/` are in `.gitignore`, and neither the files to push nor the
+   history hold a key (checked again 2026-10-28 against every value in `.env`). The Professor's sheet, the music
+   (credited, CC BY) and `config/channel.yaml` (your settings, no keys) become public. So do the Actions run logs:
+   GitHub hides the secrets in them, and the tokens made during a run too (`common.keep_secret`); they show the
+   cases' topics and progress.
+3. **Secrets:** the repository → Settings → Secrets and variables → Actions → **New repository secret**, one for each:
+   `GEMINI_API_KEY`, `PEXELS_API_KEY`, `PIXABAY_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`,
+   `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`,
+   `YOUTUBE_REFRESH_TOKEN`, `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and for Reels
+   `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, `INSTAGRAM_USERNAME` and `REELS_KEY` (it encrypts the Reels'
+   videos kept between runs; posting needs no Facebook app ID or secret). Claude can copy them all from `.env`
+   with `gh secret set`, without showing them. Two workflows then run: **Morning run** and **Reels** (5 and 35
+   minutes after each slot, posting the Reels of Shorts whose morning run has ended). Variables tab: `PAUSED` = `false` (`true` stops the cloud run;
+   the dashboard's switch does too).
+4. **Test:** Actions tab → **Morning run** → **Run workflow**, tick **test**: it makes and reviews one video and
+   uploads nothing. The first run downloads the models (about 1 GB, kept for the next runs). The log's ffmpeg step
+   says whether the bundled ffmpeg has rubberband (his deeper voice); if not, the run uses Ubuntu's.
+5. From then on it runs by itself: every day at 06:55 India time (`.github/workflows/morning.yml`), with catch-up runs
+   at 13:00 and 19:00. GitHub emails you when a run fails; Telegram gets the day's summary.
+6. **The YouTube sign-in must not expire:** in Testing it lasts 7 days, and the cloud run would stop every week. Publish
+   the app (step 2.3), which needs the `/about` and `/privacy` pages online: step 7.
+7. **Optional, the dashboard online (Vercel, Hobby):** vercel.com → sign up with GitHub → **Add New → Project** →
+   import the repository → **Settings → Environment Variables**: `DATABASE_URL` (the same Neon string), the keys from
+   `.env`, `DASHBOARD_PASSWORD` (the browser asks for it: 12 characters or more, or the dashboard stays off; ten wrong
+   tries lock that address out for ten minutes) and `CRON_SECRET` (32+ random characters, for `/api/health`) →
+   Deploy. It shows the cloud's data from anywhere and its pause switch stops the cloud run; making videos, settings
+   and music stay with this computer and GitHub. Every page carries security headers (no framing by other sites,
+   scripts only from the app itself), and a change needs the page's own header, so another site can't press its
+   buttons.
 
 ## Expected Outputs
-- `.env` filled in locally; the same values in Vercel
-- One test Short in YouTube Studio (private, scheduled for its slot)
-- 25 cron jobs listed in Vercel: 24 hourly autopilot checks and the daily stats
+- `.env` filled in locally; the same keys as the GitHub repository's secrets
+- The data in Neon (`tools/db_copy.py`), with `DATABASE_URL` in `.env`
+- A green **test** run on the Actions tab, then the Morning run scheduled every day at 06:55 India time
 
 ## Edge Cases & Known Issues
-- **"invalid_grant" errors** mean the YouTube sign-in was revoked or the consent screen was left in Testing. Fix: publish the consent screen, run `youtube_auth.py` again, update `YOUTUBE_REFRESH_TOKEN` in `.env` and Vercel.
+- **"invalid_grant" errors** mean the YouTube sign-in was revoked or the consent screen was left in Testing. Fix: publish the consent screen, run `youtube_auth.py` again, update `YOUTUBE_REFRESH_TOKEN` in `.env` and in the GitHub secrets (and Vercel). The morning run stops at once on it and says so.
 - **Publish app asks for home page / privacy policy links (2026-10-24):** expected; Google requires them for any External app in production. Use the app's own `/about` and `/privacy` pages (above). If Google refuses `<project>.vercel.app` as an authorized domain, the $0 fallback is staying in Testing and reconnecting weekly.
 - **Wrong channel**: if your Google account has several channels, re-run `youtube_auth.py` and pick the right one in the browser.
+- **Stop and Delete need one more permission (2026-10-26):** they need the sign-in to change and delete videos
+  (`youtube.force-ssl`), which earlier sign-ins didn't ask for. Only you can give it, on Google's page: the first Stop
+  or Delete offers to open it (or the Schedule page's "Allow it now", or Reconnect on the YouTube page), and the
+  Stop or Delete finishes once it's allowed. Connecting runs beside a task that's going (it used to wait "Busy" for
+  the whole morning run). Then copy the new `YOUTUBE_REFRESH_TOKEN` from `.env` to the GitHub secrets (and Vercel)
+  too.
+- **Google's page has a box for each permission (granular consent):** an unticked box used to fail the sign-in with
+  oauthlib's "Scope has changed from … to …". `youtube_auth.run` now accepts the smaller grant
+  (`OAUTHLIB_RELAX_TOKEN_SCOPE`) and checks it. It saves nothing if "Manage your YouTube videos", "View your YouTube
+  account" or "View YouTube Analytics reports…" was left unticked, because uploads and the numbers need them. It does
+  save without "See, edit, and permanently delete your YouTube videos…", but then Stop and Delete stay off and the
+  dashboard says so. A timeout (5 minutes) or Cancel changes nothing either.
+- **Instagram "none of the Facebook Pages ... has an Instagram professional account"**: the account is personal, or
+  not linked to a Page the token can manage; fix it in Instagram's settings, generate a new token and connect again.
+- **Instagram token stops working**: a token connected without the App ID and secret lasts only hours; connect again
+  with them (the Page token from a long-lived token doesn't expire unless you change your password or remove the app).
 - **Vercel Hobby is for non-commercial use.** Fine while growing; once the channel earns money, upgrade to Pro or move hosts.
-- **Hobby cron runs once a day per entry, at a random minute of its hour (2026-10-24).** That's why `vercel.json` has
-  24 autopilot entries (one per hour) and why each Short is made ahead and scheduled: YouTube publishes it on the
-  minute even though the check itself is imprecise.
+- **Vercel no longer runs the autopilot (2026-10-26):** its cron jobs are gone from `vercel.json`; GitHub Actions makes
+  the Shorts.
+- **GitHub starts scheduled runs late at busy times** (often 5-30 minutes; the 08:00 Short takes 10-15), and the
+  13:00 and 19:00 catch-ups cover a run it skipped. **A public repository's schedules switch off after 60 days
+  without a commit:** the workflow re-enables itself every run; if GitHub still emails a warning, press **Enable** on
+  the Actions tab. **The run logs are public:** they show topics and titles, never the keys (GitHub hides secrets).
 - **Gemini free tier**: Google may use free-tier prompts to improve its products. Nothing private is sent: the channel's settings, trend topics, text from public sources, photos to check, scripts, public view counts and the text of public comments (never who wrote them). Grounding with Google Search isn't on the free tier, which is why the research reads its sources itself.

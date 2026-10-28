@@ -17,6 +17,14 @@ ask the same thing twice. Wikimedia asks API clients for a descriptive User-Agen
 request every few seconds and often answers 429 anyway (2026-10-25), so the news sites' own RSS
 feeds come first and GDELT is a best-effort extra.
 
+A news link can point anywhere (GDELT and the feeds list whatever was published, and anyone can edit
+Wikipedia's Current events portal), so article() reads only ordinary public sites (2026-10-28): each
+connection is checked once it's made, before anything is sent, and one to this computer, a home or
+office network or a cloud's own addresses (169.254.169.254) is dropped, even when a public name or a
+redirect leads there; at most MAX_PAGE bytes are read, for at most PAGE_SECONDS. A photo is taken
+only from Wikimedia's own servers (IMAGE_HOSTS), at most MAX_IMAGE bytes; a feed that declares XML
+entities (which can make a small file expand without end) is skipped.
+
 Usage:
     python tools/research_fetch.py wiki "Nokia"
     python tools/research_fetch.py search "Nokia decline smartphones"
@@ -30,6 +38,7 @@ Usage:
 import argparse
 import hashlib
 import html
+import ipaddress
 import json
 import re
 import sys
@@ -44,6 +53,10 @@ from xml.etree import ElementTree
 
 import requests
 from PIL import Image
+from requests.adapters import HTTPAdapter
+from urllib3.connection import HTTPConnection, HTTPSConnection
+from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
+from urllib3.exceptions import NewConnectionError
 
 from common import tmp_path
 
@@ -67,6 +80,10 @@ SKIP_SECTIONS = {"see also", "references", "external links", "further reading", 
 SKIP_DOMAINS = ("youtube.com", "facebook.com", "twitter.com", "x.com", "instagram.com", "tiktok.com", "reddit.com",
                 "pinterest.", "linkedin.com", "wikipedia.org")
 MIN_ARTICLE = 800
+MAX_PAGE = 5 * 1024 * 1024  # bytes of an article's page (they're 50 KB-2 MB)
+PAGE_SECONDS = 45  # to read one page, all of it
+IMAGE_HOSTS = ("upload.wikimedia.org",)
+MAX_IMAGE = 40 * 1024 * 1024  # bytes (a Commons photo at 1280 px is under 1 MB; an original can be 30)
 FEEDS = [  # news sites' public RSS feeds, searched for the topic's words
     "https://feeds.bbci.co.uk/news/business/rss.xml", "https://feeds.bbci.co.uk/news/world/rss.xml",
     "https://feeds.bbci.co.uk/news/technology/rss.xml", "https://www.theguardian.com/uk/business/rss",
@@ -103,6 +120,7 @@ NOT_FREE = re.compile(r"\b(nc|nd|non[- ]?commercial|no ?deriv|fair use|non-free)
 NOT_PHOTOS = re.compile(r"\b(logo|wordmark|icon|seal|coat of arms|emblem|signature|screenshot)\b", re.I)
 
 _session = None
+_pages_session = None
 _gdelt_lock = threading.Lock()
 _gdelt_last = 0.0
 
@@ -113,6 +131,72 @@ def _http() -> requests.Session:
         _session = requests.Session()
         _session.headers["User-Agent"] = USER_AGENT
     return _session
+
+
+def is_public(address: str) -> bool:
+    """Whether an IP address is on the public internet: not this computer, a home or office network, or a
+    cloud's own addresses."""
+    ip = ipaddress.ip_address(address.split("%")[0])
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
+class _PublicOnly:
+    """A connection dropped as soon as it's made (before anything is sent) unless it reached a public address."""
+
+    def _new_conn(self):
+        sock = super()._new_conn()
+        if not is_public(sock.getpeername()[0]):
+            sock.close()
+            raise NewConnectionError(self, f"{self.host} isn't a public site")
+        return sock
+
+
+class _PublicHTTP(_PublicOnly, HTTPConnection):
+    pass
+
+
+class _PublicHTTPS(_PublicOnly, HTTPSConnection):
+    pass
+
+
+class _PublicHTTPPool(HTTPConnectionPool):
+    ConnectionCls = _PublicHTTP
+
+
+class _PublicHTTPSPool(HTTPSConnectionPool):
+    ConnectionCls = _PublicHTTPS
+
+
+class _PublicAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        super().init_poolmanager(*args, **kwargs)
+        self.poolmanager.pool_classes_by_scheme = {"http": _PublicHTTPPool, "https": _PublicHTTPSPool}
+
+
+def _pages() -> requests.Session:
+    """The session for pages from anywhere (article): public sites only, redirects included."""
+    global _pages_session
+    if _pages_session is None:
+        session = requests.Session()
+        session.trust_env = False  # (no proxy: the address checked must be the site's own)
+        session.max_redirects = 5
+        session.headers["User-Agent"] = PAGE_AGENT
+        session.mount("http://", _PublicAdapter())
+        session.mount("https://", _PublicAdapter())
+        _pages_session = session
+    return _pages_session
+
+
+def _body(resp: requests.Response, limit: int, seconds: float) -> bytes | None:
+    """A streamed answer's bytes; None if there are more than `limit` or they take longer than `seconds`."""
+    body, until = bytearray(), time.monotonic() + seconds
+    for chunk in resp.iter_content(1 << 16):
+        body += chunk
+        if len(body) > limit or time.monotonic() > until:
+            return None
+    return bytes(body)
 
 
 def _cached(key: str, max_age: timedelta, fetch):
@@ -133,7 +217,13 @@ def _cached(key: str, max_age: timedelta, fetch):
 def _get_json(url: str, params: dict | None = None) -> dict | list:
     headers = {"User-Agent": IMF_AGENT} if url.startswith(IMF_API) else None
     for attempt in range(3):
-        resp = _http().get(url, params=params, headers=headers, timeout=TIMEOUT)
+        try:
+            resp = _http().get(url, params=params, headers=headers, timeout=TIMEOUT)
+        except requests.ConnectionError:  # a dropped connection (Wikimedia, 2026-10-26): try again shortly
+            if attempt == 2:
+                raise
+            time.sleep(2 * (attempt + 1))
+            continue
         if resp.status_code != 429 or attempt == 2:
             break
         wait = resp.headers.get("Retry-After", "")  # rate-limited: wait as asked (briefly), then try again
@@ -300,6 +390,8 @@ def _feed(url: str) -> list[dict]:
     def fetch():
         resp = _http().get(url, timeout=TIMEOUT)
         resp.raise_for_status()
+        if b"<!ENTITY" in resp.content[:3_000_000]:
+            raise ValueError("the feed declares XML entities")
         root = ElementTree.fromstring(resp.content[:3_000_000])
         items = []
         for item in root.iter("item"):
@@ -346,17 +438,24 @@ def _skip(url: str) -> bool:
 
 
 def article(url: str) -> dict | None:
-    """A page's main text, title, site and date; None if it can't be read or is too short."""
+    """A page's main text, title, site and date; None if it can't be read, is too short or isn't on a public site."""
     import trafilatura
 
     def fetch():
         try:
-            resp = requests.get(url, headers={"User-Agent": PAGE_AGENT}, timeout=TIMEOUT)
-        except requests.RequestException:
+            parts = urlparse(url)
+            if parts.scheme not in ("http", "https") or parts.username or parts.password \
+                    or parts.port not in (None, 80, 443):
+                return None
+            with _pages().get(url, timeout=TIMEOUT, stream=True) as resp:
+                if resp.status_code != 200 or "html" not in resp.headers.get("content-type", ""):
+                    return None
+                page = _body(resp, MAX_PAGE, PAGE_SECONDS)
+        except (requests.RequestException, ValueError):  # (ValueError: a malformed address)
             return None
-        if resp.status_code != 200 or "html" not in resp.headers.get("content-type", ""):
+        if not page:
             return None
-        doc = trafilatura.bare_extraction(resp.text, url=url, with_metadata=True, as_dict=True, include_comments=False,
+        doc = trafilatura.bare_extraction(page, url=url, with_metadata=True, as_dict=True, include_comments=False,
                                           include_tables=False, favor_precision=True)
         text = (doc or {}).get("text") or ""
         if len(text) < MIN_ARTICLE:
@@ -490,13 +589,19 @@ def commons_file(name: str, share_alike: bool = False) -> dict | None:
 
 
 def download_image(image: dict, dest: Path) -> Path | None:
-    """Saves a Commons photo as JPEG; None if it isn't a readable image."""
+    """Saves a Commons photo as JPEG; None if it isn't a readable image, isn't on Wikimedia's servers or is huge."""
     try:
-        resp = _http().get(image["url"], timeout=TIMEOUT)
-        resp.raise_for_status()
+        parts = urlparse(image["url"])
+        if parts.scheme != "https" or parts.hostname not in IMAGE_HOSTS:
+            return None
+        with _http().get(image["url"], timeout=TIMEOUT, stream=True) as resp:
+            resp.raise_for_status()
+            photo = _body(resp, MAX_IMAGE, 120)
+        if not photo:
+            return None
         dest.parent.mkdir(parents=True, exist_ok=True)
         raw = dest.with_suffix(".download")
-        raw.write_bytes(resp.content)
+        raw.write_bytes(photo)
         with Image.open(raw) as img:
             img.convert("RGB").save(dest, "JPEG", quality=90)
         raw.unlink()

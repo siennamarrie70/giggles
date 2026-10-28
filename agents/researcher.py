@@ -1,19 +1,31 @@
 """
 Agent 2, Researcher: gathers what's known about the Editor's topic from free sources and turns it
-into a research pack of checked facts, data and photos for the Writer.
+into a research pack for the Writer: checked facts and the story they tell, data, real photos and
+real footage.
 
 1. Fetch (tools/research_fetch.py): the brief's Wikipedia articles (or the best search hits), news
    articles for this week's events and the economy (news sites' feeds, GDELT and the links in
    Wikipedia's Current events), the data series the brief asks for (IMF, World Bank) and photos from
    Wikimedia Commons whose licence allows reuse.
 2. Gemini reads the numbered sources, and only those, and lists facts: each a short claim, its source
-   and the exact words from that source that support it; plus a timeline, big numbers and who's who.
+   and the exact words from that source that support it; plus a timeline, big numbers, who's who and
+   the story: the most surprising fact to open on, the decisions real people made, and the twist.
 3. Code checks every fact: its quote must really be in that source, and every number in the claim
-   must be in the quote. The rest are dropped (the dashboard shows how many). Code adds facts it
-   calculates from the data series itself: the change over the years, the IMF's expected growth and
-   how long that takes to double an economy.
+   must be in the quote. The rest are dropped (the dashboard shows how many), and so is any part of
+   the story that rested on them. Code adds facts it calculates from the data series itself: the
+   change over the years, the IMF's expected growth and how long that takes to double an economy.
 4. Gemini looks at the candidate photos and keeps relevant ones without children, gore, logos or
-   walls of text, with their credits.
+   walls of text, with their credits; each kept photo gets its depth map (tools/depth.py), so it can
+   move like a camera passing it.
+5. Footage (tools/footage.py): stock clips for the brief's b-roll searches and, when the brief asks,
+   archive film of the real thing (public-domain films, newsreels and adverts, or NASA's), all
+   checked from their frames in one Gemini request (never a child, nothing graphic; see footage.py),
+   then downloaded (archive film: only the seconds around its best frame). Clips the channel has
+   used before are skipped. In the drawn look (settings look.style) there are no clips to find: every
+   line plays over a drawing, so this step is skipped (minutes and 50-150 MB a case saved). While
+   Cloudflare can't draw, a case is made with real footage instead (look.when_out; draw.style_now()),
+   so its clips are found; the pack says which look it was researched for (pack["look"]), and
+   add_footage() finds the clips of one researched for drawings that's made with footage after all.
 
 A case fails (the Editor then picks another topic) with fewer than MIN_CHECKED facts checked against the
 sources, or fewer than MIN_FACTS counting the calculated ones.
@@ -37,10 +49,14 @@ from pathlib import Path
 
 from PIL import Image
 
+import db
+import depth
+import draw
+import footage
 import infographics
 import llm
 import research_fetch as rf
-from agents.base import act, log
+from agents.base import act, lessons_for, log, taught
 from common import TMP_DIR, load_config, tmp_path
 
 MIN_FACTS = 6
@@ -48,9 +64,12 @@ MIN_CHECKED = 4  # of them from the sources themselves, not calculated
 MAX_FACTS = 30
 WIKI_PAGES = 3
 WIKI_CHARS, NEWS_CHARS = 9000, 4000
-NEWS_FOR = {"trending", "economy"}
+NEWS_FOR = {"trending", "economy", "technology"}
+COMBAT_OK = {"history", "dark_history", "mythology"}  # period battles (and paintings of legendary ones), no gore
 MAX_CANDIDATES, MAX_IMAGES = 12, 8
 FACT_KINDS = ["background", "turning_point", "cause", "effect", "number", "forecast", "reaction", "story"]
+BROLL_SEARCHES, PER_SEARCH = 8, 2   # stock candidates: per search, before the check
+MAX_FOOTAGE, MAX_ARCHIVE = 10, 4    # clips kept
 
 QUOTE_SWAPS = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-", " ": " "})
 NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
@@ -90,8 +109,19 @@ PACK_SCHEMA = {
             "required": ["name", "role"]}},
         "answer": {"type": "string", "description": "2-3 sentences: what the sources say the answer to the case's "
                                                     "question is, and what they leave uncertain"},
+        "story": {"type": "object", "description": "the case told as a mystery, from the facts above", "properties": {
+            "paradox": {"type": "integer", "description": "the number of the most surprising fact: the case opens on it"},
+            "decisions": {"type": "array", "description": "2 to 4 decisions real people made that drove the story, in "
+                                                          "order", "items": {
+                "type": "object",
+                "properties": {"who": {"type": "string"}, "decision": {"type": "string", "description": "at most 15 words"},
+                               "fact": {"type": "integer", "description": "the number of the fact it comes from"}},
+                "required": ["who", "decision", "fact"]}},
+            "twist": {"type": "integer", "description": "the number of the fact with the irony or twist that answers the "
+                                                        "question"},
+        }, "required": ["paradox", "decisions", "twist"]},
     },
-    "required": ["facts", "timeline", "stats", "people", "answer"],
+    "required": ["facts", "timeline", "stats", "people", "answer", "story"],
 }
 
 IMAGES_SCHEMA = {
@@ -103,11 +133,12 @@ IMAGES_SCHEMA = {
             "shows": {"type": "string", "description": "what the photo shows, at most 10 words"},
             "relevant": {"type": "boolean", "description": "would it help tell this case?"},
             "children": {"type": "boolean", "description": "a child or teenager is visible"},
-            "violent_or_gory": {"type": "boolean"},
+            "graphic": {"type": "boolean", "description": "gore, blood, injuries, dead bodies, people suffering"},
+            "combat": {"type": "boolean", "description": "weapons, fighting, explosions, warships or warplanes"},
             "mostly_text_or_logo": {"type": "boolean"},
             "quality": {"type": "string", "enum": ["good", "ok", "poor"]},
         },
-        "required": ["index", "shows", "relevant", "children", "violent_or_gory", "mostly_text_or_logo", "quality"]}}},
+        "required": ["index", "shows", "relevant", "children", "graphic", "combat", "mostly_text_or_logo", "quality"]}}},
     "required": ["images"],
 }
 
@@ -321,18 +352,20 @@ def find_images(brief: dict, pages: list[str], folder: Path, progress=log) -> li
     progress(f"Checking {len(downloaded)} photos")
     try:
         verdicts = llm.generate_json(parts, IMAGES_SCHEMA, "You check photos for a YouTube channel's case-study videos. "
-                                     "Be strict: a photo with any child or teenager in it, anything violent or gory, or "
-                                     "one that's mostly text, a logo or a chart is not usable.").get("images") or []
+                                     "Be strict: a photo with any child or teenager in it, anything graphic (gore, "
+                                     "injuries, the dead, people suffering), or one that's mostly text, a logo or a chart "
+                                     "is not usable. Say whether it shows combat (weapons, fighting, warships, warplanes): "
+                                     "history cases may show it without gore.").get("images") or []
     except Exception as e:  # without the check, no photo is used (it might show a child)
-        progress(f"Couldn't check the photos ({e}); the case will use drawn visuals")
+        progress(f"Couldn't check the photos ({e}); the case will use footage and graphics")
         verdicts = []
     kept = []
     for v in verdicts:
         n = v.get("index")
         if not isinstance(n, int) or not 1 <= n <= len(downloaded) or len(kept) >= MAX_IMAGES:
             continue
-        if not v.get("relevant") or v.get("children") or v.get("violent_or_gory") or v.get("mostly_text_or_logo") \
-                or v.get("quality") == "poor":
+        if not v.get("relevant") or v.get("children") or v.get("graphic") or v.get("mostly_text_or_logo") \
+                or v.get("quality") == "poor" or (v.get("combat") and brief.get("category") not in COMBAT_OK):
             continue
         image, path = downloaded[n - 1]
         iid = f"I{len(kept) + 1}"
@@ -354,6 +387,96 @@ def image_path(image: dict) -> Path:
     return path
 
 
+def add_depth(images: list[dict], progress=log) -> None:
+    """Each photo's depth map, made now (cached next to the photo) so the render doesn't wait for it."""
+    for image in images:
+        try:
+            depth.depth_map(image_path(image))
+            image["depth"] = True
+        except Exception as e:  # without depth the photo just glides in
+            progress(f"No depth for {image['id']} ({type(e).__name__})")
+            image["depth"] = False
+
+
+def find_footage(brief: dict, progress=log) -> tuple[list[dict], list[dict]]:
+    """Checked stock clips (B1, B2...) for the brief's b-roll searches, and archive film (A1, A2...) when it asks for
+    it: one Gemini check for all of them, then the files (archive film: just the seconds around its best frame)."""
+    used = db.used_clip_keys()
+    searches = (brief.get("broll") or [brief["topic"]])[:BROLL_SEARCHES]
+    try:
+        stock = footage.search(searches, exclude=used, per_query=PER_SEARCH,  # longer clips once short ones kept running out
+                               min_seconds=float(lessons_for("researcher")["settings"].get("min_clip_seconds") or 4))
+    except RuntimeError as e:  # no stock footage key
+        progress(f"No stock footage: {e}")
+        stock = []
+    archive = []
+    if brief.get("archive") and brief.get("archive_source") in ("film", "nasa"):
+        progress(f"Looking for archive film: {', '.join(brief['archive'])}")
+        archive = [{**c, "combat_ok": brief.get("category") in COMBAT_OK}
+                   for c in footage.search_archive(brief["archive"], exclude=used, nasa=brief["archive_source"] == "nasa",
+                                                   per_query=footage.ARCHIVE_PER_QUERY)]
+    if not stock and not archive:
+        return [], []
+    progress(f"Checking {len(stock)} stock clips" + (f" and {len(archive)} archive films" if archive else ""))
+    try:
+        checked = footage.check(stock + archive, f"{brief['topic']}: {brief.get('angle', '')}")
+    except Exception as e:  # without the check, no clip is used (it might show a child)
+        progress(f"Couldn't check the footage ({e}); the case will use photos and graphics")
+        return [], []
+    clips, films, per_search = [], [], {}
+    for clip in checked:
+        if not clip["ok"]:
+            continue
+        if clip.get("archive"):
+            if len(films) >= MAX_ARCHIVE:
+                continue
+            start = footage.cut_start(clip)
+            try:
+                path = footage.cut(clip, start)
+            except Exception as e:
+                progress(f"Couldn't cut {clip['key']} ({type(e).__name__})")
+                continue
+            films.append({"id": f"A{len(films) + 1}", "file": path.relative_to(TMP_DIR).as_posix(), "key": clip["key"],
+                          "source": clip["source"], "title": clip["title"], "year": clip.get("year"),
+                          "shows": clip["check"]["shows"][:120], "duration": footage.CUT_SECONDS, "query": clip["query"],
+                          "credit": footage.credit(clip), "page_url": clip["page_url"],
+                          "download_url": clip["download_url"], "start": start})
+            continue
+        if len(clips) >= MAX_FOOTAGE or per_search.get(clip["query"], 0) >= PER_SEARCH:
+            continue
+        try:
+            path = footage.download(clip)
+        except Exception as e:
+            progress(f"Couldn't download {clip['key']} ({type(e).__name__})")
+            continue
+        per_search[clip["query"]] = per_search.get(clip["query"], 0) + 1
+        clips.append({"id": f"B{len(clips) + 1}", "file": path.relative_to(TMP_DIR).as_posix(), "key": clip["key"],
+                      "source": clip["source"], "query": clip["query"], "shows": clip["check"]["shows"][:120],
+                      "duration": clip["duration"], "stop_power": clip["check"].get("stop_power", 0),
+                      "credit": footage.credit(clip), "page_url": clip["page_url"], "download_url": clip["download_url"]})
+    return clips, films
+
+
+def add_footage(brief: dict, pack: dict, progress=log) -> None:
+    """The clips of a case researched for drawings (none were looked for) that's made with real footage after all
+    (Cloudflare can't draw): found now, into its pack."""
+    if pack.get("look") == "footage" or pack.get("footage") or pack.get("archive"):
+        return  # (its clips were looked for: researched for footage, or before packs said which)
+    clips, films = find_footage(brief, progress)
+    progress(f"{len(clips)} stock clips" + (f" and {len(films)} archive films" if films else "") + " to use instead")
+    pack.update(footage=clips, archive=films, look="footage")
+
+
+def clip_path(item: dict) -> Path:
+    """Where a pack's clip is on disk (fetched again if .tmp was cleared)."""
+    path = TMP_DIR / item["file"]
+    if not path.exists():
+        if item.get("start") is not None:
+            return footage.cut(item, item["start"])
+        return footage.download(item)
+    return path
+
+
 def research(brief: dict, folder: Path, progress=log) -> dict:
     """The research pack for a brief; raises if the sources don't support enough facts."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -362,16 +485,21 @@ def research(brief: dict, folder: Path, progress=log) -> dict:
         raise RuntimeError(f"found nothing to read about {brief['topic']}")
     numbered = "\n\n---\n\n".join(f"{s['id']} ({s['kind']}: {s['title']}{', ' + s['publisher'] if s['publisher'] else ''}"
                                   f"{', ' + s['date'] if s['date'] else ''})\n{texts[s['id']]}" for s in sources)
-    system = """You are the researcher for a YouTube channel of 60-second case studies. You read the numbered
+    system = """You are the researcher for a YouTube channel of short case studies told as mysteries. You read the numbered
 sources and list 15 to 30 facts from them that help answer the case's question, from every source that has
 something useful (not just the first). Use only these sources: never add anything
 from memory, even if you know it. Every fact quotes, character for character, the words in its source that support it
 (10 to 60 words, one or two sentences). Every number in a claim must appear in its quote exactly as the source writes
-it; never round, convert or combine numbers. Prefer turning points, causes, effects and striking numbers over
-background. Keep each claim neutral and attributed when it's an opinion or a forecast ('analysts say', 'the IMF
-expects'). For myths and legends, say it's what the story tells ('in the Mahabharata, ...')."""
-    prompt = (f"Case type: {brief.get('category', '')}\nTopic: {brief['topic']}\nThe case's question: {brief.get('angle', '')}\n\n"
-              f"Sources:\n\n{numbered}\n\nList the facts, the timeline, the striking numbers and the people.")
+it; never round, convert or combine numbers. Prefer surprising facts, turning points, the decisions people made and
+why, causes, effects, ironies and striking numbers over background. Keep each claim neutral and attributed when it's
+an opinion or a forecast ('analysts say', 'the IMF expects'). For myths and legends, say it's what the story tells
+('in the Mahabharata, ...'). Then the story, from those facts only: the most surprising fact to open on, the decisions
+real people made that drove it, and the twist that answers the question."""
+    prompt = (f"Case type: {brief.get('category', '')}\nTopic: {brief['topic']}\n"
+              + (f"The paradox it opens on (the Editor's guess; use the facts): {brief['paradox']}\n" if brief.get("paradox") else "")
+              + f"The case's question: {brief.get('angle', '')}\n\n"
+              f"Sources:\n\n{numbered}\n\n" + taught("researcher")
+              + "List the facts, the timeline, the striking numbers, the people and the story.")
     progress("Reading the sources and listing the facts")
     raw = llm.generate_json([prompt], PACK_SCHEMA, system)
     facts, ids = check_facts(raw.get("facts") or [], texts)
@@ -390,6 +518,11 @@ expects'). For myths and legends, say it's what the story tells ('in the Mahabha
         if fid and value and numbers_in(value, words=False) and numbers_in(value, words=False) <= numbers_in(by_id[fid]["quote"]):
             stats.append({"id": f"N{len(stats) + 1}", "value": value,
                           "label": " ".join(str(item.get("label", "")).split())[:80], "fact": fid})
+    raw_story = raw.get("story") or {}
+    story = {"paradox": ids.get(raw_story.get("paradox")), "twist": ids.get(raw_story.get("twist")),
+             "decisions": [{"who": " ".join(str(d.get("who", "")).split())[:60],
+                            "decision": " ".join(str(d.get("decision", "")).split())[:120], "fact": ids[d.get("fact")]}
+                           for d in (raw_story.get("decisions") or [])[:4] if ids.get(d.get("fact")) and d.get("who")]}
     checked = len(facts)
     facts += calculated_facts(series, len(facts) + 1)
     if checked < MIN_CHECKED or len(facts) < MIN_FACTS:
@@ -398,20 +531,33 @@ expects'). For myths and legends, say it's what the story tells ('in the Mahabha
     progress(f"{len(facts)} facts checked against the sources ({dropped} dropped)")
     lead_images = [(rf.wiki_page(s["title"]) or {}).get("image") for s in sources if s["kind"] == "wikipedia"]
     images = find_images(brief, lead_images, folder, progress)
+    add_depth(images, progress)
     progress(f"{len(images)} photos to use")
+    look = draw.style_now()
+    if look == "drawn":  # every line plays over a drawing: no clips to find
+        clips, films = [], []
+        progress("The drawn look: no stock or archive clips needed")
+    else:
+        if draw.style() == "drawn":
+            progress("Cloudflare can't draw now: this case is made with real footage")
+        clips, films = find_footage(brief, progress)
+        progress(f"{len(clips)} stock clips" + (f" and {len(films)} archive films" if films else "") + " to use")
     pack = {
+        "look": look,
         "folder": folder.relative_to(TMP_DIR).as_posix(),
         "sources": sources, "facts": facts, "timeline": timeline, "stats": stats,
         "series": [{"id": f"D{n}", **{k: s[k] for k in ("key", "country", "title", "unit", "points", "source", "url",
                                                         "forecast_from", "source_id")}}
                    for n, s in enumerate(series, start=1)],
-        "images": images,
+        "images": images, "footage": clips, "archive": films,
         "people": [{"name": " ".join(str(p.get("name", "")).split())[:60], "role": " ".join(str(p.get("role", "")).split())[:80]}
                    for p in (raw.get("people") or [])[:8] if p.get("name")],
         "answer": " ".join(str(raw.get("answer", "")).split())[:600],
+        "story": story,
         "dropped": dropped, "notes": notes,
     }
-    return {"pack": pack, "facts": len(facts), "dropped": dropped, "sources": len(sources), "images": len(images)}
+    return {"pack": pack, "facts": len(facts), "dropped": dropped, "sources": len(sources), "images": len(images),
+            "footage": len(clips), "archive": len(films)}
 
 
 def run(brief: dict, folder: Path, progress=log) -> dict:
@@ -428,10 +574,14 @@ def main() -> int:
     parser.add_argument("--images", nargs="*", default=[])
     parser.add_argument("--data", nargs="*", default=[])
     parser.add_argument("--countries", nargs="*", default=[])
+    parser.add_argument("--broll", nargs="*", default=[], help="stock footage searches")
+    parser.add_argument("--archive", nargs="*", default=[], help="archive film searches")
+    parser.add_argument("--nasa", action="store_true", help="--archive searches NASA's videos")
     args = parser.parse_args()
     brief = {"topic": args.topic, "angle": args.angle, "category": args.category, "wiki_titles": args.wiki,
              "search_terms": args.search, "image_subjects": args.images or [args.topic], "data_needs": args.data,
-             "countries": args.countries}
+             "countries": args.countries, "broll": args.broll or [args.topic], "archive": args.archive,
+             "archive_source": ("nasa" if args.nasa else "film") if args.archive else "none"}
     folder = tmp_path("research", "manual", "x").parent
     try:
         result = run(brief, folder)

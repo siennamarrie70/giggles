@@ -1,42 +1,62 @@
 // Control room for the case-study channel. Plain JS, no build step; talks to dashboard/api.py.
 // Every page has the same shape: a header with its actions, a row of numbers, then numbered sections.
-// Pages 01-06 belong to the six agents: Editor, Researcher, Writer, Animator, Publisher, Analyst.
+// Pages 01-07 belong to the seven agents: Editor, Researcher, Writer, Animator, Reviewer, Publisher, Analyst.
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-const EMOTIONS = ["neutral", "happy", "annoyed", "surprised", "sad", "smug"];
-const ACTIONS = { talk: "Talks", point: "Points", shrug: "Shrugs", facepalm: "Facepalms", cross_arms: "Crosses arms",
-                  think: "Thinks", wave: "Waves", cheer: "Cheers" };
-const SHOTS = { studio: "Studio", screen: "Big visual", close: "Close-up" };
-const CATEGORY = { business: "Business", economy: "Economy", trending: "In the news", history: "History", mythology: "Mythology" };
+// Each line's part in the mystery (agents/writer.py).
+const BEATS = { hook: "Hook", setup: "Setup", turn: "Turning point", reveal: "Reveal", closing: "Closing thought" };
+// ...and the beats of v5's first scripts (before the five-part format), so they still read right.
+const BEAT_NAMES = { ...BEATS, question: "Question", context: "Setup", echo: "Echo" };
+const RETENTION = { hook: "hook", open_loop: "open loop", pace: "pace", specificity: "specifics", payoff: "payoff" };
+const CATEGORY = { dark_history: "Dark history", mysteries: "Mysteries", business: "Business", technology: "AI & technology",
+                   trending: "In the news", psychology: "Psychology", mythology: "Mythology", people: "Rise & fall",
+                   science: "Science & space", crime: "Crime & investigations", history: "History", economy: "Economy" };
 const WHY_NOW = { trend: "Trending", anniversary: "Anniversary", evergreen: "Evergreen", request: "Your request",
                   comment: "A viewer's comment", follow_up: "Follow-up" };
 // The fact-check's mark on each line (agents/writer.py).
-const CHECK = { ok: ["Checked", "ok"], fixed: ["Fixed by the fact-check", "warn"], edited: ["Edited by you", "run"],
-                "edited-unsourced": ["Edited: a number isn't in the sources", "bad"] };
+const CHECK = { ok: ["Checked", "ok"], framing: ["No claim: story glue", "ok"], fixed: ["Fixed by the fact-check", "warn"],
+                edited: ["Edited by you", "run"], "edited-unsourced": ["Edited: a number isn't in the sources", "bad"] };
 const STATUS = { planned: ["Ready", "run"], waiting: ["Waits for your OK", "warn"], making: ["Being made", "run"],
                  scheduled: ["Scheduled", "run"], live: ["Live", "ok"], failed: ["Failed", "bad"], vetoed: ["Vetoed", "bad"],
-                 discarded: ["Discarded", "idle"], skipped: ["Skipped", "idle"] };
+                 discarded: ["Discarded", "idle"], skipped: ["Skipped", "idle"],
+                 stopped: ["Stopped: private on YouTube", "idle"], deleted: ["Deleted from YouTube", "idle"] };
 // What each posting slot says, by its state (see slot_board in tools/jobs.py).
-const SLOT = { posted: ["Posted", "ok"], scheduled: ["Ready", "run"], making: ["Making…", "run"],
-               late: ["Late · going out", "warn"], due: ["Up next", "accent"], open: ["Open", "idle"],
+const SLOT = { posted: ["Posted", "ok"], scheduled: ["Scheduled", "run"], making: ["Making…", "run"],
+               late: ["Late · going out", "warn"], due: ["In today's run", "accent"], open: ["Next run", "idle"],
                missed: ["No post", "idle"], paused: ["Paused", "warn"] };
+// Where a Short stands on each platform (platforms() in agents/publisher.py), beside it on the Schedule page.
+const ON_YOUTUBE = { making: ["Being made", "run"], scheduled: ["Scheduled", "run"], public: ["Public", "ok"],
+                     hidden: ["Private in Studio", "warn"], rejected: ["Rejected", "bad"], gone: ["Deleted in Studio", "bad"],
+                     stopped: ["Stopped", "idle"], deleted: ["Deleted", "idle"] };
+const ON_INSTAGRAM = { making: ["After YouTube", "idle"], none: ["Not for Instagram", "idle"], waiting: ["Waits for its slot", "run"],
+                       due: ["Posting soon", "run"], retry: ["Trying again", "warn"], posting: ["Posting…", "run"],
+                       posted: ["Posted", "ok"], failed: ["Didn't post", "bad"], skipped: ["Skipped", "idle"],
+                       expired: ["Given up", "idle"], cancelled: ["Taken off", "idle"], deleted: ["Deleted", "idle"],
+                       remaking: ["Making its video…", "run"] };
 // Which agents a dashboard task puts to work (for the "Working" badge on their cards).
-const TASK_AGENTS = { prepare: ["editor", "researcher", "writer"], render: ["animator"], publish: ["animator", "publisher"],
-                      autopilot: ["editor", "researcher", "writer", "animator", "publisher"], stats: ["analyst"] };
-const AGENT_KEYS = ["editor", "researcher", "writer", "animator", "publisher", "analyst"];
+const TASK_AGENTS = { prepare: ["editor", "researcher", "writer"], render: ["animator", "reviewer"],
+                      publish: ["animator", "reviewer", "publisher"], instagram: ["publisher"], reel: ["publisher"],
+                      remake: ["animator"],
+                      autopilot: ["editor", "researcher", "writer", "animator", "reviewer", "publisher"], stats: ["analyst"],
+                      morning: ["editor", "researcher", "writer", "animator", "reviewer", "publisher"],
+                      "host-sample": ["animator"], "host-test": ["animator"] };
+const AGENT_KEYS = ["editor", "researcher", "writer", "animator", "reviewer", "publisher", "analyst"];
+// What the Reviewer's notes ask the Animator to do (agents/reviewer.py, agents/animator.py improve()).
+const FIXES = { drop: "take it off that line", title: "the title leaves sooner", swap: "swap the shot", slower: "read it slower",
+                pauses: "longer pauses", reread: "read it again", trim: "cut a line", remake: "make it again" };
 const TIMEZONES = ["Asia/Kolkata", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
                    "Europe/London", "Europe/Berlin", "Asia/Dubai", "Asia/Singapore", "Asia/Tokyo", "Australia/Sydney", "UTC"];
 const EVERY_HOURS = [1, 1.5, 2, 3, 4, 6, 8, 12];
 const REGIONS = ["US", "GB", "CA", "AU", "IE", "NZ", "IN", "PH", "SG", "ZA", "DE", "FR", "ES", "BR", "MX", "JP"];
 const HOW_OFTEN = [[0, "Off"], [0.5, "Rarely"], [1, "Normal"], [2, "Often"]];
-const LIMITS = { line: 160, title: 100, caseTitle: 32, point: 48 };
-// The same pacing the Writer and the renderer use (agents/writer.py, tools/case_render.py).
-const PACE = { wordsPerSecond: 2.3, leadIn: 0.3, tail: 2.2, gap: 0.22, sameGap: 0.12 };
-const VIEWS = ["overview", "topics", "research", "scripts", "studio", "schedule", "results", "music", "hosts", "youtube",
-               "settings", "activity"];
+const LIMITS = { line: 160, title: 100, caseTitle: 32, style: 400 };
+// The same pacing the Writer uses for the Professor (agents/writer.py: words a second, the pause between lines).
+const PACE = { wordsPerSecond: 2.1, gap: 0.2, extra: 0.6 };
+const VIEWS = ["overview", "topics", "research", "scripts", "studio", "review", "schedule", "results", "music", "host",
+               "youtube", "settings", "activity"];
 // The audience is worldwide but US-heavy, so times are also shown for New York next to the schedule's own clock.
 const AUDIENCE_TZ = "America/New_York";
 
@@ -47,10 +67,15 @@ const state = { app: null, videos: [], task: null, watching: null, dirty: new Se
 // ------------------------------------------------------------------ helpers
 
 /** Build DOM safely: text always goes in as text, never as HTML. */
+// A link or picture address from outside (a source the Researcher found, a credit page) is used only if it's a web
+// address, one of the dashboard's own, or an email: a "javascript:" address would run code here when clicked.
+const SAFE_URL = /^(https?:\/\/|\/(?!\/)|#|mailto:|data:image\/)/i;
+
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
     if (value === null || value === undefined || value === false) continue;
+    if ((key === "href" || key === "src") && !SAFE_URL.test(String(value).trim())) continue;
     if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
     else if (key === "class") el.className = value;
     else if (key === "style") el.style.cssText = value;
@@ -90,7 +115,10 @@ async function api(path, { method = "GET", json, raw } = {}) {
   const data = (res.headers.get("content-type") || "").includes("json") ? await res.json() : null;
   if (!res.ok) {
     const detail = data && data.detail;
-    throw new Error(Array.isArray(detail) ? detail.map(d => d.msg).join("; ") : detail || `${res.status} ${res.statusText}`);
+    const error = new Error(Array.isArray(detail) ? detail.map(d => d.msg).join("; ")
+                            : detail?.message || detail || `${res.status} ${res.statusText}`);
+    error.reconnect = Boolean(detail?.reconnect);  // YouTube needs your OK once on Google's page
+    throw error;
   }
   return data;
 }
@@ -120,6 +148,14 @@ const nyTime = iso => new Date(iso).toLocaleTimeString(undefined, { hour: "numer
 /** A moment on the schedule's clock, e.g. 16:00: slots are set in that time zone, not the browser's. */
 const clockIn = (iso, tz) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz });
 const scheduleTz = () => state.app.autopilot.schedule.timezone;
+/** A moment on the schedule's clock: 16:00 today, or Tue 28 Oct 16:00 on another day. */
+function onClock(iso) {
+  const tz = scheduleTz();
+  const day = t => new Date(t).toLocaleDateString("en-GB", { timeZone: tz });
+  return (day(iso) === day(Date.now()) ? ""
+    : `${new Date(iso).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: tz })} `)
+    + clockIn(iso, tz);
+}
 const secs = s => s ? `${Math.round(s)} s` : "–";
 const category = key => CATEGORY[key] || cap(key || "");
 
@@ -131,10 +167,105 @@ function shownStatus(v) {
 }
 
 /** How long a script will run, the way the Writer estimates it. */
-function estimate(lines, hosts) {
-  const words = lines.reduce((n, l) => n + l.text.split(/\s+/).filter(Boolean).length / (hosts[l.speaker]?.speed || 1), 0);
-  const gaps = lines.slice(1).reduce((n, l, k) => n + (l.speaker === lines[k].speaker ? PACE.sameGap : PACE.gap), 0);
-  return words / PACE.wordsPerSecond + PACE.leadIn + gaps + PACE.tail;
+function estimate(lines) {
+  const words = lines.reduce((n, l) => n + l.text.split(/\s+/).filter(Boolean).length, 0);
+  return words / PACE.wordsPerSecond + PACE.gap * Math.max(0, lines.length - 1) + PACE.extra;
+}
+
+/** Your YouTube buttons beside a Short: "now" (public at once), "stop" (private, never public by itself) or "delete"
+ *  (gone from YouTube, public or not), each asked first. */
+async function youtubeAction(v, action, asked = false) {
+  const reel = v.platforms?.instagram || {};
+  const isPublic = v.platforms?.youtube?.state === "public" || (v.publish_at && new Date(v.publish_at) <= new Date());
+  const when = v.publish_at ? `${fmtWhen(v.publish_at)} (${fromNow(v.publish_at)})` : "at its slot";
+  const refill = !v.slot || new Date(v.slot) > Date.now() - 3.6e6;  // the autopilot fills a slot up to an hour late
+  const slot = !refill ? "Its slot has passed, so no other Short is made for it."
+    : state.app.paused ? "Its slot stays empty while the autopilot is paused."
+    : "The autopilot then makes a new Short for its slot (pause it to keep the slot empty).";
+  const reelNote = reel.state === "posted" ? " Its Reel stays on Instagram (its own Delete removes it there)."
+    : ["waiting", "due", "retry", "failed", "skipped"].includes(reel.state) ? " Its Reel won't go on Instagram either." : "";
+  const text = {
+    now: `Post “${v.title}” on YouTube now?\n\nIt goes public right away instead of ${when}. Its slot stays its own, so no `
+         + "other Short is made for it." + (reel.state === "waiting"
+           ? ` Its Reel still goes on Instagram at ${onClock(reel.at)} (or press Post now on its Instagram side).` : ""),
+    stop: `Stop “${v.title}” from going public ${when}?\n\nIt stays on YouTube as a private video only you can see; you `
+          + `can still publish it yourself in YouTube Studio. ${slot}${reelNote}`,
+    delete: isPublic
+      ? `Delete “${v.title}” from YouTube?\n\nIt's public: this removes it for good, with its views and comments. ${slot}${reelNote}`
+      : `Delete “${v.title}” from YouTube?\n\nIt was going public ${when}. This removes the video for good. ${slot}${reelNote}`,
+  }[action];
+  if (!asked && !confirm(text)) return;
+  try {
+    await api(`/api/videos/${v.id}/youtube`, { method: "POST", json: { action } });
+    toast({ now: "Public on YouTube now.", stop: "Stopped: it's private on YouTube and won't go public.",
+            delete: "Deleted from YouTube." }[action], "ok");
+    await loadState();
+    loaders[currentView()]();
+  } catch (e) {
+    if (e.reconnect && state.app.local !== false) return allowManaging(() => youtubeAction(v, action, true), action);
+    toast(e.message, "error", 9000);
+  }
+}
+
+/** Your Instagram buttons beside a Short: "now" posts its Reel at once (a task: a few minutes), "delete" deletes a
+ *  posted Reel from Instagram or takes one that isn't posted yet off, "schedule" makes the video of one that went up
+ *  while Reels were off again, so its Reel waits for its slot. */
+async function instagramAction(v, action) {
+  const reel = v.platforms.instagram;
+  const yt = v.platforms.youtube;
+  if (action === "schedule") {
+    const when = reel.at && new Date(reel.at) > new Date() ? `at ${onClock(reel.at)}` : "as soon as it's made (its slot has passed)";
+    if (!confirm(`Schedule “${v.title}” for Instagram?\n\nIt went up while Reels were off, so its video wasn't kept: it's `
+                 + "made again (about 5 minutes, the same case, music and drawings, read again by the same voice), then "
+                 + `its Reel goes on Instagram ${when}.`)) return;
+    try {
+      watchTask(await api(`/api/videos/${v.id}/instagram`, { method: "POST", json: { action } }));
+    } catch (e) {
+      toast(e.message, "error", 9000);
+    }
+    return;
+  }
+  if (action === "now") {
+    const early = yt.state !== "public" ? `, before it's public on YouTube (${yt.at ? onClock(yt.at) : "not yet"})` : "";
+    if (!confirm(`Post “${v.title}” to Instagram now?\n\nIt goes up as a Reel right away${early}, with its caption `
+                 + "and cover. Sending it and Instagram's processing take a few minutes.")) return;
+    try {
+      watchTask(await api(`/api/videos/${v.id}/instagram`, { method: "POST", json: { action } }));
+    } catch (e) {
+      toast(e.message, "error", 9000);
+    }
+    return;
+  }
+  const posted = reel.state === "posted";
+  if (!confirm(posted
+      ? `Delete the Reel of “${v.title}” from Instagram?\n\nThis removes it for good, with its likes and comments. `
+        + "YouTube isn't affected."
+      : `Take “${v.title}” off Instagram?\n\nIts Reel won't be posted. YouTube isn't affected. Changed your mind? `
+        + "Post now still works for 2 days.")) return;
+  try {
+    await api(`/api/videos/${v.id}/instagram`, { method: "POST", json: { action } });
+    toast(posted ? "Deleted from Instagram." : "Taken off: it won't be posted on Instagram.", "ok");
+    await loadState();
+    loaders[currentView()]();
+  } catch (e) {
+    toast(e.message, "error", 12000);
+  }
+}
+
+/** Google's page for the one permission Post now, Stop and Delete need (sign-ins from before 26 Oct 2026 only upload
+ *  and read); `then` runs once it's given, e.g. the Delete you pressed. */
+async function allowManaging(then, action) {
+  const after = action ? ` Then the ${{ now: "Post now", stop: "Stop", delete: "Delete" }[action]} finishes by itself.` : "";
+  if (!confirm("YouTube hasn't let this app change or delete your videos yet. It needs your OK once.\n\n"
+               + "Press OK and Google's page opens in your browser: pick your channel, tick “See, edit, and permanently "
+               + `delete your YouTube videos…” (or Select all) and press Continue.${after}\n\n`
+               + "If Google warns that it hasn't verified the app: it's your own app, so continue (Advanced → Go to …).")) return;
+  try {
+    watchTask(await api("/api/tasks/connect", { method: "POST", json: {} }),
+              t => t.status === "done" && t.result?.manage && then?.());
+  } catch (e) {
+    toast(e.message, "error", 9000);
+  }
 }
 
 function pill(text, tone = "idle") {
@@ -146,8 +277,10 @@ function statusPill(v) {
   return pill(text, tone);
 }
 
-function avatars(hosts) {
-  return h("span", { class: "avatars" }, (hosts || []).map(c => c.image && h("img", { src: c.image, alt: c.name, title: `${c.name}, the ${c.role}` })));
+/** The Professor's face, the channel's host (assets/host). */
+function professor() {
+  const name = state.app?.host?.name || "The Professor";
+  return h("span", { class: "avatars" }, h("img", { src: "/media/host/face.png", alt: name, title: `${name}, the host` }));
 }
 
 function pageHead({ eyebrow, agent, title, lede, actions = [] }) {
@@ -175,9 +308,9 @@ function section({ num, title, text, actions, body, cls = "" }) {
     body);
 }
 
-function table(head, rows) {
+function table(head, rows, cls = "") {
   return h("div", { class: "card table-wrap" },
-    h("table", { class: "table" },
+    h("table", { class: `table ${cls}`.trim() },
       h("thead", {}, h("tr", {}, head.map(c => typeof c === "string" ? h("th", {}, c) : h("th", c[1] || {}, c[0])))),
       h("tbody", {}, rows)));
 }
@@ -203,8 +336,8 @@ function makeButton({ primary = false, sm = false, short = false } = {}) {
          : "Takes the oldest case that's ready (or makes one), animates it and uploads it for that slot",
     onclick: () => {
       const when = nextOpen ? `${clockIn(nextOpen, scheduleTz())} (${fromNow(nextOpen)})` : "the next free slot";
-      if (confirm(`Make a Short for ${when} now?\n\nAgent 5 takes the oldest case that's ready (Agents 1 to 3 make one `
-                  + "if none is waiting; it won't be news or politics, which need your OK), Agent 4 animates it, and it's "
+      if (confirm(`Make a Short for ${when} now?\n\nAgent 6 takes the oldest case that's ready (Agents 1 to 3 make one `
+                  + "if none is waiting), Agent 4 makes its video, Agent 5 reviews it (and has it fixed if needed), and it's "
                   + "uploaded as private. YouTube makes it public at that time.")) runTask("autopilot");
     } }, short ? "Make it now" : nextOpen ? `Make the ${clockIn(nextOpen, scheduleTz())} Short now` : "Make the next Short now");
 }
@@ -250,8 +383,10 @@ function renderShell() {
   const rows = [
     ["Gemini", s.gemini ? "ok" : "bad", s.gemini ? "Ready" : "Add key", null],
     ["YouTube", s.youtube ? "ok" : "warn", s.youtube ? "Connected" : "Not connected", "#youtube"],
-    ["Voices", s.voices ? "ok" : "off", s.voices ? "Kokoro ready" : "Downloads on first use", null],
     ["Lip-sync", s.lipsync ? "ok" : "off", s.lipsync ? "Rhubarb ready" : "Downloads on first use", null],
+    ["Instagram", s.instagram?.on ? "ok" : "off",
+     s.instagram?.on ? `Reels on${s.instagram.username ? ` · @${s.instagram.username}` : ""}`
+                     : s.instagram?.connected ? "Connected, Reels off" : "Optional", "#youtube"],
     ["Music", s.music ? "ok" : "warn", s.music ? plural(s.music, "track") : "No tracks", "#music"],
     ["Database", "ok", s.database === "cloud" ? "Cloud" : "This PC", null],
     ["Telegram", s.telegram ? "ok" : "off", s.telegram ? "Alerts on" : "Optional", "#activity"],
@@ -264,18 +399,18 @@ function renderShell() {
   $("#count-topics").textContent = a.requests || "";
   $("#count-scripts").textContent = agent("writer")?.count || "";
   $("#count-studio").textContent = a.approvals || "";
+  $("#count-review").textContent = a.held || "";
   $("#count-schedule").textContent = agent("publisher")?.count || "";
   $("#count-music").textContent = s.music || "";
 
   const ap = a.autopilot;
   const on = !a.paused;
   $("#autopost").checked = on;
-  $("#autopost").disabled = !a.local;
   $("#autopost-label").textContent = on ? "Autopilot on" : "Autopilot paused";
   $("#autopost-sub").textContent = !on ? "The agents wait for you"
-    : ap.here ? `${plural(ap.schedule.posts_per_day, "Short")} a day from ${ap.schedule.first_post}` : "Runs in the cloud";
-  $("#pause-switch").title = a.local ? "Off stops all automatic work (your own buttons keep working)"
-                                     : "Change PAUSED in Vercel's environment variables";
+    : `${plural(ap.schedule.posts_per_day, "Short")} a day, made from ${ap.schedule.make_at}${ap.here ? "" : " on GitHub"}`;
+  $("#pause-switch").title = "Off stops the morning run and all automatic work, here and in the cloud "
+                             + "(your own buttons keep working)";
   syncButtons();
 }
 
@@ -285,15 +420,15 @@ function syncButtons() {
   for (const b of $$("[data-needs-idle]")) b.disabled = busy || !local || b.dataset.blocked === "1";
 }
 
-async function runTask(kind, videoId) {
+async function runTask(kind, videoId, extra = {}) {
   try {
-    watchTask(await api(`/api/tasks/${kind}`, { method: "POST", json: videoId ? { video_id: videoId } : {} }));
+    watchTask(await api(`/api/tasks/${kind}`, { method: "POST", json: { ...(videoId ? { video_id: videoId } : {}), ...extra } }));
   } catch (e) {
     toast(e.message, "error", 7000);
   }
 }
 
-function watchTask(task) {
+function watchTask(task, after) {
   state.task = task;
   state.watching = task.id;
   renderTask();
@@ -307,9 +442,11 @@ function watchTask(task) {
     }
     renderTask();
     if (state.task.status === "running") return setTimeout(poll, 1000);
+    const finished = state.task;  // (finishTask reloads the state, which may follow another task that's going)
     state.watching = null;
     syncButtons();
-    finishTask(state.task);
+    await finishTask(finished);
+    after?.(finished);
   };
   setTimeout(poll, 700);
 }
@@ -329,14 +466,21 @@ function taskSummary(t) {
     if (r.skipped) return r.skipped;
     return `Numbers for ${plural(r.updated || 0, "Short")}.` + (r.learn?.lessons ? " The playbook is updated." : "");
   }
-  if (t.kind === "hosts") return `Your hosts: ${(r.names || []).join(" and ")}.`;
-  if (t.kind === "connect") return `YouTube connected: ${r.channel}`;
+  if (t.kind === "reel") return r.instagram === "posted" ? "On Instagram now: its Reel is up." : "Done.";
+  if (t.kind === "remake") return r.instagram === "pending" ? "Made again: its Reel goes on Instagram at its slot." : "Done.";
+  if (t.kind === "host-sample") return `Sample of ${r.voice}'s voice ready (${secs(r.seconds)}).`;
+  if (t.kind === "host-test") return `Test clip ready (${secs(r.seconds)}): watch it on the Host page.`;
+  if (t.kind === "connect") {
+    return `YouTube connected: ${r.channel}` + (r.manage === false ? ". Stop and Delete still can't work: “See, edit, "
+      + "and permanently delete your YouTube videos…” was left unticked on Google's page." : "");
+  }
   return "Done.";
 }
 
 async function finishTask(t) {
+  const partly = t.kind === "connect" && t.result?.manage === false;  // connected, but Stop and Delete still can't
   if (t.status === "error") toast(t.error, "error", 9000);
-  else toast(taskSummary(t), "ok", 6000);
+  else toast(taskSummary(t), partly ? "error" : "ok", partly ? 12000 : 6000);
   if (t.kind === "prepare" && t.result?.planned?.length) state.scripts.selected = t.result.planned[0].id;
   await loadState().catch(() => {});
   loaders[currentView()]().catch(() => {});
@@ -374,15 +518,25 @@ function runSummary(job, ok, d = {}) {
   if (typeof d.skipped === "string") return `Skipped: ${d.skipped}`;
   if (job === "editor" && d.topic) return `${category(d.category)}: ${d.topic}${d.needs_approval ? " · waits for your OK" : ""}`;
   if (job === "researcher" && d.facts !== undefined) {
-    return `${plural(d.facts, "fact")} checked (${d.dropped} dropped) from ${plural(d.sources, "source")}, ${plural(d.images, "photo")}`;
+    return `${plural(d.facts, "fact")} checked (${d.dropped} dropped) from ${plural(d.sources, "source")}, ${plural(d.images, "photo")}`
+      + (d.footage !== undefined ? `, ${plural(d.footage, "clip")}` : "") + (d.archive ? `, ${plural(d.archive, "archive film")}` : "");
   }
   if (job === "writer" && d.lines) return `${d.lines} lines, about ${secs(d.estimate)}${d.cut ? ` (${d.cut} cut by the fact-check)` : ""}`;
-  if (job === "hosts" && d.names) return `Hosts: ${d.names.join(" and ")}`;
-  if (job === "animator" && d.length) return `Case #${d.video_id}: a ${secs(d.length)} video, made in ${secs(d.seconds)}`;
+  if (job === "animator" && d.length) return `Case #${d.video_id}: a ${secs(d.length)} video, made in ${secs(d.seconds)}`
+    + (d.voice ? ` · ${d.voice}` : "");
+  if (job === "reviewer" && d.passed !== undefined) return `Case #${d.video_id}, look ${d.round}: `
+    + (d.passed ? `passed${d.notes ? ` (${plural(d.notes, "small note")})` : ""}` : `failed: ${(d.problems || []).slice(0, 2).join("; ")}`);
+  if (job === "morning" && d.slots) return `Today's run: ${d.scheduled} of ${d.slots} Shorts scheduled (${d.made} made in this run)`
+    + (d.missed ? `, ${plural(d.missed, "slot")} had passed before it` : "")
+    + (d.held?.length ? `, ${d.held.length} turned down by the Reviewer (made again by itself)` : "") + (d.stopped ? ` (${d.stopped})` : "");
+  if (d.instagram) return `Reel for #${d.video_id}: ${d.instagram}${d.url ? "" : d.error ? ` (${d.error})` : ""}`;
+  if (d.reels) return d.reels.map(x => `Reel #${x.video_id}: ${x.instagram}`).join(", ");
   if (d.youtube_id) return `${d.live_now ? "Posted" : "Uploaded"} #${d.video_id} “${d.title}”, ${d.live_now ? "live now" : `goes public ${fmtWhen(d.publish_at)}`}`;
   if (d.planned) return d.planned.map(p => `#${p.id} ${p.title}`).join(", ") || "Nothing made";
-  if (d.rendered) return d.video_id ? `Preview of #${d.video_id} rendered${d.length ? ` (${secs(d.length)})` : ""}`
-                                    : `Preview rendered: ${d.title || ""}`;
+  if (d.rendered) return (d.video_id ? `Video of #${d.video_id} made${d.length ? ` (${secs(d.length)})` : ""}`
+                                     : `Video made: ${d.title || ""}`)
+    + (d.passed ? ", passed review" : d.held ? ", turned down by the Reviewer: it's made again by itself" : d.passed === false ? ", failed review" : "")
+    + (d.rounds > 1 ? ` after ${plural(d.rounds - 1, "fix")}` : "");
   if (d.updated !== undefined) return `Numbers for ${plural(d.updated, "Short")}${d.vetoed ? `, ${d.vetoed} vetoed` : ""}`
     + (d.comments ? `, ${plural(d.comments, "new comment")}` : "") + (d.learn?.lessons ? "; playbook updated" : "");
   return d.what || d.text || "Done";
@@ -401,6 +555,7 @@ function agentAction(key) {
   if (key === "researcher") return h("a", { class: "btn btn-sm", href: "#research" }, "See the research");
   if (key === "writer") return caseButton({ sm: true });
   if (key === "animator") return h("a", { class: "btn btn-sm", href: "#studio" }, "Open the Studio");
+  if (key === "reviewer") return h("a", { class: "btn btn-sm", href: "#review" }, "See the reviews");
   if (key === "publisher") return makeButton({ sm: true, short: true });
   return taskButton("stats", "Read the numbers", { sm: true });
 }
@@ -469,10 +624,12 @@ function slotRows(slots) {
     const link = v?.youtube_id && h("a", { class: "platform", dataset: { tone: live ? "ok" : "run" }, target: "_blank", rel: "noopener",
       href: live ? `https://youtube.com/shorts/${v.youtube_id}` : `https://studio.youtube.com/video/${v.youtube_id}/edit`,
       title: live ? "Watch on YouTube" : "Open in YouTube Studio" }, live ? "Watch ↗" : "Studio ↗");
+    const reel = v?.platforms?.instagram;
     return h("tr", { class: "slot-row", dataset: { state: s.state, next: s.at === nextAt && !a.paused ? "1" : "0" } },
       h("td", { class: "col-time" }, h("b", {}, clockIn(s.at, scheduleTz()))),
       h("td", { class: "col-time muted" }, nyTime(s.at)),
       h("td", {}, pill(label, tone)),
+      h("td", {}, reel ? pill(...(ON_INSTAGRAM[reel.state] || [cap(reel.state), "idle"])) : h("span", { class: "muted" }, "–")),
       h("td", { class: "title-cell" }, v
         ? [h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title || `Short #${v.id}`)), v.category && h("small", {}, category(v.category))]
         : h("span", { class: "slot-title muted" }, s.state === "missed" ? "Nothing went out" : "Not made yet")),
@@ -483,10 +640,10 @@ function slotRows(slots) {
 function overviewLede(a) {
   const sch = a.autopilot.schedule;
   const rhythm = `${plural(sch.posts_per_day, "Short")} a day, one every ${hours(sch.every_hours)} from ${sch.first_post} (${sch.timezone})`;
-  if (a.paused) return `The autopilot is paused, so the agents wait for you. Switch it on (top right) for ${rhythm}; `
-                       + "on this PC they also keep cases researched, written and animated ahead.";
+  const run = `the morning run makes them all from ${sch.make_at}, one after another, and rests once they're scheduled`;
+  if (a.paused) return `The autopilot is paused, so the agents wait for you. Switch it on (top right) for ${rhythm}: ${run}.`;
   if (!a.services.youtube) return "The autopilot is on, but YouTube isn't connected yet, so nothing can be posted.";
-  return `The autopilot is on: ${rhythm}.${a.autopilot.here ? "" : " It runs in the cloud."}`;
+  return `The autopilot is on: ${rhythm}; ${run}${a.autopilot.here ? "" : " (on GitHub)"}.`;
 }
 
 async function loadOverview() {
@@ -494,7 +651,11 @@ async function loadOverview() {
   const ap = a.autopilot;
   const posted = ap.slots.filter(s => s.state === "posted").length;
   const next = ap.next;
-  const previews = a.agents.find(x => x.key === "animator")?.count || 0;
+  const run = ap.run;
+  const ranToday = run.last && run.last.at >= run.starts;
+  const runNote = run.running ? "running now"
+    : ranToday && run.last.finished ? (run.last.ok ? `done at ${clockIn(run.last.finished, scheduleTz())}` : "stopped early: see Activity")
+    : `starts at ${clockIn(run.starts, scheduleTz())}`;
   const root = $("#view-overview");
   const today = new Date(ap.slots[0].at).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", timeZone: scheduleTz() });
 
@@ -505,24 +666,44 @@ async function loadOverview() {
       h("b", {}, `${plural(a.approvals, "case")} ${a.approvals === 1 ? "waits" : "wait"} for your OK`),
       " (news or politics). Watch them and approve or discard them in the Studio. ",
       h("a", { href: "#studio" }, "Open the Studio →")),
-    !a.hosts_ready && h("div", { class: "callout banner" },
-      h("b", {}, "The hosts aren't designed yet. "), "They're designed with the first case, or now on the ",
-      h("a", { href: "#hosts" }, "Hosts page →")),
+    a.held > 0 && h("div", { class: "callout banner" },
+      h("b", {}, `The Reviewer turned down ${plural(a.held, "case")} after the Animator's fixes. `),
+      "Each is being made again by itself (new drawings or a new reading where it failed, later a new script) until "
+      + "the Reviewer passes it; nothing waits for you, and the day's slots go to other cases meanwhile. ",
+      h("a", { href: "#review" }, "Review page →")),
+    a.host?.resting && h("div", { class: "callout banner", dataset: { tone: "warn" } },
+      h("b", {}, `${a.host.name}'s voice is resting. `),
+      (a.host.used_up
+        ? `Today's ${a.host.daily} free readings of his voice are used up; they renew at ${a.host.resting}. Until then `
+          + "the Shorts wait for them (no other voice reads him: one that doesn't sound like him is never used). "
+        : `Gemini's free voice didn't answer, so it's asked again at ${a.host.resting}. Until then the Shorts wait for `
+          + "it (no other voice reads him), and the morning run carries on as soon as it answers. "),
+      h("a", { href: "#host" }, "Host page →")),
+    a.drawing?.resting && a.drawing.look === "drawn" && h("div", { class: "callout banner", dataset: a.drawing.fallback ? {} : { tone: "warn" } },
+      h("b", {}, "Cloudflare's drawing is resting. "),
+      `${a.drawing.why ? `${a.drawing.why.replace(/\.?$/, ".")} ` : ""}It's asked again at ${a.drawing.resting}. Until then the `
+      + (a.drawing.fallback
+        ? "Shorts are made with real footage (stock video, archive film and photos), so the day's Shorts still go up. "
+        : "drawn Shorts wait (no other look is used instead), and the morning run carries on as soon as it can draw. "),
+      h("a", { href: "#settings" }, "Settings →")),
     kpis([
       { label: "Posted today", value: posted, unit: `/ ${ap.slots.length}` },
       { label: "Next post", value: next ? clockIn(next.at, scheduleTz()) : "–",
         note: next ? `${fromNow(next.at)} · ${nyTime(next.at)} in New York` : "" },
-      { label: "Ready to post", value: a.ready, note: `${previews} with a preview to watch`, tone: a.ready ? null : "warn" },
+      { label: "Today's run", value: run.scheduled, unit: `/ ${run.slots} scheduled`, note: runNote,
+        tone: ranToday && !run.running && run.last.ok === 0 ? "warn" : null },
       { label: "Waiting for your OK", value: a.approvals, note: "news and politics", tone: a.approvals ? "warn" : null },
       { label: "Autopilot", value: a.paused ? "Paused" : "On", tone: a.paused ? "warn" : "ok",
-        note: ap.here ? "checks every minute on this PC" : `runs in the cloud${ap.last_check ? `, last ${fromNow(ap.last_check)}` : ""}` },
+        note: ap.here ? "checks every minute on this PC" : `runs on GitHub${ap.last_check ? `, last ${fromNow(ap.last_check)}` : ""}` },
     ]),
-    section({ num: "01–06", title: "The six agents", text: "In order: each one hands its work to the next.", body: pipelineSteps() }),
+    section({ num: "01–07", title: "The seven agents", text: "In order: each one hands its work to the next, and all of them "
+      + "learn from the Reviewer's checks and the Analyst's numbers.", body: pipelineSteps() }),
     h("div", { class: "grid-2-1" },
-      section({ num: "A", title: "Today's schedule", text: `On the ${scheduleTz()} clock, with New York time beside it.`,
+      section({ num: "A", title: "Today's schedule", text: `On the ${scheduleTz()} clock, with New York time beside it. `
+        + "The Schedule page has each one's buttons for YouTube and Instagram.",
         actions: h("a", { class: "btn btn-sm", href: "#schedule" }, "Full schedule"),
-        body: table([["Time", { class: "col-time" }], ["New York", { class: "col-time" }], "Status", "Short", ["", { class: "col-actions" }]],
-                    slotRows(ap.slots)) }),
+        body: table([["Time", { class: "col-time" }], ["New York", { class: "col-time" }], "YouTube", "Instagram", "Short",
+                     ["", { class: "col-actions" }]], slotRows(ap.slots)) }),
       h("div", {},
         section({ num: "B", title: "Ask for a case", text: a.requests ? `${plural(a.requests, "request")} waiting; Agent 1 takes them first.`
                                                                        : "Agent 1 makes it next.",
@@ -552,8 +733,9 @@ async function loadTopics() {
   $("#view-topics").replaceChildren(
     pageHead({ eyebrow: "01 · Agent 1 · Editor", agent: "editor", title: "Topics",
       lede: "Agent 1 decides each case: its type (business, the economy, this week's news, history or mythology), "
-            + "the topic and the one question it answers, from today's trends, Wikipedia's news and history pages, your "
-            + "requests (always first), viewers' comments and cases that did well enough for a part 2.",
+            + "the topic, the paradox it opens on and the mystery it solves, and what footage to look for: from today's "
+            + "trends, Wikipedia's news and history pages, your requests (always first), viewers' comments and cases "
+            + "that did well enough for a part 2.",
       actions: [caseButton({ primary: true })] }),
     kpis([
       { label: "Your requests", value: waiting.length, note: "waiting; taken first" },
@@ -594,7 +776,7 @@ async function loadTopics() {
           return h("li", { dataset: { cat: key } }, h("div", {}, h("b", {}, category(key)), h("p", { class: "hint" }, text)),
             pill((HOW_OFTEN.find(([n]) => n === w) || [w, `×${w}`])[1], w ? "ok" : "idle"));
         }))) }),
-      section({ num: "1.4", title: "Viewers' comments", text: t.comment_requests ? "Read daily by Agent 6; Agent 1 can make a case a comment asks for."
+      section({ num: "1.4", title: "Viewers' comments", text: t.comment_requests ? "Read daily by Agent 7; Agent 1 can make a case a comment asks for."
                                                                                   : "Switched off in Settings.",
         body: t.comments.length
           ? h("div", { class: "card card-pad" }, h("ul", { class: "events" }, t.comments.slice(0, 12).map(c => h("li", {},
@@ -693,14 +875,17 @@ function renderResearch() {
   const dropped = waiting.reduce((n, v) => n + (v.research.dropped || 0), 0);
   $("#view-research").replaceChildren(
     pageHead({ eyebrow: "02 · Agent 2 · Researcher", agent: "researcher", title: "Research",
-      lede: "Agent 2 reads free sources (Wikipedia, news sites, IMF and World Bank data, Wikimedia Commons photos) and "
-            + "lists what they say. Code then checks every fact: its quote must really be in its source and its numbers in "
-            + "the quote. The rest are dropped. Photos are checked too: no children, no gore, no logos." }),
+      lede: "Agent 2 reads free sources (Wikipedia, news sites, IMF and World Bank data) and lists what they say, then "
+            + "the story: the most surprising fact, the decisions people made, the twist. Code checks every fact: its quote "
+            + "must really be in its source and its numbers in the quote. It also finds the pictures: real photos "
+            + "(Wikimedia Commons), stock video (Pexels, Pixabay) and archive film of the real thing, all checked by Gemini: "
+            + "never a child, nothing graphic." }),
     kpis([
       { label: "Facts in the queue", value: facts, note: `checked, across ${plural(waiting.length, "case")}` },
       { label: "Dropped", value: dropped, note: "not found in their sources" },
       { label: "Photos", value: waiting.reduce((n, v) => n + v.research.images.length, 0), note: "free licences, credited" },
-      { label: "Sources", value: waiting.reduce((n, v) => n + v.research.sources.length, 0), note: "read for the queue" },
+      { label: "Video clips", value: waiting.reduce((n, v) => n + (v.research.footage || []).length + (v.research.archive || []).length, 0),
+        note: "stock and archive, credited" },
     ]),
     section({ num: "2.1", title: "Cases", text: "Newest first.",
       body: !list.length ? empty("No research yet", "Press “Make a new case” on the Topics page.")
@@ -713,24 +898,40 @@ function renderResearch() {
 function researchDetail(v) {
   const r = v.research;
   const sources = Object.fromEntries(r.sources.map(s => [s.id, s]));
+  const byFact = Object.fromEntries(r.facts.map(f => [f.id, f]));
   const sourceChip = id => {
     const s = sources[id];
     return s ? h("a", { class: "tag", href: s.url, target: "_blank", rel: "noopener", title: s.title }, s.publisher || s.title, " ↗") : h("span", { class: "tag" }, id);
   };
+  const story = r.story || {};
+  const clips = (items, archive) => h("div", { class: "photo-grid" }, items.map(c => h("figure", { class: "photo" },
+    h("img", { src: c.thumb, alt: c.shows, loading: "lazy" }),
+    h("figcaption", {}, h("b", {}, `${c.id} · ${c.shows}`),
+      archive ? h("span", { class: "small" }, `${c.title}${c.year ? ` (${c.year})` : ""}`) : h("span", { class: "small muted" }, `searched: ${c.query}`),
+      h("a", { href: c.page_url, target: "_blank", rel: "noopener" }, archive ? `${c.source}, public domain ↗` : `${c.source} ↗`)))));
+  const storyBlock = (story.paradox || (story.decisions || []).length || story.twist) && h("div", { class: "callout" },
+    h("p", {}, h("b", {}, "Opens on: "), byFact[story.paradox]?.claim || "–"),
+    (story.decisions || []).length > 0 && h("ul", { class: "story-list" }, story.decisions.map(d =>
+      h("li", {}, h("b", {}, d.who), ": ", d.decision, " ", h("span", { class: "tag fact-chip", title: byFact[d.fact]?.claim || "" }, d.fact)))),
+    h("p", {}, h("b", {}, "The twist: "), byFact[story.twist]?.claim || "–"));
   return h("article", { class: "card" },
     h("div", { class: "detail-head" },
       h("div", { class: "row" }, h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)),
         h("span", { class: "tag" }, WHY_NOW[v.why_now] || v.why_now), statusPill(v),
         h("span", { class: "muted small" }, `#${v.id} · researched ${fromNow(v.created_at)}`)),
       h("h2", {}, v.angle),
+      v.paradox && h("p", { class: "angle" }, `The paradox: ${v.paradox}`),
       v.trend && h("p", { class: "angle" }, `Why now: ${v.trend}`)),
     h("div", { class: "detail-body single" },
       h("div", {},
         r.answer && h("div", { class: "callout" }, h("b", {}, "What the sources say: "), r.answer),
+        storyBlock && h("p", { class: "sub-head" }, "The story · from the checked facts"),
+        storyBlock,
         h("dl", { class: "dl", style: "margin-top:14px" },
           h("dt", {}, "Checked facts"), h("dd", {}, `${r.facts.length}${r.dropped ? ` (${r.dropped} dropped: their quote or numbers weren't in the source)` : ""}`),
           h("dt", {}, "Sources"), h("dd", {}, r.sources.length),
-          h("dt", {}, "Photos"), h("dd", {}, r.images.length || "none: the case uses drawn visuals"),
+          h("dt", {}, "Photos"), h("dd", {}, r.images.length || "none"),
+          h("dt", {}, "Video"), h("dd", {}, `${plural((r.footage || []).length, "stock clip")}, ${plural((r.archive || []).length, "archive film")}`),
           r.notes.length > 0 && [h("dt", {}, "Notes"), h("dd", { class: "muted" }, r.notes.join(" · "))]),
         h("p", { class: "sub-head" }, "Facts · each one's quote is in its source"),
         h("ol", { class: "facts" }, r.facts.map(f => h("li", {},
@@ -762,6 +963,10 @@ function researchDetail(v) {
             h("img", { src: i.url, alt: i.shows, loading: "lazy" }),
             h("figcaption", {}, h("b", {}, `${i.id} · ${i.shows}`),
               h("a", { href: i.page, target: "_blank", rel: "noopener" }, `${i.author}, ${i.licence} ↗`)))))],
+        (r.archive || []).length > 0 && [h("p", { class: "sub-head" }, "Archive film · the real thing, public domain"),
+          clips(r.archive, true)],
+        (r.footage || []).length > 0 && [h("p", { class: "sub-head" }, "Stock video · illustrative only, credited"),
+          clips(r.footage, false)],
         h("p", { class: "sub-head" }, "Sources"),
         h("ol", { class: "sources" }, r.sources.map(s => h("li", {},
           h("span", { class: "fid" }, s.id),
@@ -795,9 +1000,10 @@ function renderScripts() {
 
   root.replaceChildren(
     pageHead({ eyebrow: "03 · Agent 3 · Writer", agent: "writer", title: "Scripts",
-      lede: "Agent 3 turns the research into the hosts' dialogue: the presenter tells the case, the co-host asks what "
-            + "viewers would ask. Every line cites its facts, picks what's on screen, and is read again by a fact-checker. "
-            + "Edit anything before it's animated.",
+      lede: "Agent 3 turns the research into the Professor's script, told as a mystery: the paradox, the question, the "
+            + "people's decisions, the reveal, and a last line that echoes the first. Every line cites its facts, says how "
+            + "he says it and what's on screen; a retention editor tightens it and a fact-checker reads it again. Edit "
+            + "anything before it's animated.",
       actions: [caseButton({ primary: true })] }),
     kpis([
       { label: "Waiting", value: list.length, note: "written, not posted yet", tone: list.length ? null : "warn" },
@@ -837,12 +1043,12 @@ function counted(input, limit) {
 
 function scriptEditor(v) {
   const root = h("article", { class: "card" });
-  const lines = v.lines.map(l => ({ ...l }));
+  const lines = v.lines.map(l => ({ ...l, visuals: [...(l.visuals || [])] }));
   const facts = Object.fromEntries(v.research.facts.map(f => [f.id, f]));
   const lengthNote = h("span", { class: "muted small" });
   const markDirty = () => {
     state.dirty.add(v.id);
-    lengthNote.textContent = `~${Math.round(estimate(lines.filter(l => l.text.trim()), v.hosts))} s when spoken`;
+    lengthNote.textContent = `~${Math.round(estimate(lines.filter(l => l.text.trim())))} s when spoken`;
   };
   const select = (options, value, onchange, label) =>
     h("select", { class: "input", "aria-label": label, onchange: e => { onchange(e.target.value); markDirty(); } },
@@ -850,32 +1056,39 @@ function scriptEditor(v) {
   const body = h("ol", { class: "beat-list" });
   const labelled = (text, control) => h("label", {}, text, control);
   const visuals = Object.entries(v.visuals).map(([key, text]) => [key, `${key} · ${text}`.slice(0, 90)]);
+  const drawn = v.look === "drawn";
   const drawLines = () => body.replaceChildren(...lines.map((l, k) => {
     const text = h("input", { class: "input", value: l.text, "aria-label": `Line ${k + 1}`,
                               oninput: e => { l.text = e.target.value; markDirty(); } });
+    const direction = h("input", { class: "input", value: l.direction || "", placeholder: "low, intrigued",
+                                   "aria-label": `How line ${k + 1} is said`, oninput: e => { l.direction = e.target.value; markDirty(); } });
     const [checkText, checkTone] = CHECK[l.check] || ["Not checked", "idle"];
-    return h("li", { class: `beat${k + 1 === lines.length ? " punch" : ""}${k === 0 ? " hook" : ""}` },
-      h("span", { class: "k" }, k === 0 ? "H" : k + 1 === lines.length ? "★" : k + 1),
+    return h("li", { class: `beat${["closing", "echo"].includes(l.beat) ? " punch" : ""}${k === 0 ? " hook" : ""}` },
+      h("span", { class: "k" }, k + 1),
       h("div", { class: "beat-main" },
-        select(v.hosts.map((c, i) => [i, c.name]), l.speaker, x => { l.speaker = Number(x); }, "Who speaks"),
+        select(Object.entries(BEATS), l.beat, x => { l.beat = x; }, "Its beat in the story"),
         h("div", {}, text, h("div", { class: "line-foot" }, counted(text, LIMITS.line),
           pill(checkText, checkTone), l.was && h("span", { class: "muted small", title: l.was }, "was: ", l.was.slice(0, 60), "…"),
           (l.facts || []).map(id => h("span", { class: "tag fact-chip", title: facts[id]?.claim || "" }, id))))),
       h("button", { class: "btn btn-sm btn-ghost btn-danger", type: "button", title: "Remove this line",
         disabled: lines.length <= 4, onclick: () => { lines.splice(k, 1); markDirty(); drawLines(); } }, "✕"),
-      h("div", { class: "beat-how five" },
-        labelled("On screen", select(visuals, l.visual, x => { l.visual = x; }, "What's on screen")),
-        labelled("Shot", select(Object.entries(SHOTS), l.shot, x => { l.shot = x; }, "Shot")),
-        labelled("Emotion", select(EMOTIONS.map(e => [e, cap(e)]), l.emotion, x => { l.emotion = x; }, "Their emotion")),
-        labelled("Action", select(Object.entries(ACTIONS), l.action, x => { l.action = x; }, "What they do")),
-        labelled("Other host", select(EMOTIONS.map(e => [e, cap(e)]), l.listener_emotion, x => { l.listener_emotion = x; },
-                                      "How the other host reacts"))));
+      drawn ? h("div", { class: "beat-how three drawn" },
+        labelled("How he says it", direction),
+        labelled("Drawing", h("input", { class: "input", value: l.scene || "same", placeholder: "same = keep the drawing before",
+          title: "What's drawn behind this line, in his art: one main subject, where, the period, the light. No names, no writing.",
+          "aria-label": `The drawing behind line ${k + 1}`, oninput: e => { l.scene = e.target.value; markDirty(); } })),
+        labelled("Then", select([["", "Nothing more"], ...visuals], l.visuals[0] || "",
+          x => { l.visuals = [x].filter(Boolean); }, "What's shown after the drawing")))
+      : h("div", { class: "beat-how three" },
+        labelled("How he says it", direction),
+        labelled("On screen", select([["", "Keep the last picture"], ...visuals], l.visuals[0] || "",
+          x => { l.visuals = [x, l.visuals[1]].filter(Boolean); }, "What's on screen first")),
+        labelled("Then", select([["", "Nothing more"], ...visuals], l.visuals[1] || "",
+          x => { l.visuals = [l.visuals[0], x].filter(Boolean); }, "What's on screen next"))));
   }));
   drawLines();
 
   const caseTitle = h("input", { class: "input", value: v.case_title, oninput: markDirty, "aria-label": "Case title on screen" });
-  const points = [0, 1, 2].map(i => h("input", { class: "input", value: v.key_points[i] || "", oninput: markDirty,
-                                                "aria-label": `Key point ${i + 1}`, placeholder: `Point ${i + 1}` }));
   const title = h("input", { class: "input", value: v.title, oninput: markDirty, "aria-label": "YouTube title" });
   const description = h("textarea", { class: "input", rows: 4, oninput: markDirty, "aria-label": "Description" });
   description.value = v.description || "";
@@ -886,8 +1099,9 @@ function scriptEditor(v) {
     try {
       const updated = await api(`/api/videos/${v.id}`, { method: "PATCH", json: {
         case_title: caseTitle.value, title: title.value, description: description.value,
-        key_points: points.map(p => p.value).filter(Boolean),
-        lines: lines.filter(l => l.text.trim()).map(l => ({ ...l, speaker: Number(l.speaker) })) } });
+        lines: lines.filter(l => l.text.trim()).map(l => ({ text: l.text, beat: l.beat, direction: l.direction || "",
+                                                            facts: l.facts || [], visuals: l.visuals || [],
+                                                            ...(drawn ? { scene: l.scene || "same" } : {}) })) } });
       state.dirty.delete(v.id);
       const i = state.videos.findIndex(x => x.id === v.id);
       if (i >= 0) state.videos[i] = updated;
@@ -897,36 +1111,41 @@ function scriptEditor(v) {
       toast(e.message, "error", 7000);
     }
   };
+  const scores = v.retention?.scores || {};
+  const scoreText = Object.keys(scores).length
+    ? Object.entries(scores).map(([k, n]) => `${RETENTION[k] || k} ${n}`).join(" · ") : null;
 
   root.append(
     h("div", { class: "detail-head" },
-      h("div", { class: "row" }, avatars(v.hosts), h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)),
+      h("div", { class: "row" }, professor(), h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)),
         statusPill(v), h("span", { class: "muted small" }, `#${v.id} · written ${fromNow(v.created_at)}`)),
       h("h2", {}, v.angle),
-      h("p", { class: "angle" }, v.hosts.map(c => `${c.name} (${c.role})`).join(" · "))),
+      v.paradox && h("p", { class: "angle" }, `Opens on: ${v.paradox}`)),
     h("div", { class: "detail-body single" },
       h("div", {},
         v.approval === "waiting" && h("div", { class: "callout", dataset: { tone: "warn" } },
           "This case is about the news or politics, so it waits for your OK: watch it in the Studio, then approve it there."),
-        h("div", { class: "field" }, h("label", {}, h("span", {}, "Case title · on screen the whole time"), counted(caseTitle, LIMITS.caseTitle)), caseTitle),
-        h("p", { class: "sub-head" }, "The dialogue · H is the hook, ★ the takeaway"),
+        (scoreText || (v.habits || []).length > 0) && h("div", { class: "callout" },
+          scoreText && h("p", {}, h("b", {}, "Retention editor: "), scoreText, v.retention.rewritten ? ` · ${plural(v.retention.rewritten, "line")} rewritten` : ""),
+          (v.habits || []).length > 0 && h("p", {}, h("b", {}, "Still sounds like a lecture: "), v.habits.join("; "))),
+        h("div", { class: "field" }, h("label", {}, h("span", {}, "Case title · over the opening"), counted(caseTitle, LIMITS.caseTitle)), caseTitle),
+        h("p", { class: "sub-head" }, "The Professor's script · the hook, the setup, the turning point, the reveal, his closing thought"),
         body,
         h("div", { class: "row", style: "margin-top:10px" },
           h("button", { class: "btn btn-sm", type: "button", disabled: lines.length >= 18, onclick: () => {
-            const last = lines[lines.length - 1];
-            lines.push({ speaker: 1 - Number(last.speaker), text: "", facts: [], visual: "hosts", shot: "studio",
-                         emotion: "neutral", action: "talk", listener_emotion: "neutral", check: "edited" });
+            lines.push({ text: "", beat: "turn", direction: "", facts: [], visuals: [], check: "edited",
+                         ...(drawn ? { scene: "same" } : {}) });
             markDirty();
             drawLines();
           } }, "Add a line"),
           lengthNote),
-        h("p", { class: "hint", style: "margin-top:6px" }, "A line you change is marked “edited by you”: the fact-checker doesn't read it again, so keep its numbers to the facts (F1, F2…) it cites."),
-        h("p", { class: "sub-head" }, "Key points · for the list visual"),
-        h("div", { class: "inline-fields" }, points),
+        h("p", { class: "hint", style: "margin-top:6px" }, "A line you change is marked “edited by you”: the fact-checker doesn't read it again, so keep its numbers to the facts (F1, F2…) it cites. ",
+          drawn ? "Every line plays over a drawing in his art: describe it (one main subject, no names, no writing), or write “same” to stay on the one before. A changed drawing is drawn again when the video is made."
+            : "Stock video is illustrative: real photos and archive film carry the specific claims."),
         h("p", { class: "sub-head" }, "On YouTube"),
         h("div", { class: "field" }, h("label", {}, h("span", {}, "Title"), counted(title, LIMITS.title)), title),
         h("div", { class: "field" }, h("label", {}, h("span", {}, "Summary")), description),
-        h("details", { class: "more" }, h("summary", {}, "The whole description at upload (sources, photo credits, music)"),
+        h("details", { class: "more" }, h("summary", {}, "The whole description at upload (sources, photo, footage and music credits)"),
           h("p", { class: "desc-ro" }, v.full_description || "")))),
     h("div", { class: "detail-actions" },
       h("button", { class: "btn btn-sm btn-primary", type: "button", onclick: save }, "Save changes"),
@@ -946,7 +1165,7 @@ const STUDIO_FILTERS = [
   ["stopped", "Stopped", v => ["failed", "vetoed", "discarded", "skipped"].includes(v.status)],
 ];
 const STUDIO_TEXT = {
-  planned: "Written cases. Animate one to watch it before its turn; news and politics wait for your OK.",
+  planned: "Written cases. Their videos are made and reviewed ahead; watch one before its turn.",
   coming: "Uploaded as private. Each goes public at its slot; delete it in YouTube Studio before then to veto it.",
   published: "Public on YouTube.",
   stopped: "Cases that failed, were vetoed or were discarded.",
@@ -982,12 +1201,15 @@ function renderStudio() {
 
   root.replaceChildren(
     pageHead({ eyebrow: "04 · Agent 4 · Animator", agent: "animator", title: "Studio",
-      lede: "Agent 4 records every line in its host's voice (Kokoro, on this PC), moves the mouths with the words "
-            + "(Rhubarb), draws the studio, the photos, charts, maps and timelines, adds music in the script's mood, "
-            + "and makes the video. Free and private: nothing leaves this PC.",
+      lede: "Agent 4 has the Professor read the script (Gemini's voice, free), moves his mouth with the words (Rhubarb), "
+            + "cuts the real footage, archive film, photos, maps, charts and numbers to every line, adds music in the "
+            + "script's mood, makes the video on this PC with him floating in the corner, and its thumbnail. Agent 5 "
+            + "then checks every video; one that fails comes back here with notes and is fixed.",
       actions: [makeButton()] }),
     kpis([
-      { label: "Animated", value: waiting.filter(v => v.preview).length, unit: `/ ${waiting.length}`, note: "waiting cases ready to watch" },
+      { label: "Made", value: waiting.filter(v => v.preview).length, unit: `/ ${waiting.length}`, note: "waiting cases ready to watch" },
+      { label: "Passed review", value: waiting.filter(v => v.review?.current && (v.review.passed || v.review.override)).length,
+        note: "ready for the Publisher" },
       { label: "Waiting for your OK", value: waiting.filter(v => v.approval === "waiting").length, note: "news and politics",
         tone: waiting.some(v => v.approval === "waiting") ? "warn" : null },
       { label: "Coming up", value: counts.coming, note: "uploaded, not public yet" },
@@ -1005,33 +1227,144 @@ function renderStudio() {
                               onclick: () => { state.studio.selected = v.id; renderStudio(); } },
                   h("span", { class: "vid" }, `#${v.id}`),
                   h("span", { class: "vtitle" }, v.title || v.angle || "A case"),
-                  h("span", { class: "vmeta" }, avatars(v.hosts), statusPill(v),
+                  h("span", { class: "vmeta" }, !v.legacy && professor(), statusPill(v),
                     v.legacy ? h("span", { class: "tag" }, v.legacy) : h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)),
                     v.slot && v.status !== "planned" && h("span", {}, clockIn(v.slot, scheduleTz())),
-                    v.status === "planned" && !v.legacy && (v.preview ? pill("Animated", "ok") : h("span", {}, "not animated"))) ))))),
+                    v.status === "planned" && !v.legacy && reviewPill(v)) ))))),
             selected && studioDetail(selected)) }));
   syncButtons();
 }
 
+/** A scheduled Short in the Studio: when it goes public, and its YouTube and Instagram parts (as on the Schedule page). */
 function scheduledBox(v) {
   const live = v.publish_at && new Date(v.publish_at) <= new Date();
+  const part = (id, name, which) => h("div", {}, h("p", { class: "part-name" }, icon(id, "th-ic"), name), platformPart(v, which));
   return h("div", { class: "callout", dataset: { tone: "ok" } },
-    live ? "Public since " : "Goes public ", h("b", {}, fmtWhen(v.publish_at)), live ? "" : ` (${fromNow(v.publish_at)})`, ". ",
-    h("a", { href: v.studio_url, target: "_blank", rel: "noopener" }, "Open in YouTube Studio ↗"),
-    live && v.youtube_id ? [" · ", h("a", { href: `https://youtube.com/shorts/${v.youtube_id}`, target: "_blank", rel: "noopener" }, "Watch ↗")] : null);
+    live ? "Public since " : "Goes public ", h("b", {}, fmtWhen(v.publish_at)), live ? "" : ` (${fromNow(v.publish_at)})`, ".",
+    v.platforms && h("div", { class: "parts" }, part("ic-youtube", "YouTube", "youtube"),
+                     part("ic-instagram", "Instagram", "instagram")),
+    v.youtube_thumbnail && !v.youtube_thumbnail.set && h("small", { class: "muted", style: "display:block;margin-top:8px" },
+      "YouTube kept its own thumbnail: custom ones need a channel verified by phone (youtube.com/verify)."),
+    v.youtube_thumbnail?.set && h("small", { class: "muted", style: "display:block;margin-top:8px" },
+      "Thumbnail on YouTube: the wide one (YouTube Studio, search, shared links). The Shorts tab shows a frame YouTube "
+      + "picks until the channel is in the Partner Program."));
+}
+
+/** The Reviewer's mark on a waiting case, for the case list. */
+function reviewPill(v) {
+  const r = v.review;
+  if (!v.preview) return h("span", {}, "not made yet");
+  if (!r || !r.current) return pill("Being reviewed", "run");
+  if (r.held) return pill("Being made again", "run");
+  if (r.override) return pill("Posting anyway", "warn");
+  return r.passed ? pill("Passed review", "ok") : pill("Being fixed", "warn");
+}
+
+/** What the Reviewer found in the latest version, what the Animator changed, and the earlier looks. */
+function reviewBox(v) {
+  const r = v.review;
+  if (!v.preview && !v.held_upload) return null;
+  if (!r || !r.current) return h("div", { class: "callout", dataset: { tone: "run" } },
+    h("b", {}, "Not reviewed yet. "), "Agent 5 watches it before the Publisher may post it.");
+  const major = (r.issues || []).filter(i => i.severity === "major");
+  const minor = (r.issues || []).filter(i => i.severity !== "major");
+  const tone = r.held ? "run" : r.passed || r.override ? "ok" : "warn";
+  const head = r.held ? "Turned down: being made again by itself" : r.override ? "Posting anyway (your call)" : r.passed ? "Passed review" : "Failed review: being fixed";
+  const issue = i => h("li", { dataset: { major: i.severity === "major" ? "1" : "0" } },
+    pill(i.severity === "major" ? "Problem" : "Note", i.severity === "major" ? "bad" : "idle"),
+    h("span", {}, i.detail, i.fix && h("span", { class: "fix" }, `Fix: ${FIXES[i.fix] || i.fix}`)));
+  return h("div", { class: "callout review", dataset: { tone } },
+    h("div", { class: "review-head" }, h("b", {}, head),
+      h("span", { class: "muted" }, `look ${r.round + 1} of up to ${r.max_rounds + 1}${r.at ? ` · ${fromNow(r.at)}` : ""}`)),
+    r.held && r.held_because && h("p", {}, r.held_because),
+    r.held && h("p", {}, `The Animator makes it again by itself${r.remake_at ? ` at about ${r.remake_at}` : ""} `
+      + `(${r.remakes ? `time ${r.remakes + 1}: ` : ""}new drawings or a new reading where it failed; from the third time a new script), `
+      + "over and over until the Reviewer passes it. Nothing for you to do."),
+    v.held_upload && h("p", {}, "It's on YouTube as a private video, not scheduled: ",
+      h("a", { href: v.held_upload.studio_url, target: "_blank", rel: "noopener" }, "watch it in YouTube Studio ↗"),
+      ". Publish it there if you want it out, then discard it here; or have it made again."),
+    h("div", { class: "measures" },
+      r.match != null && h("span", { title: "How much of the script faster-whisper made out in the final mix" }, `voice ${Math.round(r.match * 100)}%`),
+      r.words_per_second != null && h("span", {}, `${r.words_per_second} words/s`),
+      r.loudness != null && h("span", {}, `${r.loudness} LUFS`),
+      r.look != null && h("span", { title: "Gemini's look at 8 frames, 0-10" }, `look ${r.look}/10`)),
+    major.length > 0 && h("ul", { class: "issues" }, major.map(issue)),
+    r.changes?.length > 0 && h("p", { class: "small" }, h("b", {}, "The Animator changed: "), r.changes.join("; ")),
+    minor.length > 0 && h("details", { class: "more" }, h("summary", {}, plural(minor.length, "small note")),
+      h("ul", { class: "issues" }, minor.map(issue))),
+    r.history?.length > 0 && h("details", { class: "more" }, h("summary", {}, `Earlier ${plural(r.history.length, "look")}`),
+      h("ul", { class: "issues" }, r.history.map(x => h("li", {}, pill(x.passed ? "Passed" : "Failed", x.passed ? "ok" : "bad"),
+        h("span", {}, `Look ${x.round + 1}: ` + ((x.issues || []).filter(i => i.severity === "major").map(i => i.detail).join("; ") || "no problems"),
+          x.changes?.length > 0 && h("span", { class: "fix" }, `Then: ${x.changes.join("; ")}`)))))));
+}
+
+/** The thumbnail, in the channel's one style: change its words or pick another still, and it's made again. */
+function thumbEditor(v) {
+  const t = v.thumbnail;
+  if (!t || (!t.cover && !t.choices?.length)) return null;
+  const editable = v.status === "planned";
+  let picked = t.background;
+  const text = h("input", { class: "input", value: t.text || "", maxlength: 60, disabled: !editable,
+                            "aria-label": "The thumbnail's words", placeholder: "One phone *sank* Nokia" });
+  const stills = h("div", { class: "stills" }, (t.choices || []).map(c => h("button", {
+    class: "still", type: "button", title: c.label, disabled: !editable, "aria-pressed": String(c.name === picked),
+    onclick: e => { picked = c.name; for (const b of $$(".still", stills)) b.setAttribute("aria-pressed", String(b === e.currentTarget)); } },
+    c.thumb ? h("img", { src: c.thumb, alt: c.label, loading: "lazy" }) : c.name.split(":")[0])));
+  const save = async () => {
+    try {
+      const updated = await api(`/api/videos/${v.id}/thumbnail`, { method: "POST", json: { text: text.value, background: picked } });
+      Object.assign(v, updated);
+      toast("Thumbnail made again.", "ok");
+      renderStudio();
+    } catch (e) {
+      toast(e.message, "error", 7000);
+    }
+  };
+  return h("details", { class: "more", open: true }, h("summary", {}, "Thumbnail"),
+    h("div", { class: "thumbs" },
+      t.cover ? h("img", { class: "cover", src: t.cover, alt: "The thumbnail" }) : h("div", { class: "cover" }),
+      h("div", { class: "thumb-form" },
+        t.wide && h("img", { class: "wide", src: t.wide, alt: "The wide thumbnail" }),
+        editable && [h("label", { class: "label" }, "Words (2-5; *star* the coloured one)"), text,
+          h("label", { class: "label" }, "Still"), stills,
+          h("div", {}, h("button", { class: "btn btn-sm", type: "button", onclick: save }, t.cover ? "Make it again" : "Make the thumbnail"))],
+        h("p", { class: "note" }, "On YouTube the wide one shows in YouTube Studio, search on computers and shared links. "
+          + "The Shorts tab and feed show a frame YouTube picks from the video: custom Shorts covers are only for "
+          + "channels in the YouTube Partner Program, added in YouTube Studio on a computer. The tall one is the Reel's "
+          + "cover on Instagram."))));
+}
+
+async function answerReviewer(v, action) {
+  const text = action === "post"
+    ? `Post “${v.title}” anyway?\n\nThe Reviewer found problems it couldn't get fixed. It goes up at its turn as it is.`
+    : `Make “${v.title}” again from scratch?\n\nThe Animator makes a new video (the earlier fixes are forgotten) and the Reviewer checks it.`;
+  if (!confirm(text)) return;
+  try {
+    await api(`/api/videos/${v.id}/review`, { method: "POST", json: { action } });
+    toast(action === "post" ? "It goes up at its turn." : "The Animator makes it again by itself shortly.", "ok");
+    await loadState();
+    loaders[currentView()]();
+  } catch (e) {
+    toast(e.message, "error");
+  }
 }
 
 function scriptView(v) {
+  // A case still being made, or one stopped before its script, has no lines yet (the Studio opened blank on it)
+  if (!v.lines?.length) return h("p", { class: "muted" }, v.status === "making" ? "Agents 1-3 are still writing it." : "No script.");
   return h("ol", { class: "script" }, v.lines.map((l, k) => {
-    const who = v.hosts[l.speaker] || {};
     const [checkText, checkTone] = CHECK[l.check] || ["Not checked", "idle"];
-    return h("li", { class: k === v.lines.length - 1 ? "punch" : "" },
-      who.image ? h("img", { src: who.image, alt: "" }) : h("span"),
+    return h("li", { class: ["closing", "echo"].includes(l.beat) || k === v.lines.length - 1 ? "punch" : "" },
+      h("span", { class: "beat-k" }, k + 1),
       h("div", {},
-        h("span", { class: "who" }, who.name || "?"),
+        h("span", { class: "who" }, BEAT_NAMES[l.beat] || cap(l.beat || ""), l.direction && h("small", { class: "muted" }, ` · ${l.direction}`)),
         h("p", { class: "line" }, l.text),
-        h("div", { class: "how" }, h("span", { class: "tag" }, SHOTS[l.shot] || l.shot), h("span", { class: "tag" }, l.visual),
-          h("span", { class: "tag" }, cap(l.emotion)), l.check !== "ok" && pill(checkText, checkTone))));
+        v.look === "drawn" && l.scene && l.scene !== "same" && h("div", { class: "scene-row" },
+          v.drawings?.[k + 1] && h("a", { href: v.drawings[k + 1], target: "_blank", title: "The drawing, full size" },
+            h("img", { src: v.drawings[k + 1], alt: "", loading: "lazy" })),
+          h("p", { class: "muted small" }, h("b", {}, "Drawing: "), l.scene, l.redraws ? ` · drawn ${l.redraws + 1} times` : "")),
+        h("div", { class: "how" }, (l.visuals || []).map(name => h("span", { class: "tag" }, name)),
+          !["ok", "framing"].includes(l.check) && pill(checkText, checkTone))));
   }));
 }
 
@@ -1045,37 +1378,60 @@ function studioDetail(v) {
   const phone = h("div", { class: "phone" },
     v.preview ? h("video", { src: v.preview, controls: true, playsinline: true, preload: "metadata", poster: v.cover || undefined })
       : v.cover ? [h("img", { src: v.cover, alt: "" }), h("span", { class: "phone-badge" }, "Uploaded; preview cleared")]
-      : h("div", { class: "phone-blank" }, editable ? "Not animated yet. Press “Animate” below: two or three minutes." : "No video here."));
+      : h("div", { class: "phone-blank" }, !editable ? "No video here."
+          : v.review?.held ? `Turned down by the Reviewer: the Animator makes it again by itself${v.review.remake_at ? ` at about ${v.review.remake_at}` : ""}.`
+          : state.app.paused ? "Not made yet. The autopilot is paused: switch it on and the Animator makes it by itself."
+          : state.app.host?.resting ? `Not made yet: the Animator makes it when Gemini's voice is back (${state.app.host.resting}).`
+          : v.look === "drawn" && state.app.drawing?.resting ? (state.app.drawing.fallback
+              ? `Not made yet: Cloudflare can't draw until ${state.app.drawing.resting}, so the Animator makes it with real footage in a few minutes, review included.`
+              : `Not made yet: the Animator draws it when Cloudflare can draw again (${state.app.drawing.resting}).`)
+          : "Not made yet: the Animator makes it by itself in a few minutes, review included."));
   return h("article", { class: "card" },
     h("div", { class: "detail-head" },
-      h("div", { class: "row" }, avatars(v.hosts), h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)), statusPill(v),
+      h("div", { class: "row" }, professor(), h("span", { class: "tag", dataset: { cat: v.category } }, category(v.category)), statusPill(v),
         h("span", { class: "muted small" }, `#${v.id} · ${v.duration ? secs(v.duration) : `~${secs(v.estimate)}`}`
-          + (v.music ? ` · ♪ ${v.music.replace(/\.[^.]+$/, "")}` : ""))),
+          + (v.music ? ` · ♪ ${v.music.replace(/\.[^.]+$/, "")}` : "")
+          + (v.voice?.voice ? ` · voice: ${v.voice.voice.split(" (")[0]}${v.voice.deeper ? `, ${v.voice.deeper} lower` : ""}` : ""))),
       h("h2", {}, v.title || v.angle),
       h("p", { class: "angle" }, v.angle)),
     h("div", { class: "detail-body" },
       phone,
       h("div", {},
+        editable && reviewBox(v),
+        editable && v.voice?.backup && h("div", { class: "callout", dataset: { tone: "warn" } },
+          h("b", {}, "Read by the old backup voice. "), "The Animator makes it again in the Professor's own voice before "
+          + "it goes up."),
+        v.switched && h("div", { class: "callout" },
+          h("b", {}, "Made with real footage. "), "It was written for drawings, but Cloudflare couldn't draw it then, so "
+          + "the Writer wrote it again for stock video, archive film and photos (Settings: When Cloudflare can't draw)."),
+        editable && !v.preview && v.preview_failed_at && h("div", { class: "callout", dataset: { tone: "warn" } },
+          "The last try to make it didn't work (see Activity). The Animator tries again by itself in about half an "
+          + "hour; after three failed tries a new case takes its place."),
         editable && waits && h("div", { class: "callout", dataset: { tone: "warn" } },
           h("b", {}, "Waits for your OK. "), "It's about the news or politics: watch it, check the research, then approve it "
           + "(it then goes up at its turn) or discard it. Unapproved, it's discarded after a couple of days."),
-        v.approval === "approved" && editable && h("div", { class: "callout", dataset: { tone: "ok" } }, `Approved ${fromNow(v.approved_at)}.`),
+        v.approval === "approved" && editable && h("div", { class: "callout", dataset: { tone: "ok" } },
+          `${v.approved_by === "publisher" ? "Approved by the Publisher" : "Approved"} ${fromNow(v.approved_at)}.`),
         v.status === "making" && v.slot && h("div", { class: "callout", dataset: { tone: "warn" } }, "Being made for the ",
           h("b", {}, clockIn(v.slot, scheduleTz())), " slot right now."),
         v.status === "scheduled" && scheduledBox(v),
         v.error && h("div", { class: "callout", dataset: { tone: "bad" } }, v.error),
         h("p", { class: "sub-head" }, "The script"),
         scriptView(v),
+        thumbEditor(v),
         h("details", { class: "more" }, h("summary", {}, "Description, sources & credits"),
           h("p", { class: "desc-ro" }, v.full_description || v.description || "")))),
     editable && h("div", { class: "detail-actions" },
       waits && h("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => approve(v) }, "Approve"),
-      h("button", { class: "btn btn-sm", type: "button", "data-needs-idle": true, onclick: () => runTask("render", v.id) },
-        v.preview ? "Animate again" : "Animate"),
+      v.review?.held && !v.held_upload && h("button", { class: "btn btn-sm btn-primary", type: "button",
+                                                        onclick: () => answerReviewer(v, "post") }, "Post it anyway"),
+      v.preview ? !v.review?.held && h("button", { class: "btn btn-sm", type: "button", onclick: () => answerReviewer(v, "remake") }, "Make it again")
+        : h("button", { class: "btn btn-sm", type: "button", "data-needs-idle": true, onclick: () => runTask("render", v.id),
+                    title: "Optional: the Animator makes it by itself anyway" }, "Make it now"),
       h("a", { class: "btn btn-sm", href: `#scripts/${v.id}` }, "Edit the script"),
       h("button", { class: `btn btn-sm${waits ? "" : " btn-primary"}`, type: "button", "data-needs-idle": true, dataset: { blocked: blocked ? "1" : "0" },
         title: waits ? "Approve it first" : !s.youtube ? "Connect YouTube first" : !nextOpen ? "No free slot in the next week"
-             : `Uploads as private, scheduled for the next free slot (${clockIn(nextOpen, scheduleTz())})`,
+             : `The Reviewer checks it first, then it's uploaded as private for the next free slot (${clockIn(nextOpen, scheduleTz())})`,
         onclick: () => upload(v) }, "Upload & schedule"),
       h("span", { class: "spacer" }),
       !s.youtube && h("a", { class: "note", href: "#youtube" }, "Connect YouTube to upload"),
@@ -1097,7 +1453,7 @@ function legacyDetail(v) {
       h("div", {},
         v.status === "scheduled" && scheduledBox(v),
         v.status === "planned" && h("div", { class: "callout", dataset: { tone: "warn" } },
-          `Made by the ${v.legacy.toLowerCase()}, before the case studies. It can still go up exactly as it is`
+          `Made by an earlier version of the channel (the ${v.legacy.toLowerCase()}). It can still go up exactly as it is`
           + (v.preview ? "" : " (but its video wasn't kept)") + ", or be discarded; the agents don't make this kind any more."),
         h("details", { class: "more" }, h("summary", {}, "Description"), h("p", { class: "desc-ro" }, v.description || "")))),
     v.status === "planned" && h("div", { class: "detail-actions" },
@@ -1122,8 +1478,8 @@ async function approve(v) {
 function upload(v) {
   const slot = state.app.autopilot.next_open;
   const when = slot ? `${fmtWhen(slot)} (${fromNow(slot)})` : "at the next free slot";
-  if (!confirm(`Upload “${v.title}” to YouTube?\n\nIt goes up as private and becomes public ${when}. `
-             + "Until then you can still delete it in YouTube Studio.")) return;
+  if (!confirm(`Upload “${v.title}” to YouTube?\n\nThe Reviewer checks its video first (a held one isn't posted). It goes up `
+             + `as private and becomes public ${when}. Until then you can still delete it in YouTube Studio.`)) return;
   runTask("publish", v.id);
 }
 
@@ -1140,48 +1496,217 @@ async function discard(v) {
   }
 }
 
-// ------------------------------------------------------------------ 05 schedule (Agent 5)
+// ------------------------------------------------------------------ 05 review (Agent 5)
+
+const ISSUE_KINDS = { number: "Big number collided", title: "Title collided", overlap: "Words overlapped",
+                      covers_host: "Words over his face", unsafe: "Under YouTube's buttons", frozen: "Clip stood still",
+                      dark: "Too dark", unclear: "Voice unclear", rushed: "Line rushed", fast: "Too fast overall",
+                      silence: "Silence", loudness: "Loudness", long: "Too long", short: "Too short", size: "Wrong size",
+                      sound: "No sound", text_cut_off: "Words cut off", broken_picture: "Broken picture", watermark: "Watermark",
+                      child_visible: "A child visible", graphic: "Graphic" };
+
+async function loadReview() {
+  const r = await api("/api/review");
+  const firsts = r.history.filter(x => x.round === 0);
+  const firstPass = firsts.filter(x => x.passed).length;
+  const finals = Object.values(r.history.reduce((m, x) => (m[x.video_id] ??= x, m), {}));  // newest look of each case
+  const fixed = finals.filter(x => x.passed && x.round > 0).length;
+  const counts = r.lessons.counts || {};
+  const taught = r.lessons.for || {};
+  const c = r.checks;
+  const names = Object.fromEntries(state.app.agents.map(a => [a.key, `${a.number} ${a.name}`]));
+  $("#view-review").replaceChildren(...[
+    pageHead({ eyebrow: "05 · Agent 5 · Reviewer", agent: "reviewer", title: "Review",
+      lede: "Agent 5 watches and listens to every video before the Publisher may post it. A video that fails goes back to "
+            + `the Animator with notes, at most ${plural(r.max_rounds, "time")}; one that still fails is made again by itself, until it passes. `
+            + "Problems that keep coming back become lessons the other agents apply from then on." }),
+    kpis([
+      { label: "Passed at first look", value: firsts.length ? `${Math.round(firstPass / firsts.length * 100)}` : "–",
+        unit: firsts.length ? "%" : "", note: `of the last ${plural(firsts.length, "video")}` },
+      { label: "Fixed by the Animator", value: fixed, note: "failed, then passed" },
+      { label: "Being made again", value: r.held.length, note: "turned down after the fixes: made again by themselves" },
+      { label: "Lessons taught", value: Object.values(taught).reduce((n, t) => n + (t.advice?.length || 0), 0),
+        note: r.lessons.updated_at ? `updated ${fromNow(r.lessons.updated_at)}` : "none yet" },
+    ]),
+    r.held.length > 0 && section({ num: "5.1", title: "Being made again", text: "Turned down after the Animator's fixes: each is made again by itself (new drawings or a new reading where it failed; from the third time a new script), until the Reviewer passes it. Nothing for you to do.",
+      body: table(["Case", "Why it was turned down", "Next making"], r.held.map(x => h("tr", {},
+        h("td", { class: "title-cell" }, h("a", { href: `#studio/${x.id}` }, h("b", {}, x.title || `Case #${x.id}`))),
+        h("td", { class: "small" }, x.because || ""),
+        h("td", { class: "small" }, `${x.remake_at ? `about ${x.remake_at}` : "next"}${x.remakes ? ` (time ${x.remakes + 1})` : ""}`)))) }),
+    section({ num: "5.2", title: "What it checks", text: "On the finished video, the way a viewer sees and hears it.",
+      body: h("div", { class: "card card-pad" }, h("ul", { class: "lessons" },
+        h("li", {}, h("b", {}, "Words on screen: "), "captions, numbers, names and the title never on top of each other, over the Professor's face, or under YouTube's buttons and title."),
+        h("li", {}, h("b", {}, "His voice: "), `faster-whisper hears the final mix; at least ${Math.round(c.min_match * 100)}% of the script must come through, and every line clearly.`),
+        h("li", {}, h("b", {}, "That it's him: "), `read by a model that does his voice, and measured against the Host page's sample of it: pitch within ${-c.his_pitch[0]} semitones below and ${c.his_pitch[1]} above, the same timbre. One that isn't him is read again.`),
+        h("li", {}, h("b", {}, "Pace: "), `no line faster than ${c.line_pace} words a second; the whole between ${c.pace[0]} and ${c.pace[1]}.`),
+        h("li", {}, h("b", {}, "Sound: "), `loudness near ${c.loudness} LUFS (where Shorts play), no clipping, no silence where he should speak.`),
+        h("li", {}, h("b", {}, "Picture: "), "no shot too dark to see, no clip standing still, 1080×1920, within the length limit."),
+        h("li", {}, h("b", {}, "A look: "), `Gemini looks at ${c.frames} frames for words cut off, a broken or watermarked picture, a child or anything graphic.`))) }),
+    section({ num: "5.3", title: "Lessons it has taught", text: `A problem in ${c.recurring} of the last ${c.lookback} first looks becomes a standing fix or advice.`,
+      body: Object.keys(taught).length
+        ? h("div", { class: "taught" }, Object.entries(taught).map(([agent, t]) => h("div", { class: "card card-pad", dataset: { agent } },
+            h("span", { class: "agent-badge", dataset: { agent } }, h("i"), names[agent] || agent),
+            Object.keys(t.settings || {}).length > 0 && h("div", {}, Object.entries(t.settings).map(([k, x]) => h("span", { class: "setting-chip" }, `${k}: ${x}`))),
+            h("ul", {}, (t.advice || []).map(a => h("li", {}, a))))))
+        : empty("Nothing yet", "Lessons appear once the same problem turns up again and again.") }),
+    Object.keys(counts).length > 0 && section({ num: "5.4", title: "What it finds most", text: `In the last ${plural(firsts.length, "first look")}.`,
+      body: h("div", { class: "card card-pad" }, h("div", { class: "rounds" },
+        Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => h("span", { class: "tag" }, `${ISSUE_KINDS[k] || k} · ${n}`)))) }),
+    section({ num: "5.5", title: "Recent reviews", text: "Newest first; each look at a case is a row.",
+      body: r.history.length
+        ? table([["When", { class: "col-time" }], "Case", "Look", "Result", "Problems"], r.history.slice(0, 30).map(x => h("tr", {},
+            h("td", { class: "col-time small" }, fmtWhen(x.at)),
+            h("td", { class: "title-cell" }, h("a", { href: `#studio/${x.video_id}` }, h("b", {}, x.title || `Case #${x.video_id}`))),
+            h("td", {}, `${x.round + 1}`),
+            h("td", {}, x.passed ? pill("Passed", "ok") : pill("Failed", "bad")),
+            h("td", { class: "small" }, (x.kinds || []).map(k => ISSUE_KINDS[k] || k).join(", ") || "–"))))
+        : empty("No reviews yet", "Every video is reviewed once it's made.") })].filter(Boolean));
+}
+
+// ------------------------------------------------------------------ 06 schedule (Agent 6)
+
+/** What a Short's YouTube or Instagram part says beside its state, e.g. "goes public 16:00 · in 2 hours". */
+function partDetail(p, which) {
+  const at = iso => iso ? `${onClock(iso)} · ${fromNow(iso)}` : "at its slot";
+  if (which === "youtube") {
+    return { making: "uploaded once it's made and reviewed",
+             scheduled: `goes public ${at(p.at)}${p.processing ? " · YouTube is still processing it" : ""}`,
+             public: p.at ? `since ${onClock(p.at)}` : "",
+             hidden: `made ${p.privacy === "unlisted" ? "unlisted" : "private"} in YouTube Studio: it won't go public by itself`,
+             rejected: `YouTube rejected it${p.why ? ` (${p.why})` : ""}`,
+             gone: "deleted in YouTube Studio: Delete clears it here" }[p.state] || "";
+  }
+  return { making: "goes once it's on YouTube",
+           none: p.why || "",
+           waiting: `goes ${at(p.at)}`,
+           due: state.app.paused ? "the autopilot is paused: Post now sends it" : "goes within a minute",
+           retry: `tries again ${p.retry_at ? onClock(p.retry_at) : "soon"}${p.error ? ` · ${p.error}` : ""}`,
+           posting: "sending it to Instagram",
+           posted: p.posted_at ? `since ${onClock(p.posted_at)}` : "",
+           failed: p.error || "",
+           skipped: "it wasn't public on YouTube at its slot",
+           expired: "not posted within 2 days of its slot (this PC was off)",
+           cancelled: p.because || "you took it off",
+           deleted: "deleted from Instagram",
+           remaking: "made again for Instagram (a few minutes), then it waits for its slot" }[p.state] || "";
+}
+
+/** Why a button on a Short's YouTube or Instagram part is greyed out. */
+function partWhy(p, which, action) {
+  if (which === "instagram") {
+    if (action === "now") return p.why;
+    if (action === "open") return "It isn't on Instagram";
+    return p.state === "posted" ? "Connect Instagram first (the Channels page)"
+      : p.state === "posting" ? "It's being posted right now" : "There's no Reel to delete or take off";
+  }
+  if (["making", "gone"].includes(p.state)) return p.state === "making" ? "It isn't on YouTube yet" : "It isn't on YouTube any more";
+  if (action === "now") return p.state === "rejected" ? "YouTube rejected it" : "It's public already";
+  return "It's public already: make it private in YouTube Studio";
+}
+
+/** A Short's part on YouTube or on Instagram: where it stands there, and Open, Post now and Delete (and Stop on
+ *  YouTube), each greyed out with the reason when it can't be done now. */
+function platformPart(v, which) {
+  const p = v.platforms?.[which];
+  if (!p) return h("span", { class: "muted" }, "–");
+  const yt = which === "youtube";
+  const [label, tone] = (yt ? ON_YOUTUBE : ON_INSTAGRAM)[p.state] || [cap(p.state), "idle"];
+  const detail = partDetail(p, which);
+  const button = (action, text, danger = false) => h("button", {
+    class: `btn btn-xs${danger ? " btn-danger" : ""}`, type: "button", disabled: !p.can[action],
+    title: p.can[action] ? null : partWhy(p, which, action), onclick: () => (yt ? youtubeAction : instagramAction)(v, action) }, text);
+  const href = yt ? p.url : p.url || p.profile;
+  const open = p.can.open
+    ? h("a", { class: "btn btn-xs", href, target: "_blank", rel: "noopener",
+               title: yt ? (p.state === "public" ? "Watch it on YouTube" : "Open it in YouTube Studio")
+                         : p.url ? "Open the Reel on Instagram" : "Instagram didn't give the Reel's own link: your profile" },
+        "Open ↗")
+    : h("button", { class: "btn btn-xs", type: "button", disabled: true, title: partWhy(p, which, "open") }, "Open ↗");
+  return h("div", { class: "part", dataset: { platform: which } },
+    h("div", { class: "part-state" }, pill(label, tone), detail && h("small", { title: detail }, detail)),
+    h("div", { class: "part-actions" }, open,
+      !yt && p.can.schedule
+        ? h("button", { class: "btn btn-xs", type: "button", title: "Makes its video again (a few minutes), then its Reel "
+                        + "waits for its slot", onclick: () => instagramAction(v, "schedule") }, "Schedule")
+        : button("now", "Post now"),
+      yt && button("stop", "Stop"), button("delete", "Delete", true)));
+}
+
+const partHead = (id, name) => [[icon(id, "th-ic"), name], { class: "col-part" }];
+const partCell = (v, which) => h("td", { class: "col-part", "data-label": which === "youtube" ? "YouTube" : "Instagram" },
+  v ? platformPart(v, which) : h("span", { class: "muted" }, "–"));
+
+/** A slot on the Schedule page: its time, its Short, and the Short's YouTube and Instagram parts. */
+function scheduleRow(s) {
+  const a = state.app;
+  const v = s.video;
+  const [label, tone] = SLOT[a.paused && ["due", "late"].includes(s.state) ? "paused" : s.state] || [s.state, "idle"];
+  return h("tr", { class: "slot-row", dataset: { state: s.state, next: s.at === a.autopilot.next?.at && !a.paused ? "1" : "0" } },
+    h("td", { class: "col-time" }, h("b", {}, clockIn(s.at, scheduleTz()))),
+    h("td", { class: "col-time muted" }, nyTime(s.at)),
+    h("td", { class: "title-cell" }, v
+      ? [h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title || `Short #${v.id}`)), v.category && h("small", {}, category(v.category))]
+      : [pill(label, tone), h("small", {}, s.state === "missed" ? "Nothing went out" : "Not made yet")]),
+    partCell(v, "youtube"), partCell(v, "instagram"));
+}
 
 async function loadSchedule() {
   const a = state.app;
   const ap = a.autopilot;
-  state.videos = await api("/api/videos");
+  const data = await api("/api/schedule");
   const now = new Date();
-  const ahead = state.videos.filter(v => v.status === "scheduled" && v.publish_at && new Date(v.publish_at) > now)
-    .sort((x, y) => new Date(x.publish_at) - new Date(y.publish_at));
-  const posted = ap.slots.filter(s => s.state === "posted").length;
-  $("#view-schedule").replaceChildren(
-    pageHead({ eyebrow: "05 · Agent 5 · Publisher", agent: "publisher", title: "Schedule",
-      lede: "Agent 5 uploads each case as private with its slot as the publish time, so YouTube makes it public on the "
-            + "minute, with its sources, photo credits and the music's credit in the description. News and politics go "
-            + "up only after your OK. Until a Short is public you can delete it in YouTube Studio: that's your veto.",
+  const shorts = [...data.slots.map(s => s.video).filter(Boolean), ...data.later];
+  const ahead = shorts.filter(v => v.status === "scheduled" && v.publish_at && new Date(v.publish_at) > now).length;
+  const posted = data.slots.filter(s => s.state === "posted").length;
+  const reels = data.slots.filter(s => s.video?.platforms?.instagram.state === "posted").length;
+  const ig = a.services.instagram || {};
+  $("#view-schedule").replaceChildren(...[
+    pageHead({ eyebrow: "06 · Agent 6 · Publisher", agent: "publisher", title: "Schedule",
+      lede: "Agent 6 uploads each case that passed the Reviewer as private with its slot as the publish time, so YouTube "
+            + "makes it public on the minute, with its sources, photo credits and the music's credit in the description, "
+            + "and its thumbnail. With Instagram on, the same video goes up as a Reel when its slot comes. Beside each "
+            + "Short: where it stands on YouTube and on Instagram, with Open, Post now and Delete for each (and Stop, "
+            + "which keeps it private on YouTube).",
       actions: [h("a", { class: "btn", href: "#settings" }, "Change the timetable"), makeButton({ primary: true })] }),
     kpis([
-      { label: "Posted today", value: posted, unit: `/ ${ap.slots.length}` },
+      { label: "Posted today", value: posted, unit: `/ ${data.slots.length}` },
+      { label: "Reels today", value: ig.connected ? reels : "–", unit: ig.connected ? `/ ${data.slots.length}` : "",
+        note: ig.connected ? (ig.on ? "posted on Instagram" : "Reels are switched off") : "Instagram isn't connected" },
       { label: "Next post", value: ap.next ? clockIn(ap.next.at, scheduleTz()) : "–", note: ap.next ? fromNow(ap.next.at) : "" },
-      { label: "Scheduled ahead", value: ahead.length, note: "uploaded, waiting to go public" },
+      { label: "Scheduled ahead", value: ahead, note: "uploaded, waiting to go public" },
       { label: "Next free slot", value: ap.next_open ? clockIn(ap.next_open, scheduleTz()) : "–",
         note: ap.next_open ? fromNow(ap.next_open) : "every slot this week is taken" },
     ]),
-    section({ num: "5.1", title: "Today's slots", text: `${plural(ap.schedule.posts_per_day, "Short")} a day, one every ${hours(ap.schedule.every_hours)} from ${ap.schedule.first_post} (${scheduleTz()}).`,
-      body: table([["Time", { class: "col-time" }], ["New York", { class: "col-time" }], "Status", "Short", ["", { class: "col-actions" }]],
-                  slotRows(ap.slots)) }),
-    section({ num: "5.2", title: "Uploaded, going public soon", text: "Private on YouTube until their time.",
-      body: ahead.length
-        ? table([["Goes public", { class: "col-time" }], "Short", ["", { class: "col-actions" }]], ahead.map(v => h("tr", {},
-            h("td", { class: "col-time" }, fmtWhen(v.publish_at), h("small", { class: "muted", style: "display:block" }, fromNow(v.publish_at))),
-            h("td", { class: "title-cell" }, h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title)), h("small", {}, v.legacy || category(v.category))),
-            h("td", { class: "col-actions" }, v.studio_url && h("a", { class: "platform", dataset: { tone: "run" }, href: v.studio_url,
-              target: "_blank", rel: "noopener" }, "Studio ↗")))))
-        : empty("Nothing scheduled ahead", a.paused ? "The autopilot is paused. Switch it on, or press “Make the next Short now”."
-                                                  : "The next Short is made in the hours before its slot.") }));
+    a.services.youtube && !a.services.youtube_manage && h("div", { class: "callout banner", dataset: { tone: "warn" } },
+      h("b", {}, "Post now, Stop and Delete need your OK on YouTube once. "),
+      a.local !== false
+        ? h("span", {}, "Google's page asks whether this app may change or delete your videos. ",
+            h("button", { class: "btn btn-sm", type: "button", onclick: () => allowManaging() }, "Allow it now"))
+        : "Allow it from the dashboard on your computer; until then use YouTube Studio."),
+    !ig.connected && h("div", { class: "callout banner" },
+      h("b", {}, "Instagram isn't connected yet, "), "so its side shows “Not for Instagram”. Connect it on the ",
+      h("a", { href: "#youtube" }, "Channels page"), ": the Shorts uploaded after that get their Reels."),
+    data.youtube.error && h("div", { class: "callout banner", dataset: { tone: "warn" } },
+      h("b", {}, "YouTube didn't say how they stand just now "), `(${data.youtube.error}). The YouTube side shows what `
+      + "the dashboard knows; it asks again in 2 minutes."),
+    section({ num: "6.1", title: "Today's slots", text: `${plural(ap.schedule.posts_per_day, "Short")} a day, one every ${hours(ap.schedule.every_hours)} from ${ap.schedule.first_post} (${scheduleTz()}), all made in the morning run from ${ap.schedule.make_at}.`,
+      body: table([["Time", { class: "col-time" }], ["New York", { class: "col-time" }], "Short",
+                   partHead("ic-youtube", "YouTube"), partHead("ic-instagram", "Instagram")],
+                  data.slots.map(scheduleRow), "schedule") }),
+    data.later.length > 0 && section({ num: "6.2", title: "Later days", text: "Uploaded for a later day, private on YouTube until their time.",
+      body: table([["Goes public", { class: "col-time" }], "Short", partHead("ic-youtube", "YouTube"), partHead("ic-instagram", "Instagram")],
+        data.later.map(v => h("tr", {},
+          h("td", { class: "col-time" }, onClock(v.publish_at), h("small", { class: "muted", style: "display:block" }, fromNow(v.publish_at))),
+          h("td", { class: "title-cell" }, h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title)), v.category && h("small", {}, category(v.category))),
+          partCell(v, "youtube"), partCell(v, "instagram"))), "schedule") })].filter(Boolean));
   syncButtons();
 }
 
-// ------------------------------------------------------------------ 06 results (Agent 6)
+// ------------------------------------------------------------------ 07 results (Agent 7)
 
 const LIFT_KINDS = [["category", "Case type"], ["why_now", "Why now"], ["hook", "Kind of hook"], ["visuals", "Visuals used"],
-                    ["length", "Length"], ["lines", "Number of lines"], ["follow_up", "Follow-up or first case"], ["hour", "Posting time"]];
+                    ["length", "Length"], ["lines", "Number of lines"], ["pace", "The Professor's pace"], ["music", "Music mood"],
+                    ["hashtag", "Hashtags"], ["review", "Review"], ["follow_up", "Follow-up or first case"], ["hour", "Posting time"]];
 
 function liftCard(title, weights, names = {}) {
   const entries = Object.entries(weights || {}).sort((a, b) => b[1] - a[1]);
@@ -1203,10 +1728,11 @@ async function loadResults() {
   const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
   const pcts = rows.map(x => x.avg_view_pct).filter(x => x !== null && x !== undefined);
   $("#view-results").replaceChildren(
-    pageHead({ eyebrow: "06 · Agent 6 · Analyst", agent: "analyst", title: "Results",
-      lede: "Agent 6 reads YouTube's numbers and the newest comments every day and, once a week, writes the playbook: "
-            + "what does better than the channel's usual, by case type, hook, visuals, length and posting time. Agents 1 and "
-            + "3 follow it three times out of four, so the channel keeps trying new things.",
+    pageHead({ eyebrow: "07 · Agent 7 · Analyst", agent: "analyst", title: "Results",
+      lede: "Agent 7 reads YouTube's numbers and the newest comments every day and, once a week, writes the playbook: "
+            + "what does better than the channel's usual, by case type, hook, visuals, length, pace and posting time, and "
+            + "a few lessons for each agent. Every agent reads its lessons each time it works; the playbook's weights are "
+            + "followed three times out of four, so the channel keeps trying new things.",
       actions: [taskButton("stats", "Read the numbers now", { primary: true })] }),
     kpis([
       { label: "Cases published", value: rows.length },
@@ -1216,21 +1742,29 @@ async function loadResults() {
         unit: pcts.length ? "%" : "", note: "YouTube Analytics, ~2 days late" },
       { label: "Comments saved", value: r.comments, note: "for the Editor's topic ideas" },
     ]),
-    section({ num: "6.1", title: "The playbook", text: book.updated_at ? `Written ${fromNow(book.updated_at)} from ${plural(book.samples, "case")}.` : "",
+    section({ num: "7.1", title: "The playbook", text: book.updated_at ? `Written ${fromNow(book.updated_at)} from ${plural(book.samples, "case")}.` : "",
       body: book.samples
         ? h("div", { class: "card card-pad" }, book.summary && h("p", {}, book.summary),
             book.lessons?.length > 0 && h("ol", { class: "lessons", style: "margin-top:10px" }, book.lessons.map(l => h("li", {}, l))))
-        : empty("No playbook yet", `Agent 6 writes one once ${r.min_samples} cases are at least 2 days old (${r.judged} so far).`) }),
-    section({ num: "6.2", title: "What does better than usual", text: `Median views of each group against the channel's median; a group needs ${r.min_samples} cases.`,
+        : empty("No playbook yet", `Agent 7 writes one once ${r.min_samples} cases are at least 2 days old (${r.judged} so far).`) }),
+    section({ num: "7.2", title: "What each agent has learned", text: "From the Analyst's numbers and the Reviewer's checks; each agent reads its own every time it works.",
+      body: h("div", { class: "taught" }, state.app.agents.filter(a => a.key !== "analyst").map(a => {
+        const t = r.taught?.[a.key] || { settings: {}, advice: [] };
+        return h("div", { class: "card card-pad", dataset: { agent: a.key } },
+          h("span", { class: "agent-badge", dataset: { agent: a.key } }, h("i"), `${a.number} ${a.name}`),
+          Object.keys(t.settings || {}).length > 0 && h("div", {}, Object.entries(t.settings).map(([k, x]) => h("span", { class: "setting-chip" }, `${k}: ${x}`))),
+          t.advice?.length ? h("ul", {}, t.advice.map(l => h("li", {}, l))) : h("p", { class: "note" }, "Nothing yet."));
+      })) }),
+    section({ num: "7.3", title: "What does better than usual", text: `Median views of each group against the channel's median; a group needs ${r.min_samples} cases.`,
       body: h("div", { class: "lift-grid" }, LIFT_KINDS.map(([key, title]) =>
         liftCard(title, book.weights?.[key], key === "category" ? CATEGORY : key === "why_now" ? WHY_NOW : {}))) }),
-    section({ num: "6.3", title: "Follow-up candidates", text: "Cases with 1.5 times the usual views and no part 2 yet. Agent 1 may make one.",
+    section({ num: "7.4", title: "Follow-up candidates", text: "Cases with 1.5 times the usual views and no part 2 yet. Agent 1 may make one.",
       body: r.follow_ups.length
         ? table(["Case", ["Views vs usual", { class: "col-right" }]], r.follow_ups.map(f => h("tr", {},
             h("td", { class: "title-cell" }, h("a", { href: `#studio/${f.id}` }, h("b", {}, f.title))),
             h("td", { class: "col-right" }, `${f.views_vs_usual}x`))))
         : empty("None yet", "They appear once some cases clearly beat the channel's usual.") }),
-    section({ num: "6.4", title: "Cases and their numbers", text: "Newest first.",
+    section({ num: "7.5", title: "Cases and their numbers", text: "Newest first.",
       body: rows.length
         ? table(["Case", ["Published", { class: "col-time" }], ["Views", { class: "col-right" }], ["Likes", { class: "col-right" }],
                  ["Comments", { class: "col-right" }], ["Watched", { class: "col-right" }]],
@@ -1242,7 +1776,7 @@ async function loadResults() {
               h("td", { class: "col-right" }, x.likes.toLocaleString()),
               h("td", { class: "col-right" }, x.comments.toLocaleString()),
               h("td", { class: "col-right" }, x.avg_view_pct !== null && x.avg_view_pct !== undefined ? `${Math.round(x.avg_view_pct)}%` : "–"))))
-        : empty("No numbers yet", "They appear once cases are public and Agent 6 has read YouTube's numbers.") }));
+        : empty("No numbers yet", "They appear once cases are public and Agent 7 has read YouTube's numbers.") }));
   syncButtons();
 }
 
@@ -1263,7 +1797,7 @@ async function loadMusic() {
 
   $("#view-music").replaceChildren(
     pageHead({ eyebrow: "L1 · Library", title: "Music",
-      lede: "The music under the hosts. It dips while someone speaks and comes back in the pauses." }),
+      lede: "The music under the Professor. It dips while he speaks and comes back in the pauses." }),
     kpis([
       { label: "Tracks", value: tracks.length, tone: tracks.length ? null : "warn", note: tracks.length ? "one per Short" : "Shorts have no music" },
       { label: "With a credit line", value: tracks.filter(t => t.credit).length, note: "added to the description at upload" },
@@ -1305,66 +1839,93 @@ async function removeTrack(t) {
   }
 }
 
-// ------------------------------------------------------------------ L2 hosts
+// ------------------------------------------------------------------ L2 host
 
-const LOOK_PARTS = [["face", "Face"], ["eyes", "Eyes"], ["nose", "Nose"], ["hair", "Hair"], ["hair_color", "Hair colour"],
-                    ["facial_hair", "Facial hair"], ["glasses", "Glasses"], ["skin", "Skin"], ["body", "Body"], ["height", "Height"],
-                    ["outfit", "Outfit"], ["outfit_color", "Outfit colour"], ["accent_color", "Inner layer"], ["accessory", "Accessory"]];
+const DEEPER = [[0, "As Gemini reads it"], [1, "1 semitone deeper"], [2, "2 semitones deeper"]];
 
-async function loadHosts() {
-  const d = await api("/api/hosts");
+async function loadHost() {
+  const d = await api("/api/host");
   const ro = !state.app.local;
-  const options = part => part === "skin" ? d.skin : part === "hair_color" ? d.hair_color
-    : ["outfit_color", "accent_color"].includes(part) ? d.colors : d.parts[part];
-  const hostCard = host => {
-    const form = h("form", { class: "host-form", onsubmit: e => saveHost(e, host.role_key) });
-    const field = (label, control) => h("label", { class: "field" }, h("span", { class: "small muted" }, label), control);
-    form.append(
-      h("div", { class: "inline-fields" },
-        field("Name", h("input", { class: "input", name: "name", value: host.name, maxlength: 24, disabled: ro })),
-        field("Voice", h("select", { class: "input", name: "voice", disabled: ro }, Object.entries(d.voices).map(([key, label]) =>
-          h("option", { value: key, selected: key === host.voice }, `${key} · ${label}`)))),
-        field("Speed", h("input", { class: "input", name: "speed", type: "number", min: 0.9, max: 1.2, step: 0.01, value: host.speed, disabled: ro }))),
-      field("Personality", h("input", { class: "input", name: "personality", value: host.personality, maxlength: 180, disabled: ro })),
-      h("details", { class: "more" }, h("summary", {}, "Look"),
-        h("div", { class: "inline-fields", style: "margin-top:10px" }, LOOK_PARTS.map(([part, label]) =>
-          field(label, h("select", { class: "input", name: part, disabled: ro }, (options(part) || []).map(o =>
-            h("option", { value: o, selected: o === host[part] }, cap(o)))))))),
-      h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "btn btn-sm btn-primary", type: "submit", disabled: ro }, "Save"),
-        h("span", { class: "note" }, "Saved as a new version: cases already written keep the host they were written with.")));
-    return h("article", { class: "card host-card" },
-      h("img", { class: "portrait", src: host.image, alt: `${host.name}, drawn` }),
-      h("div", { class: "char-body" },
-        h("h3", {}, host.name, h("small", {}, host.role)),
-        h("p", {}, host.personality),
-        h("p", { class: "look" }, host.look.split(": ").slice(1).join(": ")),
-        h("p", { class: "look" }, `Voice: ${host.voice_label} (${host.voice}, speed ${host.speed})`),
-        h("audio", { src: host.voice_sample, controls: true, preload: "none" }),
-        form));
+  const v = d.voice;
+  const field = (label, control, note) => h("label", { class: "field" }, h("span", {}, label), control, note && h("small", { class: "muted" }, note));
+  const name = h("input", { class: "input", value: d.name, maxlength: 40, disabled: ro, "aria-label": "His name" });
+  const size = h("select", { class: "input", disabled: ro, "aria-label": "His size" },
+    Object.entries(d.sizes).map(([key, px]) => h("option", { value: key, selected: key === d.size },
+      `${{ S: "Small", M: "Medium", L: "Large" }[key] || key} · ${px} px wide`)));
+  const deeper = h("select", { class: "input", disabled: ro, "aria-label": "How much deeper" },
+    DEEPER.map(([n, text]) => h("option", { value: n, selected: n === v.deeper }, text)));
+  const style = h("textarea", { class: "input", rows: 3, disabled: ro, maxlength: LIMITS.style, "aria-label": "His persona" });
+  style.value = v.style;
+  const save = async changes => {
+    try {
+      await api("/api/host", { method: "PATCH", json: changes });
+      toast("Saved. New previews use it.", "ok");
+      await loadState();
+      loadHost();
+    } catch (e) {
+      toast(e.message, "error", 7000);
+    }
   };
-  $("#view-hosts").replaceChildren(
-    pageHead({ eyebrow: "L2 · Library", title: "Hosts",
-      lede: "The two cartoon hosts who present every case: the presenter tells it, the co-host asks what viewers would ask. "
-            + "Same two every time, so viewers get to know them. Change anything about them here.",
-      actions: [taskButton("hosts", d.hosts.length ? "Design new hosts" : "Design the hosts",
-        { primary: !d.hosts.length, confirmText: d.hosts.length ? "Design two new hosts? Cases already written keep the current ones." : null })] }),
-    d.hosts.length
-      ? h("div", { class: "host-grid" }, d.hosts.map(hostCard))
-      : empty("No hosts yet", "Press “Design the hosts” (one free Gemini call), or just make a case: they're designed with the first one."));
-  syncButtons();
-}
 
-async function saveHost(event, role) {
-  event.preventDefault();
-  const f = new FormData(event.target);
-  const changes = Object.fromEntries([...f.entries()].map(([k, v]) => [k, k === "speed" ? Number(v) : v]));
-  try {
-    await api(`/api/hosts/${role}`, { method: "PATCH", json: changes });
-    toast("Saved.", "ok");
-    loadHosts();
-  } catch (e) {
-    toast(e.message, "error", 7000);
-  }
+  const voiceRows = d.voices.map(x => h("tr", { class: x.name === v.name ? "current" : "" },
+    h("td", { class: "title-cell" }, h("b", {}, x.name), h("small", {}, x.label)),
+    h("td", { class: "col-right" }, x.pitch ? `${Math.round(x.pitch)} Hz` : "–"),
+    h("td", {}, x.sample ? h("audio", { src: x.sample, controls: true, preload: "none" })
+      : h("button", { class: "btn btn-sm", type: "button", "data-needs-idle": true, disabled: ro,
+                      onclick: () => runTask("host-sample", null, { voice: x.name }) }, "Record a sample")),
+    h("td", { class: "col-actions" }, x.name === v.name ? pill("His voice", "ok")
+      : h("button", { class: "btn btn-sm btn-ghost", type: "button", disabled: ro, onclick: () => save({ voice: x.name }) }, "Use"))));
+
+  $("#view-host").replaceChildren(...[
+    pageHead({ eyebrow: "L2 · Library", title: "Host",
+      lede: `${d.name} hosts every case. He's drawn from your own character sheet, cut out and given a mouth and eyelids `
+            + "that move, and floats in the lower-left corner the whole video: talking with the words, blinking, nodding as "
+            + "each line starts. His voice is one of Gemini's (free), read in his persona and made a little deeper.",
+      actions: [taskButton("host-test", "Make a test clip", { primary: !d.test_clip, title: "He says his line from your sheet in his current voice (one free Gemini call)" })] }),
+    d.resting && h("div", { class: "callout banner", dataset: { tone: "warn" } },
+      h("b", {}, "His voice is resting. "), (d.used_up
+        ? `Today's ${d.daily} free readings are used up; they renew at ${d.resting}. `
+        : `Gemini's free voice didn't answer, so it's asked again at ${d.resting}. `)
+      + "Until then the Shorts wait for it: no other voice reads him."),
+    kpis([
+      { label: "Voice", value: v.name, note: (d.voices.find(x => x.name === v.name) || {}).label || "" },
+      { label: "Readings left today", value: d.left, unit: `of ${d.daily}`, note: `Gemini's free voice, renewed at ${d.renews}` },
+      { label: "Deeper", value: v.deeper, unit: v.deeper === 1 ? "semitone" : "semitones", note: "same timing, lower pitch" },
+      { label: "Size", value: d.size, note: `${d.sizes[d.size]} px wide, lower left` },
+    ]),
+    section({ num: "L2.1", title: "Him", text: "Cut from your sheet's Headshot, so he always looks exactly like it.",
+      body: h("div", { class: "host-grid" },
+        h("article", { class: "card host-card" },
+          h("div", { class: "host-figure" }, h("img", { src: d.images.base, alt: `${d.name}, cut out from the sheet` })),
+          h("div", { class: "char-body" },
+            h("h3", {}, d.name, h("small", {}, "the host")),
+            h("p", { class: "muted small" }, "Highly intelligent, a deep thinker, a great storyteller: calm, observant, wise. "
+              + "He never says his name in a video; it's only for this page."),
+            field("Name", name),
+            field("Size on screen", size),
+            h("div", { class: "row", style: "margin-top:10px" },
+              h("button", { class: "btn btn-sm btn-primary", type: "button", disabled: ro,
+                            onclick: () => save({ name: name.value, size: size.value }) }, "Save")))),
+        h("article", { class: "card host-card" },
+          d.test_clip ? h("div", { class: "phone" }, h("video", { src: d.test_clip, controls: true, playsinline: true, preload: "metadata" }))
+            : h("div", { class: "phone" }, h("div", { class: "phone-blank" }, "No test clip yet. Press “Make a test clip”: he says “Every story has a lesson… if you know how to listen.”")),
+          h("div", { class: "char-body" },
+            h("h3", {}, "Your sheet"),
+            h("a", { href: d.images.sheet, target: "_blank", rel: "noopener" },
+              h("img", { class: "sheet-thumb", src: d.images.sheet, alt: "The character sheet he's drawn from" })))))
+    }),
+    section({ num: "L2.2", title: "His voice", text: "Gemini's deep male voices, measured for pitch (lower is deeper). A sample is recorded once for the current depth and persona (one free call).",
+      body: [
+        table(["Voice", ["Pitch", { class: "col-right" }], "Sample", ["", { class: "col-actions" }]], voiceRows),
+        h("div", { class: "card", style: "margin-top:14px" }, h("div", { class: "card-body" },
+          h("div", { class: "inline-fields" }, field("Deeper", deeper, "a gentle pitch drop; his words keep their timing")),
+          field("His persona", style, "how Gemini reads every line; each line adds its own direction"),
+          h("div", { class: "row", style: "margin-top:10px" },
+            h("button", { class: "btn btn-sm btn-primary", type: "button", disabled: ro,
+                          onclick: () => save({ deeper: Number(deeper.value), style: style.value }) }, "Save"),
+            h("span", { class: "note" }, "Changes apply to the next videos made; finished previews keep their voice."))))
+      ] })].filter(Boolean));
+  syncButtons();
 }
 
 // ------------------------------------------------------------------ S1 YouTube
@@ -1381,8 +1942,9 @@ async function loadYouTube(refresh = false) {
   const link = (href, text) => h("a", { href, target: "_blank", rel: "noopener" }, text);
 
   $("#view-youtube").replaceChildren(
-    pageHead({ eyebrow: "S1 · Setup", title: "YouTube",
-      lede: "Uploading needs your permission once. Your Google password never touches this software.",
+    pageHead({ eyebrow: "S1 · Setup", title: "Channels",
+      lede: "Where the Shorts go: YouTube, and Instagram as Reels if you like. Each needs your permission once; your "
+            + "passwords never touch this software.",
       actions: [h("button", { class: "btn", type: "button", onclick: () => loadYouTube(true).catch(e => toast(e.message, "error")) },
                   "Check connection")] }),
     kpis([
@@ -1411,13 +1973,106 @@ async function loadYouTube(refresh = false) {
         step(3, ok, "Connect your channel",
           y.connected
             ? (y.error ? h("div", { class: "callout", dataset: { tone: "bad" } }, `Saved sign-in didn't work: ${y.error}`)
-                       : h("p", {}, "Connected to ", h("b", {}, y.channel || "your channel"), ". Uploads, stats and comments are ready."))
+                       : [h("p", {}, "Connected to ", h("b", {}, y.channel || "your channel"), ". Uploads, stats and comments are ready."),
+                          !y.manage && h("div", { class: "callout", dataset: { tone: "warn" } },
+                            "Stop and Delete on the Schedule page need one more permission: press Reconnect and tick “See, "
+                            + "edit, and permanently delete your YouTube videos…” on Google's page.")])
             : h("p", {}, "A Google page opens in your browser: choose your channel and allow access."),
           h("div", { class: "row" },
             h("button", { class: "btn btn-primary btn-sm", type: "button", disabled: !y.client_file || !y.local || connecting,
                           onclick: () => runTask("connect") },
               connecting ? "Waiting for you in the browser…" : y.connected ? "Reconnect" : "Connect YouTube"),
-            !y.local && h("span", { class: "note" }, "Connect from the dashboard on your computer.")))) }));
+            !y.local && h("span", { class: "note" }, "Connect from the dashboard on your computer.")))) }),
+    h("div", { id: "instagram-box" }));
+  loadInstagram().catch(e => toast(e.message, "error"));
+}
+
+async function loadInstagram() {
+  const ig = await api("/api/instagram");
+  const box = $("#instagram-box");
+  if (!box) return;
+  const link = (href, text) => h("a", { href, target: "_blank", rel: "noopener" }, text);
+  const step = (n, done, title, ...body) => h("div", { class: "card setup-step", dataset: { done: done ? "1" : "0" } },
+    h("span", { class: "setup-num" }, done ? "✓" : n), h("h3", {}, title), pill(done ? "Done" : "To do", done ? "ok" : "idle"),
+    h("div", { class: "setup-body" }, body));
+  const token = h("input", { class: "input", type: "password", placeholder: "Access token", autocomplete: "off", "aria-label": "Access token" });
+  const appId = h("input", { class: "input", placeholder: "App ID", autocomplete: "off", "aria-label": "App ID" });
+  const secret = h("input", { class: "input", type: "password", placeholder: "App secret", autocomplete: "off", "aria-label": "App secret" });
+  const connect = async () => {
+    try {
+      const r = await api("/api/instagram/connect", { method: "POST", json: { token: token.value, app_id: appId.value, app_secret: secret.value } });
+      toast(`Connected to @${r.username}${r.long_lived ? "" : ". Add the app's ID and secret too, or the token stops working within hours"}.`,
+            r.long_lived ? "ok" : "info", 9000);
+      await loadState();
+      loadInstagram();
+    } catch (e) {
+      toast(e.message, "error", 9000);
+    }
+  };
+  const call = async (method, json, done) => {
+    try {
+      await api("/api/instagram", { method, json });
+      toast(done, "ok");
+      await loadState();
+      loadInstagram();
+    } catch (e) {
+      toast(e.message, "error", 7000);
+    }
+  };
+  const expires = ig.expires_at === 0 ? "never expires" : ig.expires_at ? `expires ${fmtWhen(new Date(ig.expires_at * 1000).toISOString())}` : null;
+  box.replaceChildren(
+    kpis([
+      { label: "Instagram", value: ig.connected ? `@${ig.username}` : ig.username ? "Not working" : "Not connected",
+        tone: ig.connected ? "ok" : ig.username ? "bad" : null, note: ig.connected ? (expires || "connected") : ig.error || "optional" },
+      { label: "Reels", value: ig.on ? "On" : "Off", tone: ig.on ? "ok" : null, note: ig.on ? "each Short also goes up as a Reel" : "switch on once connected" },
+      ig.connected && { label: "Posted today by API", value: ig.used_today ?? "–", unit: ig.daily_limit ? `/ ${ig.daily_limit}` : "" },
+    ]),
+    section({ num: "S1.2", title: "Instagram Reels (optional)",
+      text: "Each Short also goes up as a Reel at its slot, with the same caption, credits and cover. Instagram's own API, free.",
+      body: h("div", { class: "setup" },
+        step(1, ig.connected, "Make your Instagram a professional account, linked to a Facebook Page",
+          h("ol", {},
+            h("li", {}, "In Instagram: ", h("b", {}, "Settings → Account type and tools → Switch to professional account"), " (Creator or Business)."),
+            h("li", {}, "Link it to a Facebook Page you manage (create one if needed): in the Page's settings, ", h("b", {}, "Linked accounts → Instagram"), "."))),
+        step(2, ig.connected, "Create your own Meta app and an access token (about 10 minutes)",
+          h("ol", {},
+            h("li", {}, "Open ", link("https://developers.facebook.com/apps/creation/", "Meta for Developers: create app"), "; choose ", h("b", {}, "Other → Business"), "."),
+            h("li", {}, "Add the product ", h("b", {}, "Instagram"), " (API setup with Facebook login). In development mode it works for your own accounts."),
+            h("li", {}, "Open the ", link("https://developers.facebook.com/tools/explorer/", "Graph API Explorer"), ", pick your app, and add the permissions ",
+              h("b", {}, "instagram_basic, instagram_content_publish, pages_show_list, pages_read_engagement, business_management"),
+              " and, for Delete on the Schedule page, ", h("b", {}, "instagram_manage_contents"), "; press ",
+              h("b", {}, "Generate Access Token"), " and allow it (tick your Page, your Instagram account and your business)."),
+            h("li", {}, "Copy the token, and the app's ", h("b", {}, "App ID"), " and ", h("b", {}, "App secret"), " (App settings → Basic). They stay on this computer, in .env."))),
+        step(3, ig.connected, "Connect",
+          ig.connected ? h("p", {}, "Connected to ", h("b", {}, `@${ig.username}`), expires ? ` (the token ${expires}).` : ".") : null,
+          ig.connected && ig.can_delete === false && h("div", { class: "callout", dataset: { tone: "warn" }, style: "margin:8px 0" },
+            "Posting works. Delete on the Schedule page needs one more permission, instagram_manage_contents: make a new "
+            + "token with it (step 2) and connect again. Until then, delete Reels in the Instagram app."),
+          h("div", { class: "grid-3", style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px" }, token, appId, secret),
+          h("div", { class: "row", style: "margin-top:8px" },
+            h("button", { class: "btn btn-primary btn-sm", type: "button", disabled: !ig.local, onclick: connect },
+              ig.connected ? "Connect again" : "Connect Instagram"),
+            ig.username && h("button", { class: "btn btn-sm btn-ghost btn-danger", type: "button", disabled: !ig.local,
+              onclick: () => confirm("Disconnect Instagram? Reels stop until you connect again.") && call("DELETE", undefined, "Disconnected.") }, "Disconnect"))),
+        step(4, ig.on, "Switch Reels on",
+          h("p", {}, ig.on ? "On: every Short goes up as a Reel when its slot comes (this computer must be on then)."
+                           : "Off: nothing goes to Instagram."),
+          h("div", { class: "row" },
+            h("button", { class: `btn btn-sm${ig.on ? "" : " btn-primary"}`, type: "button", disabled: !ig.local || (!ig.on && !ig.connected),
+              onclick: () => call("PATCH", { on: !ig.on }, ig.on ? "Reels off." : "Reels on.") }, ig.on ? "Switch off" : "Switch on"))),
+        step(5, ig.send === "link", "How each video gets to Instagram",
+          h("p", {}, ig.send === "link"
+            ? "Instagram fetches it: for the minute or two it takes, that one video file (nothing else on this computer) is "
+              + "reachable at a random temporary address through Cloudflare's free quick tunnel, then the address is gone. "
+              + "Instagram's own way to receive a video, with nothing to drop. If no link can be made, or Instagram won't take it, the video is sent instead."
+            : "This computer sends it to Instagram's upload server, which drops uploads in spells (#46 ten times in a row on "
+              + "27 October): a Reel can take hours of tries to go up. With a temporary link, Instagram fetches the file itself "
+              + "instead (Cloudflare's free quick tunnel, already on this computer; only that one file, only for a minute or two)."),
+          h("div", { class: "row" },
+            h("button", { class: `btn btn-sm${ig.send === "link" ? "" : " btn-primary"}`, type: "button", disabled: !ig.local,
+              onclick: () => call("PATCH", { send: ig.send === "link" ? "upload" : "link" },
+                ig.send === "link" ? "This computer sends the videos again." : "Instagram fetches the videos from a temporary link now.") },
+              ig.send === "link" ? "Send from this computer instead" : "Let Instagram fetch it (temporary link)")))) }));
 }
 
 async function saveClientFile(file) {
@@ -1472,8 +2127,22 @@ async function loadSettings() {
       row("Who it's for", "The agents choose and write cases for these viewers.", text("audience", s.channel.audience), "s-audience"),
       row("Voice and rules", "The tone and limits Agents 1 and 3 follow in every case.",
           h("textarea", { class: "input", id: "s-voice", name: "voice", rows: 5, disabled: ro, value: s.channel.voice }), "s-voice")),
-    card("posting", "S2.2", "Posting",
-      row("Daily schedule", "Each Short is made in the hours before its time and goes public on the minute.",
+    card("look", "S2.2", "The look",
+      row("How the Shorts look", "Changes apply to the cases written after you save; a case already written keeps its look.",
+        select("look_style", [["drawn", "Drawn in his art: every scene painted like the Professor"],
+                              ["footage", "Real footage: stock video, archive film and photos"]], s.look?.style || "footage"), "s-look_style"),
+      row("His art", "Every drawing starts with these words (Cloudflare's FLUX draws from words alone). Keep the names of his colours and lines.",
+        h("textarea", { class: "input", id: "s-art", name: "art", rows: 4, disabled: ro, value: s.look?.art || "" }), "s-art"),
+      row("When Cloudflare can't draw", "Its free drawing runs out after about 7 drawn Shorts a day (renewed at 05:30 in India), or it can be down. A case already written for drawings is written again for footage, before he reads it.",
+        select("look_when_out", [["footage", "Make them with real footage meanwhile: the day's Shorts still all go up"],
+                                 ["wait", "Wait for Cloudflare: Shorts wait, and their slots can stay empty"]], s.look?.when_out || "footage"), "s-look_when_out"),
+      row("Today's drawing", "Cloudflare's free plan: 10,000 neurons a day (about 58 a drawing, 6 to 9 drawings a Short), renewed at 05:30 in India. It stops at 9,000 and never charges.",
+        h("div", { class: "drawing-status" }, s.drawing?.configured
+          ? h("p", {}, `${plural(s.drawing.pictures, "drawing")} today · ${s.drawing.neurons.toLocaleString()} of ${s.drawing.budget.toLocaleString()} neurons`,
+              s.drawing.resting ? h("span", { class: "warn" }, ` · resting until ${s.drawing.resting}${s.drawing.fallback ? ": Shorts are made with real footage until then" : ""}`) : "")
+          : h("p", { class: "warn" }, "Cloudflare isn't connected: add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN to .env.")))),
+    card("posting", "S2.3", "Posting",
+      row("Daily schedule", "The morning run makes the whole day's Shorts one after another; each goes public on the minute.",
         h("div", {},
           h("div", { class: "inline-fields" },
             h("div", { class: "field" }, h("label", { for: "s-first_post" }, "First post"),
@@ -1483,10 +2152,13 @@ async function loadSettings() {
             h("div", { class: "field" }, h("label", { for: "s-posts_per_day" }, "Shorts a day"),
               h("input", { class: "input", type: "number", id: "s-posts_per_day", name: "posts_per_day", min: 1, max: 12,
                            value: sch.posts_per_day, disabled: ro, oninput: showSlots })),
+            h("div", { class: "field" }, h("label", { for: "s-make_at" }, "Morning run"),
+              h("input", { class: "input", type: "time", id: "s-make_at", name: "make_at", value: sch.make_at || "07:00", disabled: ro,
+                           title: "When the day's run starts: at least 30 minutes before the first post" })),
             h("div", { class: "field" }, h("label", { for: "s-timezone" }, "On the clock of"),
               select("timezone", zones.map(z => [z, z === browserZone ? `${z} (this device)` : z]), sch.timezone, showSlots))),
           preview))),
-    card("cases", "S2.3", "Cases",
+    card("cases", "S2.4", "Cases",
       row("Case types", "How often Agent 1 picks each type.",
         h("div", { class: "weight-list" }, Object.entries(s.categories_available).map(([key, label]) =>
           h("div", { class: "weight", dataset: { cat: key } },
@@ -1502,27 +2174,26 @@ async function loadSettings() {
         h("div", { style: "display:grid;gap:10px" },
           h("div", {}, h("span", { class: "small muted" }, "Target"), range("target_seconds", cs.target_seconds, 40, 75, 1, " s")),
           h("div", {}, h("span", { class: "small muted" }, "Longest"), range("max_seconds", cs.max_seconds, 45, 90, 1, " s")))),
-      row("Ready ahead", "While the autopilot is on, this PC keeps this many cases ready (researched, written, animated) so you can watch them first.",
-          select("queue", [0, 1, 2, 3, 4, 5].map(n => [n, n === 0 ? "None (make each at its slot)" : plural(n, "case")]), cs.queue), "s-queue"),
       row("Ideas", null, h("div", { style: "display:grid;gap:8px" },
         toggle("follow_ups", cs.follow_ups !== false, "Part 2s: a case that did well can get a follow-up"),
         toggle("comment_requests", cs.comment_requests !== false, "Viewers' comments can suggest the next case")))),
-    card("research", "S2.4", "Research",
+    card("research", "S2.5", "Research",
       row("Share-alike photos", "CC BY-SA photos arguably make the whole video share-alike too, so they're off unless you allow them.",
           toggle("share_alike_images", !!s.research?.share_alike_images, "Also use CC BY-SA photos"))),
-    card("reach", "S2.5", "Trends and hashtags",
+    card("reach", "S2.6", "Trends and hashtags",
       row("Trends from", "Worldwide asks every country and puts the trends shared by the most countries first.",
           select("region", [...new Set(["ALL", s.trends.region, ...REGIONS])].map(r => [r, r === "ALL" ? "All countries (worldwide)" : r]), s.trends.region),
           "s-region"),
       row("Hashtags on every Short", "Up to 4, like #shorts #casestudy. Each case adds its type's own.", text("hashtags", s.metadata.base_hashtags.join(" ")), "s-hashtags")),
-    card("music", "S2.6", "Music",
+    card("music", "S2.7", "Music",
       row("Music volume", "Under the voices; 0 turns music off.", range("volume", s.music.volume, 0, 1.5, 0.05), "s-volume")),
     h("div", { class: "savebar" },
       h("p", { class: "note" }, ro ? "Settings can only be changed on your computer." : "Changes apply to the next case."),
       h("button", { class: "btn btn-primary", type: "submit", disabled: ro }, "Save settings")));
 
-  const nav = [["channel", "S2.1", "Channel"], ["posting", "S2.2", "Posting"], ["cases", "S2.3", "Cases"],
-               ["research", "S2.4", "Research"], ["reach", "S2.5", "Trends and hashtags"], ["music", "S2.6", "Music"]];
+  const nav = [["channel", "S2.1", "Channel"], ["look", "S2.2", "The look"], ["posting", "S2.3", "Posting"],
+               ["cases", "S2.4", "Cases"], ["research", "S2.5", "Research"], ["reach", "S2.6", "Trends and hashtags"],
+               ["music", "S2.7", "Music"]];
   $("#view-settings").replaceChildren(
     pageHead({ eyebrow: "S2 · Setup", title: "Settings", lede: "How the channel behaves. Saved to config/channel.yaml." }),
     h("div", { class: "settings" },
@@ -1555,15 +2226,16 @@ async function saveSettings(event) {
     channel: { name: f.get("name"), show_name: f.get("show_name") === "on", contact_email: f.get("contact_email"),
                audience: f.get("audience"), voice: f.get("voice") },
     schedule: { timezone: f.get("timezone"), first_post: f.get("first_post"), every_hours: Number(f.get("every_hours")),
-                posts_per_day: Number(f.get("posts_per_day")) },
+                posts_per_day: Number(f.get("posts_per_day")), make_at: f.get("make_at") },
     cases: {
       categories: Object.fromEntries(Object.keys(CATEGORY).map(k => [k, Number(f.get(`cat-${k}`) || 0)])),
       approval: { trending: f.get("approve_trending") === "on", politics: f.get("approve_politics") === "on" },
       approval_expires_days: Number(f.get("approval_expires_days")), target_seconds: Number(f.get("target_seconds")),
-      max_seconds: Number(f.get("max_seconds")), queue: Number(f.get("queue")),
+      max_seconds: Number(f.get("max_seconds")),
       follow_ups: f.get("follow_ups") === "on", comment_requests: f.get("comment_requests") === "on",
     },
     research: { share_alike_images: f.get("share_alike_images") === "on" },
+    look: { style: f.get("look_style"), art: f.get("art"), when_out: f.get("look_when_out") },
     trends: { region: f.get("region") },
     metadata: { base_hashtags: list(f.get("hashtags"), " ") },
     music: { volume: Number(f.get("volume")) },
@@ -1612,13 +2284,15 @@ async function loadActivity() {
 // ------------------------------------------------------------------ routing
 
 const loaders = { overview: loadOverview, topics: loadTopics, research: loadResearch, scripts: loadScripts, studio: loadStudio,
-                  schedule: loadSchedule, results: loadResults, music: loadMusic, hosts: loadHosts, youtube: () => loadYouTube(),
+                  review: loadReview, schedule: loadSchedule, results: loadResults, music: loadMusic, host: loadHost,
+                  youtube: () => loadYouTube(),
                   settings: loadSettings, activity: loadActivity };
 
 /** "#studio/12" -> "studio"; older page names land on their new pages. */
 function currentView() {
   const view = location.hash.slice(1).split("/")[0];
-  const name = { shorts: "studio", queue: "studio", trends: "topics", cast: "hosts" }[view] || view;
+  const name = { shorts: "studio", queue: "studio", trends: "topics", cast: "host", hosts: "host", channels: "youtube",
+                 instagram: "youtube" }[view] || view;
   return VIEWS.includes(name) ? name : "overview";
 }
 
@@ -1679,7 +2353,7 @@ function init() {
   setInterval(async () => {
     if (document.hidden || state.watching) return;
     await loadState().catch(() => {});
-    if (currentView() === "overview") loadOverview().catch(() => {});
+    if (["overview", "schedule"].includes(currentView())) loaders[currentView()]().catch(() => {});
   }, 30000);
   window.addEventListener("hashchange", route);
   window.addEventListener("beforeunload", e => {

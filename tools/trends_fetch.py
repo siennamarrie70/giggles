@@ -47,6 +47,8 @@ def google_trends(region: str, limit: int = 20) -> list[dict]:
     resp = requests.get(GOOGLE_TRENDS_RSS, params={"geo": region}, timeout=20,
                         headers={"User-Agent": "Mozilla/5.0 (trend reader)"})
     resp.raise_for_status()
+    if b"<!ENTITY" in resp.content:  # (a feed never needs one; they can make a small file expand without end)
+        raise ValueError("the trends feed declares XML entities")
     root = ET.fromstring(resp.content)
     terms = []
     for item in root.iter("item"):

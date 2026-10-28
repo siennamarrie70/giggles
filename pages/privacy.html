@@ -35,7 +35,8 @@
     <p class="meta">$channel · last updated $updated</p>
 
     <p>This policy explains what the software behind the <b>$channel</b> YouTube channel (“the app”) does with Google
-      user data. The app is a personal tool, used only by the channel’s owner.</p>
+      user data, and with Instagram data when the owner connects Instagram. The app is a personal tool, used only by the
+      channel’s owner.</p>
 
     <h2>YouTube API Services</h2>
     <p>The app uses YouTube API Services. By using it you agree to be bound by the
@@ -52,6 +53,8 @@
         them isn’t kept), and the public list of popular Education videos.</li>
       <li><b>View YouTube Analytics reports</b> (<code>yt-analytics.readonly</code>): to read aggregate statistics for the
         channel’s own videos, such as the average percentage watched and subscribers gained.</li>
+      <li><b>Manage the channel’s videos</b> (<code>youtube.force-ssl</code>): only when the owner presses a button in the
+        app’s control room, to publish one of the channel’s own Shorts early, keep it private, or delete it.</li>
     </ul>
     <p>The app doesn’t access email, contacts, files or any other Google data. It collects nothing about the channel’s
       viewers beyond the aggregate numbers YouTube reports to every channel owner.</p>
@@ -78,17 +81,37 @@
       which receives the channel’s settings, trend topics, text from public sources (Wikipedia, news articles, IMF and
       World Bank data), candidate photos from Wikimedia Commons, the scripts, the public view, like and comment counts of
       the channel’s Shorts and the text of public comments on them (never who wrote them); it never receives private
-      analytics or anything else from the owner’s Google account. The hosts’ voices, their lip movements and the
-      animation are made on the owner’s computer by open-source software (Kokoro, Rhubarb Lip Sync), so nothing about
-      them is sent anywhere. Photos are downloaded from Wikimedia Commons, data from the IMF and the World Bank, news
-      articles from their publishers’ sites and music from incompetech.com; none of them receive data about the channel
-      or its viewers. The app shows no ads and lets no third party collect information through it.</p>
+      analytics or anything else from the owner’s Google account. The host’s voice is made by Gemini’s text-to-speech
+      from each finished script (only the script’s text and how to read it are sent); his lip movements, the word
+      timings and the video itself are made on the owner’s computer by open-source software (faster-whisper and Rhubarb Lip
+      Sync). The scenes of the drawn look are drawn by Cloudflare’s Workers AI from a written description of each scene
+      and of the host’s art style (nothing else is sent). Candidate stock clips’ preview frames and archive films’ frames are shown to
+      Gemini to check they suit the video, and so are a few frames of each finished video, to check it before it’s
+      posted. Photos are downloaded from Wikimedia Commons, stock video from Pexels and
+      Pixabay, archive film from the Internet Archive and NASA, data from the IMF and the World Bank, news articles from
+      their publishers’ sites and music from incompetech.com; none of them receive data about the channel or its
+      viewers. The app shows no ads and lets no third party collect information through it.</p>
+
+    <h2>Instagram (only if the owner connects it)</h2>
+    <p>The owner can connect their own Instagram professional account so each Short is also posted there as a Reel. The
+      app then uses Meta’s Instagram API, through an app the owner created for themselves, with these permissions:
+      <code>instagram_basic</code> and <code>pages_show_list</code> (to find the owner’s Instagram account and the
+      Facebook Page it’s linked to), <code>pages_read_engagement</code> (which Instagram requires for posting),
+      <code>business_management</code> (to find that Page when it belongs to the owner’s Business portfolio),
+      <code>instagram_content_publish</code> (to post the channel’s own Shorts as Reels, with their caption) and
+      <code>instagram_manage_contents</code> (to delete one of those Reels when the owner presses Delete). It reads the
+      account’s name, its number of posts and how many posts the API has made that day; nothing about its followers or
+      anyone else. The access token and the account’s name and ID are kept only in a settings file on the owner’s
+      computer. Meta’s handling of data is described in the
+      <a href="https://privacycenter.instagram.com/policy">Instagram Privacy Policy</a>.</p>
 
     <h2>Keeping and deleting data</h2>
     <p>Data is kept while the channel uses the app. Access can be revoked at any time on Google’s security settings page,
       <a href="https://security.google.com/settings/security/permissions">security.google.com/settings/security/permissions</a>.
       After that the stored token stops working, and the owner can delete the token and the database at any time.
-      Videos already uploaded stay on YouTube until they are removed there.</p>
+      Videos already uploaded stay on YouTube until they are removed there. Instagram access ends when the owner presses
+      Disconnect in the app or removes the app under Facebook’s Settings → Business integrations; Reels already posted
+      stay on Instagram until they are removed there.</p>
 
     <h2>Contact</h2>
     <p>Questions about this policy: $contact. If the policy changes, the date at the top changes too.</p>

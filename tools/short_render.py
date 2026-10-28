@@ -23,7 +23,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import imageio_ffmpeg
 import yaml
 from PIL import Image, ImageDraw, ImageFont
 
@@ -44,6 +43,8 @@ EMOJI = re.compile("[\U0001F000-\U0001FFFF☀-➿️‍]")
 
 
 def ffmpeg_exe() -> str:
+    import imageio_ffmpeg  # (here, not at the top: the dashboard alone, on Vercel, doesn't install it)
+
     try:
         return imageio_ffmpeg.get_ffmpeg_exe()
     except RuntimeError:
