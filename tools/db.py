@@ -20,6 +20,7 @@ Usage:
 """
 
 import argparse
+import contextvars
 import json
 import sqlite3
 import sys
@@ -106,6 +107,23 @@ VIDEO_FIELDS = {"status", "youtube_id", "publish_at", "attempts", "error", "plan
                 "trend", "format"}
 
 _schema_ready = False
+_held: contextvars.ContextVar[dict | None] = contextvars.ContextVar("held_connection", default=None)
+
+
+@contextmanager
+def held():
+    """Within it, the cloud database's connection is shared: the first connect() opens it, the others reuse it, and
+    it closes at the end, so nothing stays open to keep Neon awake. The web app holds one per request (app.py): a
+    dashboard page's ~25 reads then cost one connection instead of 25 (each ~0.6 s from India, more from the US). A
+    thread started inside doesn't inherit it: a background task opens its own."""
+    holder: dict = {}
+    token = _held.set(holder)
+    try:
+        yield
+    finally:
+        _held.reset(token)
+        if holder.get("raw") is not None:
+            holder["raw"].close()
 
 
 def now_iso(delta: timedelta = timedelta()) -> str:
@@ -129,14 +147,22 @@ class _Conn:
 def connect():
     global _schema_ready
     url = env("DATABASE_URL") or env("POSTGRES_URL")
+    holder = _held.get() if url else None  # (inside held(): the request's shared connection)
     if url:
         import psycopg
         from psycopg.rows import dict_row
 
-        # prepare_threshold=None: Neon's pooled connections don't support prepared statements. connect_timeout: a
-        # database that doesn't answer fails in CONNECT_TIMEOUT seconds instead of holding a run (Neon wakes in ~1-5 s).
-        raw = psycopg.connect(url, autocommit=True, row_factory=dict_row, prepare_threshold=None,
-                              connect_timeout=CONNECT_TIMEOUT)
+        raw = holder.get("raw") if holder is not None else None
+        if raw is None or raw.closed or raw.broken:
+            if raw is not None:
+                raw.close()
+            # prepare_threshold=None: Neon's pooled connections don't support prepared statements. connect_timeout:
+            # a database that doesn't answer fails in CONNECT_TIMEOUT seconds instead of holding a run (Neon wakes
+            # in ~1-5 s).
+            raw = psycopg.connect(url, autocommit=True, row_factory=dict_row, prepare_threshold=None,
+                                  connect_timeout=CONNECT_TIMEOUT)
+            if holder is not None:
+                holder["raw"] = raw
         conn, pk = _Conn(raw, sqlite=False), "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
     else:
         if ON_VERCEL:
@@ -160,7 +186,8 @@ def connect():
         if conn.sqlite:
             raw.commit()
     finally:
-        raw.close()
+        if holder is None:  # (a held connection closes when held() ends)
+            raw.close()
 
 
 def _video(row: dict | None) -> dict | None:

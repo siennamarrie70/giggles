@@ -196,6 +196,17 @@ video-making ones, ~650 MB). GitHub Actions is free for public repositories (4 c
 - A green **test** run on the Actions tab, then the Morning run scheduled every day at 06:55 India time
 
 ## Edge Cases & Known Issues
+- **The switch, as done on 2026-10-28:** stop the dashboard first (its loop writes to the laptop database), take off
+  the day's Reels whose videos are only on the laptop (`publisher.cancel_reel`; the cloud can't post them, the
+  YouTube Shorts are unaffected) or wait until after the day's last slot, back up `.tmp/ezzy.db` to `backups/`, run
+  `db_copy.py`, put the Neon string in `.env` as `DATABASE_URL`, restart the dashboard, then the GitHub secret
+  `DATABASE_URL` and `PAUSED=false`. The dashboard's pause switch is copied too (it lives in the database): if it
+  was off, the cloud stays paused until you switch it on.
+- **Vercel's screens (2026-10):** variables are under Settings → **Environment Variables** ("Environments" is a
+  Pro feature: Cancel); type **Secret**, Production; a change needs **Redeploy** ("Use existing Build Cache" is
+  fine). In the firewall, the **AND** button adds a second condition.
+- **Reconnect on the YouTube page opens Google's page in the default browser** (Microsoft Edge on this laptop), not
+  necessarily the dashboard's; another click says "Busy" until it's finished or 5 minutes pass.
 - **Vercel deployed before the data copy (2026-10-28):** leave out `DASHBOARD_USERNAME`/`DASHBOARD_PASSWORD` until
   `db_copy.py` has run. Without them the online dashboard is off (404), so nothing writes into the empty Neon
   database; `db_copy` refuses only when it already has cases, and rows in its other tables would break the count
