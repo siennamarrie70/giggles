@@ -172,12 +172,23 @@ video-making ones, ~650 MB). GitHub Actions is free for public repositories (4 c
    the app (step 2.3), which needs the `/about` and `/privacy` pages online: step 7.
 7. **Optional, the dashboard online (Vercel, Hobby):** vercel.com → sign up with GitHub → **Add New → Project** →
    import the repository → **Settings → Environment Variables**: `DATABASE_URL` (the same Neon string), the keys from
-   `.env`, `DASHBOARD_PASSWORD` (the browser asks for it: 12 characters or more, or the dashboard stays off; ten wrong
-   tries lock that address out for ten minutes) and `CRON_SECRET` (32+ random characters, for `/api/health`) →
+   `.env`, `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` (the sign-in page asks for both: the password 12 characters
+   or more and hard to guess, zxcvbn's 4 of 4, or the dashboard stays off and says why; ten wrong tries lock that
+   address out for ten minutes, thirty from everywhere rest sign-in for ten; a browser stays signed in for 30 days,
+   and a new password signs every browser out; the same two in `.env` make this computer's dashboard ask too) and
+   `CRON_SECRET` (32+ random characters, for `/api/health`; it also locks the sign-in cookies) →
    Deploy. It shows the cloud's data from anywhere and its pause switch stops the cloud run; making videos, settings
    and music stay with this computer and GitHub. Every page carries security headers (no framing by other sites,
-   scripts only from the app itself), and a change needs the page's own header, so another site can't press its
-   buttons.
+   scripts only from the app itself, nothing cached, https only, not listed by search engines except `/about` and
+   `/privacy`), and a change needs the page's own header, so another site can't press its buttons.
+   **Then the firewall (free on Hobby: 3 custom rules, 1 rate limit), project → Firewall → Configure:**
+   - Rate limit rule: request path equals `/login` and method equals `POST` → 10 requests per 60 seconds per IP →
+     **Deny** (picking 429 may open a Pro upgrade prompt on Hobby, 2026-10). Vercel counts across all its servers,
+     which the app's own limit (per server) can't.
+   - Optional custom rule, if you only open the dashboard from India: country is not India AND path is not `/about`
+     AND path is not `/privacy` → **Deny** (Google must still reach those two). Switch it off when travelling.
+   - Settings → Deployment Protection: keep **Vercel Authentication** on (the default), so preview deployments need
+     your Vercel sign-in.
 
 ## Expected Outputs
 - `.env` filled in locally; the same keys as the GitHub repository's secrets
@@ -185,6 +196,10 @@ video-making ones, ~650 MB). GitHub Actions is free for public repositories (4 c
 - A green **test** run on the Actions tab, then the Morning run scheduled every day at 06:55 India time
 
 ## Edge Cases & Known Issues
+- **Vercel deployed before the data copy (2026-10-28):** leave out `DASHBOARD_USERNAME`/`DASHBOARD_PASSWORD` until
+  `db_copy.py` has run. Without them the online dashboard is off (404), so nothing writes into the empty Neon
+  database; `db_copy` refuses only when it already has cases, and rows in its other tables would break the count
+  check. `/about` and `/privacy` work without them.
 - **"invalid_grant" errors** mean the YouTube sign-in was revoked or the consent screen was left in Testing. Fix: publish the consent screen, run `youtube_auth.py` again, update `YOUTUBE_REFRESH_TOKEN` in `.env` and in the GitHub secrets (and Vercel). The morning run stops at once on it and says so.
 - **Publish app asks for home page / privacy policy links (2026-10-24):** expected; Google requires them for any External app in production. Use the app's own `/about` and `/privacy` pages (above). If Google refuses `<project>.vercel.app` as an authorized domain, the $0 fallback is staying in Testing and reconnecting weekly.
 - **Wrong channel**: if your Google account has several channels, re-run `youtube_auth.py` and pick the right one in the browser.

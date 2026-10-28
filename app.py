@@ -1,5 +1,6 @@
 """
-The web app: the dashboard (dashboard/) at /, and the public About and Privacy pages Google
+The web app: the dashboard (dashboard/) at /, behind its sign-in page (/login) when it has a username and
+password (always on Vercel), and the public About and Privacy pages Google
 requires (pages/) at /about and /privacy. It can run on Vercel to show the dashboard; the Shorts
 themselves are made by the morning run on GitHub Actions (.github/workflows/morning.yml), because
 one Short needs more time and memory than a Vercel function has.
@@ -9,15 +10,18 @@ Run it on your computer:
 then open http://localhost:8000. While it runs with the database on this computer, it also
 runs the morning run itself (dashboard/api.py), so the channel posts without GitHub too.
 
-/api/cron/autopilot and /api/cron/stats (no longer scheduled on Vercel) need
-`Authorization: Bearer <CRON_SECRET>`; any request without it gets a 401. /api/health (same
-secret) checks the deployment has its config, fonts, world and satellite maps, the Professor's
-drawings, music, the footage keys and a working ffmpeg (the dashboard alone, on Vercel, has none).
+/api/health needs `Authorization: Bearer <CRON_SECRET>` (any request without it gets a 401) and
+checks the deployment has its config, fonts, world and satellite maps, the Professor's drawings,
+music, the footage keys and a working ffmpeg (the dashboard alone, on Vercel, has none). The old
+/api/cron/<job> (Vercel's schedule, retired 2026-10-26) is gone: nothing used it, and with the
+secret it could have started a run beside the real one on GitHub.
 
 Every answer carries SECURITY_HEADERS: no other site may show these pages in a frame (one could
 otherwise lay its own page over the dashboard's buttons and have you press them), the page may load
-scripts, pictures and videos only from here (and Google's fonts), and browsers mustn't guess file
-types. An error's text is shown without secrets (common.redact).
+scripts, pictures and videos only from here (and Google's fonts), browsers mustn't guess file types,
+keep any answer (no-store) or let another site's window or page reach in, and only /about and
+/privacy may be listed by search engines; on Vercel, browsers use https only (HSTS). An error's
+text is shown without secrets (common.redact).
 """
 
 import hmac
@@ -39,7 +43,7 @@ import jobs  # noqa: E402
 import lipsync  # noqa: E402
 import short_render  # noqa: E402
 from common import ASSETS_DIR, ON_VERCEL, env, load_config, redact  # noqa: E402
-from dashboard.api import router as dashboard, start_autopilot_loop  # noqa: E402
+from dashboard.api import router as dashboard, sign_in, start_autopilot_loop  # noqa: E402
 from pages.routes import router as public_pages  # noqa: E402
 
 SECURITY_HEADERS = {
@@ -51,7 +55,12 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Cross-Origin-Opener-Policy": "same-origin",    # no other site's window can reach into these pages
+    "Cross-Origin-Resource-Policy": "same-origin",  # nor load their videos and pictures into its own page
+    "Cache-Control": "no-store",  # nothing private kept by a browser or a cache (a page may say otherwise itself)
 }
+PUBLIC_PAGES = ("/about", "/privacy")  # the only pages search engines may list
+HSTS = "max-age=63072000; includeSubDomains"  # on Vercel: browsers use https only, for two years
 
 
 class SecurityHeaders:
@@ -69,6 +78,10 @@ class SecurityHeaders:
                 headers = MutableHeaders(scope=message)
                 for name, value in SECURITY_HEADERS.items():
                     headers.setdefault(name, value)
+                if scope.get("path") not in PUBLIC_PAGES:
+                    headers.setdefault("X-Robots-Tag", "noindex, nofollow")
+                if ON_VERCEL:
+                    headers.setdefault("Strict-Transport-Security", HSTS)
             await send(message)
 
         await self.inner(scope, receive, send_with_headers)
@@ -84,6 +97,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 app.add_middleware(SecurityHeaders)
 app.include_router(public_pages)
+app.include_router(sign_in)
 app.include_router(dashboard)
 
 
@@ -98,18 +112,6 @@ def _check_secret(authorization: str | None) -> None:
     secret = env("CRON_SECRET")
     if not secret or not hmac.compare_digest((authorization or "").encode(), f"Bearer {secret}".encode()):
         raise HTTPException(status_code=401, detail="unauthorized")
-
-
-@app.get("/api/cron/{job}")
-def cron(job: str, authorization: str | None = Header(default=None)):
-    _check_secret(authorization)
-    if job not in jobs.JOBS:
-        raise HTTPException(status_code=404, detail="unknown job")
-    if jobs.is_true("PAUSED"):  # checked before run_job so a paused deploy needs no database yet
-        return {"skipped": "PAUSED is set"}
-    if job == "autopilot":  # hourly: does real work only when a posting slot is due
-        return jobs.tick()
-    return jobs.run_job(job)
 
 
 @app.get("/api/health")

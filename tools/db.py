@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS comments (
 FORMAT = "doc"  # the documentary cases' rows (v5); "case" rows are v4's cartoon-host cases, other formats earlier versions'
 # Columns added after the first release, for databases created before them.
 NEW_COLUMNS = {"slot": "TEXT", "claimed_at": "TEXT"}
+CONNECT_TIMEOUT = 20  # seconds the cloud database may take to answer a new connection
 SLOT_INDEX = ("CREATE UNIQUE INDEX IF NOT EXISTS one_short_per_slot ON videos (slot) "
               "WHERE status IN ('making', 'scheduled')")
 VIDEO_FIELDS = {"status", "youtube_id", "publish_at", "attempts", "error", "plan", "slot", "claimed_at", "theme",
@@ -132,8 +133,10 @@ def connect():
         import psycopg
         from psycopg.rows import dict_row
 
-        # prepare_threshold=None: Neon's pooled connections don't support prepared statements.
-        raw = psycopg.connect(url, autocommit=True, row_factory=dict_row, prepare_threshold=None)
+        # prepare_threshold=None: Neon's pooled connections don't support prepared statements. connect_timeout: a
+        # database that doesn't answer fails in CONNECT_TIMEOUT seconds instead of holding a run (Neon wakes in ~1-5 s).
+        raw = psycopg.connect(url, autocommit=True, row_factory=dict_row, prepare_threshold=None,
+                              connect_timeout=CONNECT_TIMEOUT)
         conn, pk = _Conn(raw, sqlite=False), "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
     else:
         if ON_VERCEL:

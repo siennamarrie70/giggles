@@ -4,19 +4,23 @@ JSON API it calls.
 
 Locally it's at http://localhost:8000 and answers only on this computer (asked by its own name, from its own
 address: started on every address by mistake, it still refuses the rest of the network). On Vercel it's
-switched off unless DASHBOARD_PASSWORD is set, 12 characters or more (the browser then asks for
-it; ten wrong tries from one address and that address is refused for ten minutes).
+switched off unless DASHBOARD_USERNAME and DASHBOARD_PASSWORD are set, the password 12 characters or more.
+With both set (on Vercel, or in .env here too) it opens only after the sign-in page (/login): a browser stays
+signed in for 30 days through a signed cookie, a new username or password signs every browser out, and ten
+wrong tries from one address and that address is refused for ten minutes.
 Making cases, animating and uploading run in a background thread; the page polls progress.
 While the database is on this computer, a loop here also runs the channel every minute: a due
 slot first, then keeping cases ready to post, their previews rendered, and the day's numbers
 (jobs.next_chore).
 """
 
+import functools
+import hashlib
+import hmac
 import ipaddress
 import json
 import os
 import re
-import secrets
 import subprocess
 import sys
 import threading
@@ -24,12 +28,12 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote
+from string import Template
+from urllib.parse import parse_qs, quote, urlsplit
 
 from dotenv import set_key
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, Response
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 import db
 import draw
@@ -59,19 +63,36 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
 CLIENT_FILE = ROOT / "credentials.json"
 MAX_MUSIC_BYTES = 30 * 1024 * 1024
 PREVIEW_PIECE = 2 * 1024 * 1024  # bytes of a case's video served a request
-MIN_PASSWORD = 12                # characters, at least, in the cloud dashboard's password
-WRONG_TRIES, WRONG_FOR = 10, 600  # wrong passwords from one address within WRONG_FOR seconds before it's refused
-_wrong: dict[str, list[float]] = {}  # (per server instance: Vercel may run a few, so it's a brake, not a wall)
-_wrong_lock = threading.Lock()
+MIN_PASSWORD = 12                # characters, at least, in the dashboard's password
+MIN_STRENGTH = 4                 # zxcvbn's score (0-4) the password needs: 4 = 10^10 guesses or more
+SESSION_COOKIE, SESSION_DAYS = "dashboard_session", 30  # a browser stays signed in this long (or until it signs out)
+WRONG_TRIES, WRONG_FOR = 10, 600  # wrong sign-ins from one address within WRONG_FOR seconds before it's refused
+WRONG_ALL = 30                    # ...and from all addresses together, before sign-in rests here for everyone
+MAX_FORM = 8192                   # bytes, at most, in a sign-in form
+_wrong: dict[str, list[float]] = {}  # (per server instance: Vercel may run a few, so it's a brake, not a wall;
+_wrong_lock = threading.Lock()       # Vercel's firewall rate limit is the wall: workflows/setup_accounts.md step 7)
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9 ._()-]+")
 LEGACY = {"case": "Cartoon-host version", "sketch": "Cartoon version"}  # other earlier formats: the cute-animal version
 HOST_FILES = {"base": "base.png", "sheet": "sheet.png"}  # the Professor's drawings the page may show
-_basic = HTTPBasic(auto_error=False)
+SIGN_IN_SAYS = {"wrong": ("bad", "Wrong username or password."),
+                "wait": ("bad", f"Too many wrong tries from here. Try again in {WRONG_FOR // 60} minutes."),
+                "busy": ("bad", f"Sign-in is resting after many wrong tries from around the internet. Try again in "
+                                f"{WRONG_FOR // 60} minutes; browsers already signed in still work."),
+                "out": ("ok", "You're signed out.")}
 
 
 def _visitor(request: Request) -> str:
-    """Who's asking: on Vercel the address in x-real-ip (Vercel sets it itself, so it can't be faked)."""
-    return request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
+    """Who's asking, for counting wrong sign-ins: on Vercel the address in x-real-ip (Vercel sets it itself, so it
+    can't be faked; here a request's own address). An IPv6 address counts with its whole /64, which one home or phone
+    gets, so changing the rest of it wins no more tries."""
+    who = (request.headers.get("x-real-ip") if ON_VERCEL else None) or (request.client.host if request.client else "?")
+    try:
+        ip = ipaddress.ip_address(who.strip())
+    except ValueError:
+        return who[:64]
+    if ip.version == 6 and not ip.ipv4_mapped:
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip.ipv4_mapped if ip.version == 6 else ip)
 
 
 def _from_here(request: Request) -> bool:
@@ -86,37 +107,180 @@ def _from_here(request: Request) -> bool:
     return (ip.ipv4_mapped or ip).is_loopback if ip.version == 6 else ip.is_loopback
 
 
-def guard(request: Request, creds: HTTPBasicCredentials | None = Depends(_basic)) -> None:
-    """Local: this computer only. Vercel: DASHBOARD_PASSWORD, at least MIN_PASSWORD characters (the whole internet
-    can try it), and an address that gets it wrong WRONG_TRIES times is refused for WRONG_FOR. Changes need the page's
-    own header, which a browser won't add for another website (so other sites can't press buttons here)."""
+def _login() -> tuple[str, str] | None:
+    """The dashboard's username and password (DASHBOARD_USERNAME, DASHBOARD_PASSWORD), when both are set."""
+    user, password = (env("DASHBOARD_USERNAME") or "").strip(), env("DASHBOARD_PASSWORD") or ""
+    return (user, password) if user and password else None
+
+
+@functools.lru_cache(maxsize=4)
+def _too_easy(user: str, password: str) -> str | None:
+    """Why this password is too easy to guess, or None. zxcvbn knows common passwords, words, names, years, dates and
+    keyboard patterns, and is told the username and the channel's names, so "Channel@2026" counts as guessable."""
+    from zxcvbn import zxcvbn
+
+    channel = load_config().get("channel") or {}
+    known = [user, channel.get("name"), env("INSTAGRAM_USERNAME"), env("VERCEL_GIT_REPO_SLUG"),
+             env("VERCEL_GIT_REPO_OWNER"), "professor", "dashboard", "control room"]
+    result = zxcvbn(password[:100], user_inputs=[str(w) for w in known if w])
+    if result["score"] >= MIN_STRENGTH:
+        return None
+    return (result["feedback"].get("warning") or "it follows a pattern people often use").rstrip(".")
+
+
+def _open_here(request: Request) -> tuple[str, str] | None:
+    """Whether the dashboard answers this request at all, and its login if it has one. Local: this computer only.
+    Vercel: only with a login (the whole internet can try it). Only one of the two set, a password under MIN_PASSWORD
+    characters, or one too easy to guess (_too_easy), keeps it off."""
+    login = _login()
+    half_set = not login and bool((env("DASHBOARD_USERNAME") or "").strip() or env("DASHBOARD_PASSWORD"))
     if ON_VERCEL:
-        password = env("DASHBOARD_PASSWORD")
-        if not password:
+        if not (login or half_set):
             raise HTTPException(404)
-        if len(password) < MIN_PASSWORD:
-            raise HTTPException(503, f"The dashboard is off: its password (DASHBOARD_PASSWORD) needs {MIN_PASSWORD} "
-                                     "characters or more.")
-        who, now = _visitor(request), time.time()
-        with _wrong_lock:
-            wrong = [t for t in _wrong.get(who, []) if now - t < WRONG_FOR]
-        if len(wrong) >= WRONG_TRIES:
-            raise HTTPException(429, "Too many wrong passwords from here; try again in a few minutes.")
-        if not creds or not secrets.compare_digest(creds.password.encode(), password.encode()):
-            if creds:  # (a browser's first visit asks without one)
-                with _wrong_lock:
-                    if len(_wrong) > 1000:  # (forget the addresses that stopped trying)
-                        for key in [k for k, times in _wrong.items() if now - max(times) > WRONG_FOR]:
-                            _wrong.pop(key, None)
-                    _wrong[who] = wrong + [now]
-            raise HTTPException(401, headers={"WWW-Authenticate": 'Basic realm="dashboard"'})
     elif request.headers.get("host", "").rsplit(":", 1)[0] not in LOCAL_HOSTS or not _from_here(request):
         raise HTTPException(403, "The dashboard only answers on localhost.")
+    if half_set:
+        raise HTTPException(503, "The dashboard is off: it needs both DASHBOARD_USERNAME and DASHBOARD_PASSWORD.")
+    if login and len(login[1]) < MIN_PASSWORD:
+        raise HTTPException(503, f"The dashboard is off: its password (DASHBOARD_PASSWORD) needs {MIN_PASSWORD} "
+                                 "characters or more.")
+    if login and (why := _too_easy(*login)):
+        raise HTTPException(503, f"The dashboard is off: its password (DASHBOARD_PASSWORD) is too easy to guess "
+                                 f"({why}). Choose a longer one, such as four or five unrelated words.")
+    return login
+
+
+def _same(given: str, wanted: str) -> bool:
+    """Equal, compared in constant time over fixed-length digests, so not even the length shows in the timing."""
+    return hmac.compare_digest(hashlib.sha256(given.encode()).digest(), hashlib.sha256(wanted.encode()).digest())
+
+
+@functools.lru_cache(maxsize=4)
+def _session_key(user: str, password: str, pepper: str) -> bytes:
+    """The key that signs this login's cookies: made slowly from the login (scrypt), then mixed with CRON_SECRET when
+    it's set (a secret only the server has), so a stolen cookie can't be used to guess the password. A new username,
+    password or CRON_SECRET gives a new key, which signs every browser out."""
+    slow = hashlib.scrypt(password.encode(), salt=b"ezzy dashboard|" + user.encode(), n=2 ** 14, r=8, p=1, dklen=32)
+    return hmac.new(pepper.encode(), slow, hashlib.sha256).digest() if pepper else slow
+
+
+def _session(login: tuple[str, str], until: int) -> str:
+    """A sign-in cookie's value: when it ends (Unix time), and its signature."""
+    key = _session_key(*login, env("CRON_SECRET") or "")
+    return f"{until}.{hmac.new(key, str(until).encode(), hashlib.sha256).hexdigest()}"
+
+
+def _signed_in(request: Request, login: tuple[str, str]) -> bool:
+    cookie = request.cookies.get(SESSION_COOKIE, "")
+    until = cookie.partition(".")[0]
+    return (bool(re.fullmatch(r"[0-9]{1,12}", until)) and time.time() < int(until)
+            and hmac.compare_digest(cookie.encode(), _session(login, int(until)).encode()))
+
+
+def _same_site(request: Request) -> bool:
+    """Whether a form was sent from this site's own page (as the browser says, or by the Origin it names)."""
+    if site := request.headers.get("sec-fetch-site"):
+        return site in ("same-origin", "none")
+    origin = request.headers.get("origin")
+    return not origin or urlsplit(origin).netloc == request.headers.get("host", "")
+
+
+def _locked_out(who: str) -> str | None:
+    """Why sign-in is refused now: "wait" when this address has had WRONG_TRIES wrong sign-ins within WRONG_FOR, "busy"
+    when all addresses together have had WRONG_ALL (sign-in then rests here for everyone; signed-in browsers still
+    work). None when it isn't."""
+    now = time.time()
+    with _wrong_lock:
+        if sum(now - t < WRONG_FOR for t in _wrong.get(who, [])) >= WRONG_TRIES:
+            return "wait"
+        if sum(now - t < WRONG_FOR for times in _wrong.values() for t in times) >= WRONG_ALL:
+            return "busy"
+    return None
+
+
+def _wrong_try(who: str) -> None:
+    now = time.time()
+    with _wrong_lock:
+        for key in [k for k, times in _wrong.items() if now - max(times) > WRONG_FOR]:  # (the ones that stopped)
+            _wrong.pop(key, None)
+        _wrong[who] = [t for t in _wrong.get(who, []) if now - t < WRONG_FOR] + [now]
+        count = len(_wrong[who])
+    print(f"Dashboard: a wrong username or password from {who} ({count} in {WRONG_FOR // 60} minutes)", flush=True)
+
+
+def guard(request: Request) -> None:
+    """Where the dashboard answers (_open_here) and, with a login, only once signed in: the page itself goes to
+    /login, and its calls get a 401 that sends it there. Changes need the page's own header, which a browser won't
+    add for another website (so other sites can't press buttons here)."""
+    login = _open_here(request)
+    if login and not _signed_in(request, login):
+        if request.method == "GET" and request.url.path == "/":
+            raise HTTPException(303, headers={"Location": "/login"})
+        raise HTTPException(401, {"message": "You're signed out: sign in again.", "signin": True})
     if request.method not in ("GET", "HEAD") and request.headers.get("x-dashboard") != "1":
         raise HTTPException(403, "Missing dashboard header.")
 
 
 router = APIRouter(dependencies=[Depends(guard)])
+sign_in = APIRouter()  # the sign-in page and the page's own files: open before signing in, unlike `router`
+
+
+@sign_in.get("/login", include_in_schema=False)
+def sign_in_page(request: Request, e: str = ""):
+    login = _open_here(request)
+    if not login or _signed_in(request, login):  # (nothing to sign in to, or signed in already)
+        return RedirectResponse("/", 303)
+    kind, says = SIGN_IN_SAYS.get(e, ("", ""))
+    message = (f'<p class="signin-msg {kind}" role="{"alert" if kind == "bad" else "status"}">{says}</p>'
+               if says else "")
+    page = Template((UI_DIR / "login.html").read_text(encoding="utf-8")).substitute(message=message, days=SESSION_DAYS)
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+
+@sign_in.post("/login", include_in_schema=False)
+async def sign_in_form(request: Request):
+    """The sign-in form. Right: this browser gets a cookie signed for SESSION_DAYS, readable by this server only and
+    sent only over https online. Wrong: back to the page; WRONG_TRIES from one address lock it out for WRONG_FOR, and
+    WRONG_ALL from everywhere rest sign-in here for that long. Only the exact username and password open it: both are
+    always compared (so a wrong username takes as long as a wrong password), with nothing trimmed but the username's
+    outer spaces, and a form that isn't plain UTF-8 or is over MAX_FORM bytes counts for nothing."""
+    login = _open_here(request)
+    if not login:
+        return RedirectResponse("/", 303)
+    if not _same_site(request):
+        raise HTTPException(403, "Sign in on the dashboard's own page.")
+    who = _visitor(request)
+    if why := _locked_out(who):
+        return RedirectResponse(f"/login?e={why}", 303)
+    body = b""
+    async for piece in request.stream():  # (read up to MAX_FORM, never the whole of an oversized body)
+        body += piece
+        if len(body) > MAX_FORM:
+            raise HTTPException(413, "The sign-in form is too long.")
+    try:
+        form = parse_qs(body.decode("utf-8"), max_num_fields=10, errors="strict")
+    except (UnicodeDecodeError, ValueError):
+        form = {}
+    user, password = (form.get("username") or [""])[0].strip(), (form.get("password") or [""])[0]
+    right_user, right_password = _same(user, login[0]), _same(password, login[1])
+    if not (right_user and right_password):
+        _wrong_try(who)
+        return RedirectResponse("/login?e=wrong", 303)
+    until = int(time.time()) + SESSION_DAYS * 86400
+    answer = RedirectResponse("/", 303)
+    answer.set_cookie(SESSION_COOKIE, _session(login, until), max_age=SESSION_DAYS * 86400, path="/", httponly=True,
+                      secure=ON_VERCEL or request.url.scheme == "https", samesite="lax")
+    return answer
+
+
+@sign_in.post("/logout", include_in_schema=False)
+def sign_out(request: Request, response: Response):
+    _open_here(request)
+    if request.headers.get("x-dashboard") != "1":
+        raise HTTPException(403, "Missing dashboard header.")
+    response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, secure=ON_VERCEL or request.url.scheme == "https",
+                           samesite="lax")
+    return {"signed_out": True}
 
 
 async def _json(request: Request) -> dict:
@@ -302,8 +466,9 @@ def page():
     return FileResponse(UI_DIR / "index.html", headers={"Cache-Control": "no-store"})
 
 
-@router.get("/ui/{name}", include_in_schema=False)
-def ui_file(name: str):
+@sign_in.get("/ui/{name}", include_in_schema=False)
+def ui_file(name: str, request: Request):
+    _open_here(request)  # (the sign-in page needs the style sheet before signing in; the code is public anyway)
     if name not in UI_FILES:
         raise HTTPException(404)
     path, media_type = UI_FILES[name]
@@ -389,6 +554,7 @@ def state():
     return {
         "channel": cfg["channel"]["name"],
         "local": not ON_VERCEL,
+        "login": _login() is not None,  # (the page then offers Sign out)
         "paused": jobs.paused(),
         "services": {
             "gemini": bool(env("GEMINI_API_KEY")),
