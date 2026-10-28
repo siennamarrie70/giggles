@@ -38,6 +38,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 ROOT = Path(__file__).resolve().parent
 sys.path[:0] = [str(ROOT / "tools"), str(ROOT)]
 
+import db  # noqa: E402
 import infographics  # noqa: E402
 import jobs  # noqa: E402
 import lipsync  # noqa: E402
@@ -87,6 +88,20 @@ class SecurityHeaders:
         await self.inner(scope, receive, send_with_headers)
 
 
+class OneConnection:
+    """Each request shares one cloud-database connection, closed when it ends (db.held): a dashboard page opened 25
+    connections to Neon before, ~15 s of the 20 it took from India, and the online page seemed blank."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.inner(scope, receive, send)
+        with db.held():
+            await self.inner(scope, receive, send)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     if not ON_VERCEL:
@@ -96,6 +111,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 app.add_middleware(SecurityHeaders)
+app.add_middleware(OneConnection)
 app.include_router(public_pages)
 app.include_router(sign_in)
 app.include_router(dashboard)

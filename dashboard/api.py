@@ -384,8 +384,8 @@ _loop_started = False
 
 def autopilot_here() -> bool:
     """With the database on this computer, the dashboard runs the channel itself. With a cloud
-    database (DATABASE_URL), Vercel's hourly cron does: checking Neon every minute from here would
-    keep its free database awake around the clock."""
+    database (DATABASE_URL), GitHub Actions does (.github/workflows/morning.yml and reels.yml): checking
+    Neon every minute from here would keep its free database awake around the clock."""
     return not ON_VERCEL and not (env("DATABASE_URL") or env("POSTGRES_URL"))
 
 
