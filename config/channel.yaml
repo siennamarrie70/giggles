@@ -5,47 +5,80 @@ channel:
   show_name: false           # true: the end card says "Follow <name> for a new case every day"
   audience: "curious adults worldwide who like quick, well-researched stories about business, the economy, history and myths"
   voice: >-
-    Two hosts talk each case through: a clear, confident presenter who tells it and a curious co-host who asks what viewers would ask
-    and adds the odd joke. Facts first, told as a story with a twist at the end. Neutral on politics (both sides, attributed), respectful
-    to every faith and culture, never mocking real people. No advice on money, health or law. Clean enough for any advertiser. Never
-    aimed at children.
+    One host tells each case: the Professor, a wise, calm storyteller with a deep voice who sounds like he has read everything. Every
+    case is a mystery: a surprising fact, the question it raises, the people and decisions behind it, and the answer at the end. Facts
+    first. Neutral on politics (both sides, attributed), respectful to every faith and culture, never mocking real people. No advice
+    on money, health or law. Clean enough for any advertiser. Never aimed at children.
   contact_email: ""          # shown on the public /about and /privacy pages; optional
 
 schedule:
   # The autopilot posts posts_per_day Shorts: the first at first_post, then one every every_hours, on this
-  # time zone's clock (08:00, 14:00 and 20:00 here). Each Short is made in the hours before its slot and
-  # YouTube publishes it on the minute. `python tools/slots.py` lists them.
+  # time zone's clock (08:00, 10:00 ... 02:00 here). The morning run starts at make_at and makes the whole
+  # day's Shorts one after another; YouTube publishes each on the minute. `python tools/slots.py` lists them.
   timezone: "Asia/Kolkata"
   first_post: "08:00"
   every_hours: 2
   posts_per_day: 10
+  make_at: "07:00"           # the morning run (at least 30 minutes before the first post)
 
 cases:
   # Agent 1 picks each case's type from these: the number is how often (0 = never). Agent 3 aims for
-  # target_seconds and never goes over max_seconds. The dashboard on this computer keeps `queue` cases
-  # ready to post (written, checked and, if needed, approved) and renders their previews.
+  # target_seconds and never goes over max_seconds. The morning run makes each day's cases.
   categories:
-    business: 2              # rise and fall of companies, how businesses work
-    economy: 2               # what-ifs and explainers: tariffs, growth, inflation
-    trending: 2              # this week's events
-    history: 1
-    mythology: 1
-  approval:
-    trending: true           # cases about this week's events wait for your OK in the Studio
-    politics: true           # so do cases that touch politics, whatever their type
+    dark_history: 2          # forgotten empires, betrayals, lost civilizations, rulers who lost everything
+    mysteries: 2             # disappearances, unsolved mysteries, puzzling discoveries
+    business: 1              # how companies rose and fell, founders' decisions, scandals
+    technology: 1            # AI, inventions, technology rivalries
+    trending: 2              # this week's news, explained
+    psychology: 2            # why people decide and believe what they do
+    mythology: 2             # epics, legends, ancient civilizations
+    people: 2                # famous people's rise, fall and comeback
+    science: 1               # space, discoveries, strange phenomena
+    crime: 2                 # historical frauds, heists, investigations (settled cases only)
+    history: 2               # turning points
+    economy: 1               # what-ifs and explainers with real data
+  approval:                  # false: the Publisher approves every case itself (your choice, 2026-10-26)
+    trending: false          # true: cases about this week's events wait for your OK in the Studio
+    politics: false          # true: so do cases that touch politics, whatever their type
   approval_expires_days: 2   # news goes stale: a case still waiting this long is discarded
   target_seconds: 75
   max_seconds: 90
-  queue: 2
   follow_ups: true           # a case that did well can get a part 2
   comment_requests: true     # viewers' comments can suggest the next case
 
 research:
   share_alike_images: false  # also use CC BY-SA photos (they arguably make the whole video share-alike)
 
-hosts:                       # the two hosts' character ids, set on the dashboard's Hosts page
-  presenter: 12
-  cohost: 17
+look:                        # how the Shorts look (your choice, 2026-10-27); a change applies to the cases written after it
+  style: "drawn"             # drawn: every line over a scene drawn in the Professor's art by Cloudflare (free; tools/draw.py),
+                             # real photos framed inside; footage: stock video, archive film and real photos (the look before)
+  art: >-
+    anime-style 2D illustration in the look of a hand-painted animated film: clean dark ink outlines, soft painted cel shading, warm
+    amber lamplight against deep navy shadows, a muted palette of rust, brown, cream and dark blue, a richly painted detailed background,
+    cinematic composition
+  model: "@cf/black-forest-labs/flux-1-schnell"   # Cloudflare's model (FLUX.2 klein follows the words better but
+  steps: 4                                         # costs ~3x the free allocation: too much for 10 Shorts a day)
+  when_out: "footage"        # when Cloudflare can't draw (its free drawing used up for the day, or it's out): footage =
+                             # make the Shorts with real footage meanwhile, so the day's ten still go up (your choice,
+                             # 2026-10-27); wait = they wait for Cloudflare (until 05:30 in India when it's used up)
+
+host:                        # the Professor, who hosts every case (drawn from your character sheet: assets/host/)
+  name: "The Professor"      # for the dashboard only: he never says it and it's never shown
+  size: "M"                  # S, M or L: how big he floats in the lower-left corner
+  enabled: true
+
+voice:                       # his voice: Gemini's text-to-speech (free tier), chosen on the dashboard's Host page
+  name: "Alnilam"            # one of Gemini's voices (deep ones: Charon, Alnilam, Orus, Sadaltager, Algenib)
+  model: "gemini-3.8-flash-tts"
+  style: >-
+    A wise, highly intelligent American professor in his sixties: a deep, low, resonant voice, calm and measured, never rushed; a master
+    storyteller who draws you in.
+  deeper: 2                  # 0, 1 or 2 semitones lower (Gemini's voices are ~120 Hz; 2 makes his ~110 Hz)
+
+instagram:                   # Reels: the same Shorts on your Instagram (connect it on the dashboard's Channels page)
+  enabled: true              # true: each Short also goes up as a Reel when its slot comes
+  send: "link"               # upload: this computer sends the video (Instagram drops some, tried again over hours);
+                             # link: Instagram fetches it from a temporary link (Cloudflare's quick tunnel, tools/tunnel.py)
 
 trends:
   region: "ALL"              # ALL = every country, the most widespread trends first; or one code like US
@@ -58,4 +91,4 @@ metadata:
   language: en
 
 music:
-  volume: 1.0                # the music under the voices (0 = none); it dips while someone speaks
+  volume: 1.3                # the music under the voices (0 = none); it dips while someone speaks

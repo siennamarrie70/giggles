@@ -1,5 +1,6 @@
 """
-Agent 6, Analyst: reads the numbers and writes the playbook the other agents follow.
+Agent 7, Analyst: reads the numbers and writes the playbook the other agents follow, and what each
+of them should learn from it.
 
 Every day it pulls YouTube's numbers for each published Short (views, likes and comments, plus the
 average % viewed and subscribers gained from YouTube Analytics, which lags about two days), marks
@@ -8,13 +9,19 @@ Shorts deleted in YouTube Studio as vetoed, and saves the newest top-level comme
 (or when asked), with at least MIN_SAMPLES cases that are two days old or more, it works out what does
 better than usual: each case's views against the channel's median, grouped by case type, why now
 (trend, anniversary, evergreen, request...), the kind of hook, the visuals used, length, number of
-lines, follow-up or not, and posting hour. A group needs MIN_SAMPLES cases before it counts. Gemini then
-writes a few plain lessons from the same table; it sees public counts only, never the private
-analytics (the privacy page promises that).
+lines, the Professor's pace, the music's mood, hashtags, whether the Reviewer passed it at first look,
+follow-up or not, and posting hour. A group needs MIN_SAMPLES cases before it counts. Gemini then
+writes a few plain lessons from the same table, and lessons for each agent (lessons_for: the
+Editor's choice of cases, the Researcher's sources and footage, the Writer's scripts, the Animator's
+pace and look, the Reviewer's eye and the Publisher's posting), with the Reviewer's recurring
+problems beside them; it sees public counts only, never the private analytics (the privacy page
+promises that).
 
-The Editor reads the type/why-now/hook weights, the Writer the hook/length/visuals/lines ones, each
-leaving them out a quarter of the time (agents/base.py) so early noise doesn't lock the channel in.
-Cases that did well (FOLLOW_UP_LIFT times the median or more) become follow-up candidates.
+The Editor reads the type/why-now/hook weights, the Writer the hook/length/visuals/lines/hashtag ones,
+each leaving them out a quarter of the time (agents/base.py) so early noise doesn't lock the channel
+in; every agent reads its own lessons every time (agents/base.py lessons_for), and the Publisher drops
+hashtags that clearly do worse. Cases that did well (FOLLOW_UP_LIFT times the median or more) become
+follow-up candidates.
 
 Usage:
     python -m agents.analyst [--learn]      # pull today's numbers; --learn also rewrites the playbook
@@ -42,24 +49,49 @@ LEARN_EVERY = timedelta(days=7)
 COMMENT_DAYS, COMMENTS_PER_SHORT = 14, 20
 FOLLOW_UP_LIFT, FOLLOW_UP_AGE = 1.5, timedelta(days=3)
 
+LEARNERS = {  # each agent, and what its lessons may be about
+    "editor": "which case types, topics and reasons to post now to choose",
+    "researcher": "which sources, photos, archive film and stock footage to look for",
+    "writer": "hooks, length, pace of the story, wording, titles and hashtags",
+    "animator": "the Professor's pace and pauses, the shots and the music",
+    "reviewer": "what to be stricter or more relaxed about when checking a video",
+    "publisher": "posting: hours, titles and descriptions as they appear, hashtags",
+}
 LESSONS_SCHEMA = {
     "type": "object",
     "properties": {
         "lessons": {"type": "array", "items": {"type": "string"}},
         "summary": {"type": "string"},
+        "for_agents": {"type": "object", "properties": {k: {"type": "array", "items": {"type": "string"}}
+                                                        for k in LEARNERS},
+                       "required": list(LEARNERS)},
     },
-    "required": ["lessons", "summary"],
+    "required": ["lessons", "summary", "for_agents"],
 }
 
 
 def _length(seconds: float | None) -> str:
     if not seconds:
         return "unknown"
-    return "under 45 s" if seconds < 45 else "45-55 s" if seconds < 55 else "55-65 s" if seconds < 65 else "65 s+"
+    return "under 45 s" if seconds < 45 else "45-60 s" if seconds < 60 else "60-75 s" if seconds < 75 else "75 s+"
+
+
+CONTRAST = re.compile(r"\b(but|yet|until|then|still|instead)\b|;", re.IGNORECASE)  # a paradox
 
 
 def hook_kind(text: str) -> str:
-    return "question" if text.rstrip().endswith("?") else "number" if re.search(r"\d", text) else "claim"
+    """question, contrast (a paradox: 'X, yet Y'), number or claim."""
+    if text.rstrip().endswith("?"):
+        return "question"
+    if CONTRAST.search(text):
+        return "contrast"
+    return "number" if re.search(r"\d", text) else "claim"
+
+
+def _pace(words_per_second: float | None) -> str:
+    if not words_per_second:
+        return "unknown"
+    return "under 2.0 words/s" if words_per_second < 2.0 else "2.0-2.3 words/s" if words_per_second < 2.3 else "2.3+ words/s"
 
 
 def traits(video: dict, sched: dict) -> dict[str, list[str]]:
@@ -69,13 +101,24 @@ def traits(video: dict, sched: dict) -> dict[str, list[str]]:
     lines = (plan.get("script") or {}).get("lines") or []
     at = video["slot"] or video["publish_at"]
     count = len(lines)
+    review = plan.get("review") or {}
+    base = set(load_config()["metadata"]["base_hashtags"])
     return {
         "category": [brief.get("category") or "unknown"],
         "why_now": [brief.get("why_now") or "unknown"],
         "hook": [hook_kind(lines[0]["text"])] if lines else [],
-        "visuals": sorted({line["visual"].split(":", 1)[0] for line in lines}),
+        "visuals": sorted({v.split(":", 1)[0] for line in lines for v in line.get("visuals") or [line.get("visual") or ""]
+                           if v}),
+        "archive": ["archive film" if any(v.startswith("archive:") for line in lines for v in line.get("visuals") or [])
+                    else "no archive film"],
+        "voice": [(plan.get("voice") or {}).get("voice", "unknown").split(" (")[0]
+                  + (" (backup)" if (plan.get("voice") or {}).get("backup") else "")],
         "length": [_length((plan.get("render") or {}).get("seconds"))],
         "lines": ["up to 11 lines" if count <= 11 else "12-14 lines" if count <= 14 else "15+ lines"],
+        "pace": [_pace((plan.get("voice") or {}).get("words_per_second"))],
+        "music": [(plan.get("script") or {}).get("music_mood") or "unknown"],
+        "hashtag": sorted({t.lower() for t in (plan.get("metadata") or {}).get("hashtags") or [] if t not in base}),
+        "review": ["passed at first look" if not review.get("history") else "fixed by the Animator"] if review else [],
         "follow_up": ["follow-up" if brief.get("follow_up_of") else "first case"],
         "hour": [slots.clock(slots.parse(at), sched)] if at else [],
     }
@@ -182,14 +225,26 @@ def learn(progress=log) -> dict:
     # as average % viewed stay in the database and the dashboard (see /privacy).
     public = [{"title": r["title"], **{k: v for k, v in r["traits"].items()},
                "views": r["views"], "likes": r["likes"], "comments": r["comments"]} for r in table]
-    system = f"""You analyse results for {cfg['channel']['name']}, a YouTube Shorts channel of 60-second case studies told
-by two cartoon hosts. Give 3-6 concrete, testable lessons about which case types, topics, hooks, visuals, lengths and
-posting times do better or worse. Small samples are noisy: say 'early signal' when the evidence is thin.
+    system = f"""You analyse results for {cfg['channel']['name']}, a YouTube Shorts channel of case studies told as
+mysteries by one host, the Professor (a drawn old professor with a deep voice) over real footage. Seven agents make
+each video: an Editor picks the case, a Researcher gathers sources, photos and footage, a Writer scripts it, an
+Animator makes the video, a Reviewer checks it, a Publisher posts it, and you read the results.
+Give 3-6 concrete, testable lessons about which case types, topics, hooks, visuals, lengths, pace and posting times do
+better or worse. Then, for each agent, 0-3 short lessons it can act on next time, only about its own work:
+""" + "\n".join(f"- {k}: {v}" for k, v in LEARNERS.items()) + """
+Each lesson one sentence, specific ('Hooks that name a person beat hooks that state a number: early signal'), never
+vague advice. Small samples are noisy: say 'early signal' when the evidence is thin, and give none rather than guess.
 Summary: 2-3 plain sentences for the channel owner."""
+    reviews = (db.latest_note("review:lessons") or {}).get("counts") or {}
     progress("Writing this week's lessons")
-    written = llm.generate_json(["Recent Shorts with their public numbers:\n" + json.dumps(public, ensure_ascii=False, indent=1)],
+    written = llm.generate_json(["Recent Shorts with their public numbers:\n" + json.dumps(public, ensure_ascii=False, indent=1)
+                                 + "\n\nProblems the Reviewer found most often at first look (kind: count): "
+                                 + (json.dumps(reviews) if reviews else "none yet")],
                                 LESSONS_SCHEMA, system)
+    given = written.get("for_agents") or {}
     book = {"weights": weights, "lessons": [" ".join(str(l).split())[:240] for l in written.get("lessons", [])][:6],
+            "lessons_for": {k: [" ".join(str(l).split())[:240] for l in given.get(k) or [] if str(l).strip()][:3]
+                            for k in LEARNERS},
             "summary": " ".join(str(written.get("summary", "")).split())[:600], "samples": len(table),
             "updated_at": db.now_iso()}
     db.keep_note("playbook", book)

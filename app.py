@@ -1,16 +1,23 @@
 """
-The web app: Vercel Cron calls /api/cron/autopilot every hour and /api/cron/stats once a
-day, the dashboard (dashboard/) is served at /, and the public About and Privacy pages
-Google requires (pages/) at /about and /privacy.
+The web app: the dashboard (dashboard/) at /, and the public About and Privacy pages Google
+requires (pages/) at /about and /privacy. It can run on Vercel to show the dashboard; the Shorts
+themselves are made by the morning run on GitHub Actions (.github/workflows/morning.yml), because
+one Short needs more time and memory than a Vercel function has.
 
 Run it on your computer:
     .venv/Scripts/python -m uvicorn app:app --port 8000
 then open http://localhost:8000. While it runs with the database on this computer, it also
-runs the autopilot itself (dashboard/api.py), so the channel posts without Vercel too.
+runs the morning run itself (dashboard/api.py), so the channel posts without GitHub too.
 
-Vercel sends `Authorization: Bearer <CRON_SECRET>` with every cron request; any request
-without it gets a 401. /api/health (same secret) checks the deployment has its config,
-fonts, world map, music and a working ffmpeg.
+/api/cron/autopilot and /api/cron/stats (no longer scheduled on Vercel) need
+`Authorization: Bearer <CRON_SECRET>`; any request without it gets a 401. /api/health (same
+secret) checks the deployment has its config, fonts, world and satellite maps, the Professor's
+drawings, music, the footage keys and a working ffmpeg (the dashboard alone, on Vercel, has none).
+
+Every answer carries SECURITY_HEADERS: no other site may show these pages in a frame (one could
+otherwise lay its own page over the dashboard's buttons and have you press them), the page may load
+scripts, pictures and videos only from here (and Google's fonts), and browsers mustn't guess file
+types. An error's text is shown without secrets (common.redact).
 """
 
 import hmac
@@ -20,6 +27,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.exception_handlers import http_exception_handler
+from starlette.datastructures import MutableHeaders
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 ROOT = Path(__file__).resolve().parent
 sys.path[:0] = [str(ROOT / "tools"), str(ROOT)]
@@ -28,10 +38,40 @@ import infographics  # noqa: E402
 import jobs  # noqa: E402
 import lipsync  # noqa: E402
 import short_render  # noqa: E402
-import voice_tts  # noqa: E402
-from common import ON_VERCEL, env, load_config  # noqa: E402
+from common import ASSETS_DIR, ON_VERCEL, env, load_config, redact  # noqa: E402
 from dashboard.api import router as dashboard, start_autopilot_loop  # noqa: E402
 from pages.routes import router as public_pages  # noqa: E402
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": "; ".join([
+        "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src https://fonts.gstatic.com", "img-src 'self' data:", "media-src 'self'", "connect-src 'self'",
+        "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'", "object-src 'none'"]),
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
+
+class SecurityHeaders:
+    """Adds SECURITY_HEADERS to every answer (plain ASGI, so a long video answer still streams as it is)."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.inner(scope, receive, send)
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for name, value in SECURITY_HEADERS.items():
+                    headers.setdefault(name, value)
+            await send(message)
+
+        await self.inner(scope, receive, send_with_headers)
 
 
 @asynccontextmanager
@@ -42,13 +82,21 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+app.add_middleware(SecurityHeaders)
 app.include_router(public_pages)
 app.include_router(dashboard)
 
 
+@app.exception_handler(StarletteHTTPException)
+async def _without_secrets(request, error: StarletteHTTPException):
+    if isinstance(error.detail, str):
+        error.detail = redact(error.detail)
+    return await http_exception_handler(request, error)
+
+
 def _check_secret(authorization: str | None) -> None:
     secret = env("CRON_SECRET")
-    if not secret or not hmac.compare_digest(authorization or "", f"Bearer {secret}"):
+    if not secret or not hmac.compare_digest((authorization or "").encode(), f"Bearer {secret}".encode()):
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
@@ -67,16 +115,21 @@ def cron(job: str, authorization: str | None = Header(default=None)):
 @app.get("/api/health")
 def health(authorization: str | None = Header(default=None)):
     _check_secret(authorization)
-    ffmpeg = subprocess.run([short_render.ffmpeg_exe(), "-version"], capture_output=True, text=True, timeout=30)
+    try:
+        ffmpeg = subprocess.run([short_render.ffmpeg_exe(), "-version"], capture_output=True, text=True, timeout=30)
+        found = ffmpeg.stdout.splitlines()[0] if ffmpeg.returncode == 0 else ffmpeg.stderr[-300:]
+    except (ImportError, OSError, RuntimeError, subprocess.SubprocessError) as e:  # (the dashboard alone has none)
+        found = f"none here ({type(e).__name__})"
     return {
         "config": bool(load_config().get("channel")),
         "fonts": all(f.exists() for f in (short_render.FONT_PATH, infographics.HEAD_FONT, infographics.BODY_FONT)),
         "world_map": infographics.MAP_FILE.exists(),
+        "satellite_map": (ASSETS_DIR / "maps" / "bluemarble.jpg").exists(),
+        "host": (ASSETS_DIR / "host" / "rig.json").exists(),
         "music_tracks": len(short_render.music_tracks()),
-        "voice_model": voice_tts.ready(),
         "lipsync": lipsync.ready(),
-        "ffmpeg": ffmpeg.stdout.splitlines()[0] if ffmpeg.returncode == 0 else ffmpeg.stderr[-300:],
-        "keys": {k: bool(env(k)) for k in ("GEMINI_API_KEY", "YOUTUBE_REFRESH_TOKEN", "DATABASE_URL",
-                                           "TELEGRAM_BOT_TOKEN")},
+        "ffmpeg": found,
+        "keys": {k: bool(env(k)) for k in ("GEMINI_API_KEY", "PEXELS_API_KEY", "PIXABAY_API_KEY", "YOUTUBE_REFRESH_TOKEN",
+                                           "DATABASE_URL", "TELEGRAM_BOT_TOKEN")},
         "paused": jobs.is_true("PAUSED"),
     }

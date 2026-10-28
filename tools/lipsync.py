@@ -1,8 +1,10 @@
 """
 Turns a spoken line into mouth shapes over time, with Rhubarb Lip Sync (MIT licence, runs on this
-computer): A to H and X, Preston Blair's set, which the puppet rig draws (puppet.MOUTHS).
+computer): A to H and X, Preston Blair's set. The Professor (tools/host.py) opens his mouth by them:
+shut for X and A, then a little, more and wide.
 
-Rhubarb is downloaded once into .tmp/models/rhubarb (~87 MB). Given the line's text it recognises
+Rhubarb is downloaded once into .tmp/models/rhubarb (~87 MB), and unpacked only if it's exactly the
+published release (SHA256, measured 2026-10-28). Given the line's text it recognises
 English well; if it's missing or fails, the mouth shapes come from the loudness of the audio
 instead (rougher, but the mouth still moves with the words).
 Measured 2026-10-25 on this PC: ~0.75 s per second of speech, so lines run in parallel.
@@ -12,6 +14,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import platform
 import subprocess
@@ -28,6 +31,11 @@ from common import tmp_path
 VERSION = "1.14.0"
 RELEASE = f"https://github.com/DanielSWolf/rhubarb-lip-sync/releases/download/v{VERSION}/"
 PACKAGES = {"Windows": "Windows", "Darwin": "macOS", "Linux": "Linux"}
+SHA256 = {  # of each package's zip in the release: a download that differs is never unpacked or run
+    "Windows": "62fa416a8d5e382a3828ee4bef358ce520d0b4cabdeaea75a7ac266d098d1fe3",
+    "Linux": "a9a9074862cff47b2d59b8bf399a678a3b0b74f9452ad6ad94cb292913dd8667",
+    "macOS": "f991deacac6c973a14a4431a16a58b842f436531e120cfaea142c87c0d3ab4c5",
+}
 TIMEOUT_S = 120
 
 
@@ -52,12 +60,16 @@ def ensure_rhubarb(progress=print) -> Path | None:
         return exe
     try:
         progress("Downloading Rhubarb Lip Sync, once")
-        archive = _folder() / f"{name}.zip"
+        archive, digest = _folder() / f"{name}.zip", hashlib.sha256()
         with requests.get(RELEASE + f"{name}.zip", stream=True, timeout=60) as resp:
             resp.raise_for_status()
             with open(archive, "wb") as f:
                 for chunk in resp.iter_content(1 << 20):
+                    digest.update(chunk)
                     f.write(chunk)
+        if digest.hexdigest() != SHA256[package]:
+            archive.unlink()
+            raise RuntimeError("the download isn't the published release")
         with zipfile.ZipFile(archive) as z:
             z.extractall(_folder())
         archive.unlink()

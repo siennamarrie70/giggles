@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from common import env
+from common import env, redact
 
 history = deque(maxlen=50)  # recent messages, shown in the dashboard's Activity tab
 
@@ -37,6 +37,7 @@ def _send(text: str) -> bool:
 
 
 def run(text: str) -> bool:
+    text = redact(text)
     print(f"[notify] {text}")
     sent = _send(text)
     history.appendleft({"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "text": text, "sent": sent})

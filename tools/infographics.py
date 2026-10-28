@@ -50,7 +50,9 @@ TEXT = (246, 244, 238)
 MUTED = (150, 158, 178)
 GOLD = (255, 205, 64)
 ACCENTS = {"business": (59, 130, 246), "economy": (34, 168, 110), "trending": (236, 72, 72),
-           "history": (214, 150, 46), "mythology": (139, 92, 246)}
+           "history": (214, 150, 46), "mythology": (139, 92, 246), "dark_history": (190, 70, 46),
+           "mysteries": (32, 170, 160), "technology": (56, 165, 240), "psychology": (168, 92, 222),
+           "people": (232, 150, 44), "science": (92, 118, 255), "crime": (196, 70, 78)}
 NUMBER = re.compile(r"(-?\d[\d,]*(?:\.\d+)?)")
 PUSH = 0.06  # how much a card zooms in while it's on screen
 

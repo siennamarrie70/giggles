@@ -1,0 +1,10 @@
+# What making the videos needs on top of the dashboard's requirements.txt: the morning run (GitHub Actions)
+# and this computer install this file; Vercel installs requirements.txt alone (its size limit).
+-r requirements.txt
+ctranslate2==4.8.2
+faster-whisper==1.2.1
+filelock==4.2.4  # (comes with faster-whisper; 4.1.1 and older have known security flaws)
+imageio-ffmpeg==0.6.0
+onnxruntime==1.31.0
+opencv-python-headless==4.14.0.94
+trafilatura==2.3.1
