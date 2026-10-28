@@ -115,6 +115,7 @@ async function api(path, { method = "GET", json, raw } = {}) {
   const data = (res.headers.get("content-type") || "").includes("json") ? await res.json() : null;
   if (!res.ok) {
     const detail = data && data.detail;
+    if (res.status === 401 && detail?.signin) location.assign("/login");  // signed out (30 days, or a new password)
     const error = new Error(Array.isArray(detail) ? detail.map(d => d.msg).join("; ")
                             : detail?.message || detail || `${res.status} ${res.statusText}`);
     error.reconnect = Boolean(detail?.reconnect);  // YouTube needs your OK once on Google's page
@@ -378,6 +379,7 @@ function renderShell() {
   const a = state.app;
   const s = a.services;
   $("#channel-name").textContent = a.channel;
+  $("#signout-box").hidden = !a.login;
   document.title = `${a.channel} · Control room`;
 
   const rows = [
@@ -2335,6 +2337,14 @@ function init() {
     $("#menu-btn").setAttribute("aria-expanded", "true");
   });
   $("#scrim").addEventListener("click", closeMenu);
+  $("#signout").addEventListener("click", async () => {
+    try {
+      await api("/logout", { method: "POST" });
+      location.assign("/login?e=out");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 
   $("#autopost").addEventListener("change", async e => {
     try {

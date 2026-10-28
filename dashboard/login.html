@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Sign in · Control room</title>
+  <meta name="theme-color" content="#f3f3ef">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23151513'/%3E%3Cpath d='M25 19v26l21-13z' fill='%23e5482b'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/ui/app.css">
+</head>
+<body class="signin-page">
+  <main class="signin">
+    <form class="card signin-card" method="post" action="/login">
+      <div class="signin-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <p class="brand-eyebrow">Control room</p>
+          <h1 class="signin-title">Sign in</h1>
+        </div>
+      </div>
+      $message
+      <label class="signin-field">
+        <span>Username</span>
+        <input name="username" type="text" autocomplete="username" autocapitalize="none" autocorrect="off"
+               spellcheck="false" maxlength="200" required autofocus>
+      </label>
+      <label class="signin-field">
+        <span>Password</span>
+        <input name="password" type="password" autocomplete="current-password" maxlength="200" required>
+      </label>
+      <button class="btn btn-primary signin-go" type="submit">Sign in</button>
+      <p class="signin-note">This browser stays signed in for $days days, or until you sign out.</p>
+    </form>
+  </main>
+</body>
+</html>

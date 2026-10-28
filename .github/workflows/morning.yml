@@ -53,11 +53,11 @@ jobs:
       REELS_KEY: ${{ secrets.REELS_KEY }}  # encrypts the Reels' videos kept with the run (tools/kept.py)
       PAUSED: ${{ vars.PAUSED }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           persist-credentials: false  # (the run never pushes: no GitHub key left on the machine for it)
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
           cache: pip
@@ -68,7 +68,7 @@ jobs:
 
       - name: Restore the models (whisper, depth, voice, lip-sync; about 1 GB, kept between runs)
         id: models
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .tmp/models
           key: models-v1
@@ -79,7 +79,7 @@ jobs:
 
       - name: Keep the models for the next run
         if: ${{ steps.models.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .tmp/models
           key: models-v1
@@ -110,7 +110,7 @@ jobs:
 
       - name: Store them with this run for 3 days (the Reels workflow posts them at their slots)
         if: ${{ always() && !inputs.test }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: shorts-${{ github.run_id }}
           path: .tmp/kept/
