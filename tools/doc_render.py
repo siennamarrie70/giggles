@@ -843,6 +843,9 @@ def render(case: dict, out_path: Path | str, music: Path | None = None, volume: 
     doc = Doc(case)
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    # Written under another name and renamed when whole: on 2026-10-29 a render cut off half way (a photo gone with an
+    # earlier cloud machine) left a broken video at `out`, and the next try took it for made and reviewed.
+    part = out.with_name(f"{out.stem}.part{out.suffix}")
     (TMP_DIR / "work").mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="doc_", dir=TMP_DIR / "work"))
     voice = work / "voice.wav"
@@ -864,7 +867,7 @@ def render(case: dict, out_path: Path | str, music: Path | None = None, volume: 
     cmd += ["-filter_complex", audio, "-map", "0:v", "-map", "[aout]",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2", "-movflags", "+faststart", "-t", f"{total:.2f}",
-            str(out)]
+            str(part)]
     frames = math.ceil(total * FPS)
     errors = work / "ffmpeg.log"
     cover = None
@@ -881,13 +884,21 @@ def render(case: dict, out_path: Path | str, music: Path | None = None, volume: 
                         progress(f"Drawn {n // FPS} of {total:.0f} seconds")
                 proc.stdin.close()
                 proc.wait(timeout=RENDER_TIMEOUT_S)
-            except Exception:
+            except BaseException:
                 proc.kill()
+                proc.wait(timeout=30)  # (gone before its half-written file is deleted)
                 raise
+        if proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg failed: {errors.read_text(encoding='utf-8', errors='replace')[-1500:]}")
+    except BaseException:
+        try:
+            part.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     finally:
         doc.close()
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed: {errors.read_text(encoding='utf-8', errors='replace')[-1500:]}")
+    part.replace(out)
     if cover_path and cover is not None:
         Image.fromarray(cover).resize((540, 960), Image.LANCZOS).save(cover_path, quality=88)
     for item in work.iterdir():

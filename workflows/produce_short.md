@@ -542,6 +542,12 @@ failed slot.
     (`jobs.keep_videos`, plan `kept_video`), and the next run fetches it instead of making it again
     (`publisher._fetch_kept`: no second reading of his voice, no new drawings);
   - the Overview and Schedule pages say until when.
+  The same afternoon, the catch-up run made #71 again on its own machine: its photo (`.tmp/research/...`) wasn't
+  there and couldn't be fetched again, the render broke half way, and the half-written file at the video's place
+  was taken for the finished, reviewed video (its review named the morning's render) and nearly uploaded at 14:06.
+  #71 was set aside by hand (a new case took the slot). Now `doc_render.render` writes `short_N.part.mp4` and
+  renames it only when whole (a failure deletes it), and `writer.shot_for` leaves out a photo or clip that's gone
+  and can't be fetched again, so a case made again elsewhere still renders, and the Reviewer watches the new render.
   What it can't fix: 10 Shorts a day at a limit of about 10 leaves no slack. A day of late uploads makes the next
   days' uploads late at the same hours (each upload frees its place 24 hours later), until a day uploads fewer.
 - **Meta blocked the app, and the Reels stopped (2026-10-29).** The first cloud morning run's Reels (#67 at 08:00
