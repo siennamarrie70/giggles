@@ -223,6 +223,7 @@ def upload(row: dict, slot: datetime, sched: dict, progress=log) -> dict:
     cfg = load_config()
     out = animator.preview_path(row["id"])
     when = slots.clock(slot, sched)
+    _fetch_kept(row, progress)
     try:
         row = reviewer.reviewed(row, progress=progress, now=True)
         if not reviewer.passed(row["plan"]):
@@ -272,6 +273,34 @@ def upload(row: dict, slot: datetime, sched: dict, progress=log) -> dict:
                    f"Watch, edit or delete it before then: {result['studio_url']}")
     return {"video_id": row["id"], "youtube_id": result["id"], "slot": slots.iso(slot), "publish_at": publish_at,
             "live_now": live_now, "title": meta["title"], "thumbnail": plan["youtube_thumbnail"].get("set")}
+
+
+def kept_files(video_id: int) -> list:
+    """A Short's files a cloud run keeps when it ends before the Short is uploaded: (name, file) for kept.keep_files."""
+    return [(p.name, p) for p in (animator.preview_path(video_id), *animator.thumb_paths(video_id))]
+
+
+def _fetch_kept(row: dict, progress=log) -> None:
+    """In the cloud, a Short made and reviewed by an earlier run that ended before YouTube took it (its daily upload
+    limit) is fetched from that run, with its thumbnails, so it isn't made again (another reading of his voice, more
+    drawings). If it can't be, it's made again as before."""
+    kept_by = row["plan"].get("kept_video") or {}
+    out = animator.preview_path(row["id"])
+    if (out.exists() or not kept_by.get("run") or not kept.in_cloud()
+            or kept_by.get("render") != (row["plan"].get("render") or {}).get("id")):
+        return
+    try:
+        kept.fetch(row["id"], kept_by["run"], out)
+    except Exception as e:
+        progress(f"Short #{row['id']}'s video kept by run {kept_by['run']} couldn't be fetched ({str(e)[:150]}): it's "
+                 "made again")
+        return
+    for name, file in kept_files(row["id"])[1:]:
+        try:
+            kept.fetch_file(kept_by["run"], name, file)
+        except Exception:  # (without its thumbnail, YouTube shows a frame it picks)
+            pass
+    progress(f"Short #{row['id']}'s video, made by run {kept_by['run']} before YouTube's upload limit, fetched from it")
 
 
 def _thumbnail(youtube_id: str, video_id: int, progress=log) -> dict:
@@ -436,6 +465,16 @@ def _came_back(progress=log) -> None:
     progress(f"Instagram takes Reels again: {len(waited)} more waited, due now")
     notify.run(f"✅ Instagram takes Reels again (refused since {_when(down['since'])}): the {len(waited)} that waited "
                "go up now.")
+
+
+def reconnected() -> None:
+    """You connected Instagram again: if its connection was refused, the Reels waiting for it try again at once with
+    the new token (not DOWN_RECHECK after the last ask)."""
+    with _reels:
+        down = instagram_down()
+        if down:
+            db.keep_note("instagram_down", {**down, "checked": ""})
+            _hold_reels(None)
 
 
 def tell_down() -> dict | None:

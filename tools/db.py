@@ -310,6 +310,15 @@ def recent_runs(limit: int = 30) -> list[dict]:
         return db.query("SELECT * FROM runs ORDER BY id DESC LIMIT %s", (limit,))
 
 
+def upload_times(since: str) -> list[str]:
+    """When each Short went up to YouTube since `since`, oldest first (the Publisher's finished uploads in the runs, those
+    deleted later included: YouTube's daily upload limit counts them too)."""
+    with connect() as db:
+        rows = db.query("SELECT finished_at, detail FROM runs WHERE job = 'publisher' AND ok = 1 AND finished_at >= %s "
+                        "AND detail LIKE %s ORDER BY finished_at", (since, '%"youtube_id"%'))
+    return [r["finished_at"] for r in rows if (json.loads(r["detail"] or "{}") or {}).get("youtube_id")]
+
+
 def count_videos(status: str | None = None) -> int:
     with connect() as db:
         if status:

@@ -5,9 +5,12 @@ has ended needs its video kept until then:
 
   keep(videos)        at the end of a run, the videos of its Reels still waiting, encrypted into .tmp/kept;
                       GitHub stores that folder with the run for 3 days (its artifact "shorts-<run id>",
-                      .github/workflows/morning.yml)
+                      .github/workflows/morning.yml). Also a Short made and reviewed but not uploaded yet
+                      (YouTube's daily upload limit), with its thumbnails (keep_files), so the next run
+                      uploads it instead of making it again (agents/publisher.py)
   fetch(id, run, to)  a Reel's video: downloaded from the run that kept it (gh run download) and decrypted;
-                      FileNotFoundError if that run kept none (it can't be posted then)
+                      FileNotFoundError if that run kept none (it can't be posted then); fetch_file, any
+                      file kept by name
   still_running(run)  whether that run is still going: then its videos aren't kept yet, and it posts the
                       Reels whose slot comes meanwhile itself (tools/jobs.py, morning)
 
@@ -69,10 +72,16 @@ def _gh(args: list[str]) -> subprocess.CompletedProcess:
 
 def keep(videos: list[tuple[int, Path]]) -> list[Path]:
     """Each (video id, file) still here, encrypted into .tmp/kept/short_<id>.mp4.enc; the files kept."""
+    return keep_files([(f"short_{int(video_id)}.mp4", file) for video_id, file in videos])
+
+
+def keep_files(files: list[tuple[str, Path]]) -> list[Path]:
+    """Each (name, file) still here, encrypted into .tmp/kept/<name>.enc (a Short's thumbnails beside its video); the
+    files kept."""
     kept = []
-    for video_id, file in videos:
+    for name, file in files:
         if Path(file).exists():
-            dest = tmp_path("kept", f"short_{int(video_id)}.mp4.enc")
+            dest = tmp_path("kept", f"{name}.enc")
             _openssl(["-e", "-in", str(file), "-out", str(dest)])
             kept.append(dest)
     return kept
@@ -94,9 +103,16 @@ def still_running(run: str) -> bool:
 def fetch(video_id: int, run: str, dest: Path) -> Path:
     """A Reel's video at `dest`, downloaded from the run that kept it and decrypted. StillRunning while that run goes
     on; FileNotFoundError if it kept none; RuntimeError if GitHub or openssl failed (worth trying again later)."""
+    return fetch_file(run, f"short_{int(video_id)}.mp4", dest)
+
+
+def fetch_file(run: str, name: str, dest: Path) -> Path:
+    """The file a run kept as `name` (keep_files), at `dest`; as fetch()."""
     run = str(run)
     if not re.fullmatch(r"\d+", run):
         raise FileNotFoundError(f"no run kept its video ({run[:40]!r} isn't a run)")
+    if not re.fullmatch(r"[\w-]+(\.[\w-]+)+", name):
+        raise ValueError(f"not a kept file's name: {name[:60]!r}")
     with _lock:
         if run not in _fetched:
             if still_running(run):
@@ -109,7 +125,7 @@ def fetch(video_id: int, run: str, dest: Path) -> Path:
                     raise FileNotFoundError(f"run {run}, which made it, didn't keep its video")
                 raise RuntimeError(f"GitHub didn't give run {run}'s videos ({got.stderr.strip()[-200:]})")
             _fetched.add(run)
-        enc = tmp_path("kept", "runs", run, f"short_{int(video_id)}.mp4.enc")
+        enc = tmp_path("kept", "runs", run, f"{name}.enc")
         if not enc.exists():
             raise FileNotFoundError(f"run {run}, which made it, didn't keep its video")
         part = dest.with_name(dest.name + ".part")

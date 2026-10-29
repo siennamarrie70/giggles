@@ -7,7 +7,8 @@
 # variable, or the dashboard's pause switch, stops it.
 # Instagram: a Reel whose slot comes while the run goes is posted by the run itself; at its end the videos
 # of the Reels still waiting are kept with the run, encrypted (tools/kept.py), for the Reels workflow
-# (reels.yml) to post at their slots.
+# (reels.yml) to post at their slots. So are the Shorts made but not uploaded because of YouTube's daily
+# upload limit: the next run (a catch-up) uploads them without making them again.
 name: Morning run
 
 on:
@@ -104,7 +105,7 @@ jobs:
         if: ${{ !inputs.test }}
         run: python tools/jobs.py morning
 
-      - name: Keep the videos of the Reels still to post (encrypted)
+      - name: Keep the videos still needed (encrypted) - Reels still to post, and Shorts YouTube's upload limit held back
         if: ${{ always() && !inputs.test }}
         run: python tools/jobs.py keep
 

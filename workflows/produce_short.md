@@ -526,6 +526,24 @@ failed slot.
   (subcode 2207065). Instagram had taken the link; our own check while it processed asked for `video_status`,
   which exists only for a video sent to it (the check added on 2026-10-27 against the FINISHED-but-empty
   trap). Now `_processed(..., uploaded=False)` asks a fetched video for `status_code,status` only.
+- **YouTube's daily upload limit stopped the afternoon (2026-10-29).** The first cloud morning run uploaded the
+  08:00, 10:00 and 12:00 Shorts (07:45-08:03 IST), then YouTube refused #71 for 14:00: "The user has exceeded the
+  number of videos they may upload". The 7 Shorts uploaded the day before at 14:05-14:39 IST (the backlog from
+  2026-10-27, when the channel had uploaded 14 in a day with deletions) plus those 3 made 10 in 24 hours: this
+  channel's limit then, and the same as the Shorts a day, so there's no room for anything extra (an upload deleted
+  later still counts). It's not documented: third-party guides say a rolling 24 hours that varies by channel
+  (2026-10-27 allowed 14). The run tried again blindly every hour until the Autopilot switch was turned off on the
+  online dashboard at about 12:20 IST, which ended it; #71's finished video went with its machine. Now:
+  - a refusal records the limit (the uploads of the last 24 hours, from the Publisher's runs: `db.upload_times`,
+    note `youtube_limit`), and the case is tried again when YouTube should take one: when the oldest of those is
+    24 hours old, or midnight in California if sooner (`jobs.upload_room_at`), at most an hour later;
+  - a run that would end before then stops at once, not as a failure (a ⏳ summary), and the catch-ups at 13:00 and
+    19:00 carry on; a Short made but not uploaded is kept with the run's videos, with its thumbnails
+    (`jobs.keep_videos`, plan `kept_video`), and the next run fetches it instead of making it again
+    (`publisher._fetch_kept`: no second reading of his voice, no new drawings);
+  - the Overview and Schedule pages say until when.
+  What it can't fix: 10 Shorts a day at a limit of about 10 leaves no slack. A day of late uploads makes the next
+  days' uploads late at the same hours (each upload frees its place 24 hours later), until a day uploads fewer.
 - **Meta blocked the app, and the Reels stopped (2026-10-29).** The first cloud morning run's Reels (#67 at 08:00
   IST, #69 at 10:00) were refused at every try with 400 "Any of the pages_read_engagement, pages_manage_metadata,
   pages_read_user_content, pages_manage_ads, pages_show_list or pages_messaging permission(s) must be granted before
