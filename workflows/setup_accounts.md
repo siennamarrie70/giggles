@@ -240,9 +240,10 @@ video-making ones, ~650 MB). GitHub Actions is free for public repositories (4 c
   2. If Meta lifts the block, the same token usually works again by itself: the Reels go up within 30 minutes, with
      nothing to do. If it doesn't (or you make a new app instead: step 2a.3 onwards), make a new token in the Graph
      API Explorer and connect again on the Channels page.
-  3. **The cloud has its own copy of the token:** after connecting again here, copy the new values to GitHub's
-     secrets too (`gh secret set INSTAGRAM_ACCESS_TOKEN` and `INSTAGRAM_USER_ID`, typed or piped in, never on the
-     command line), or the cloud keeps the old one.
+  3. **The cloud has its own copy of the token** (GitHub's secrets). Connecting on the dashboard on this computer
+     copies the new values there by itself (`tools/cloud_secrets.py`, through the signed-in `gh`, each value on
+     standard input); the page says whether it worked. If it didn't: `.venv/Scripts/python tools/cloud_secrets.py`.
+     The online dashboard can't connect (keys live only in `.env` and GitHub's secrets): connect on this computer.
 - **Vercel Hobby is for non-commercial use.** Fine while growing; once the channel earns money, upgrade to Pro or move hosts.
 - **Vercel no longer runs the autopilot (2026-10-26):** its cron jobs are gone from `vercel.json`; GitHub Actions makes
   the Shorts.

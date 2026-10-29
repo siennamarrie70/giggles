@@ -56,6 +56,14 @@ for retries and for YouTube being a little late making a Short public. While Met
 connection (the token or the Meta app, not one video) the Reels wait for it, no try counted, and a
 Reels run fails once a day so GitHub emails you (agents/publisher.py).
 
+YouTube's daily upload limit (about 10 uploads in 24 hours for this channel on 2026-10-29, the same
+as the Shorts a day, deleted ones counting too; not documented, and it has varied): when YouTube
+refuses an upload for it, the case waits, nothing new is made meanwhile, and it's tried again when
+YouTube should take one (upload_room_at: when the oldest upload filling the limit is 24 hours old, or
+midnight in California), at most an hour later. A run that would end before then stops at once (not
+a failure) and the next run carries on; in the cloud a video already made is kept for it, not made
+again (keep_videos). The dashboard says until when.
+
 PAUSED=true (in .env or GitHub's variables), or the dashboard's pause switch (kept in the database),
 stops the morning run and every automatic job. Cases, videos and uploads you start yourself still
 work. Each job reports its steps through `progress` (stderr by default; the dashboard shows them
@@ -67,7 +75,7 @@ Usage:
     python tools/jobs.py prepare
     python tools/jobs.py publish [--dry-run]   # --dry-run makes and reviews but doesn't upload
     python tools/jobs.py instagram [--stay 40]  # posts the Reels whose slot has come (--stay: and those due soon)
-    python tools/jobs.py keep                  # (the cloud, after a run) the waiting Reels' videos, kept
+    python tools/jobs.py keep                  # (the cloud, after a run) the videos still needed, kept
     python tools/jobs.py stats [--learn]
 """
 
@@ -79,6 +87,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the agents/ package
 
@@ -105,8 +114,11 @@ PREVIEW_TRIES = 3                      # ...and given up after this many failure
 MORNING_WAIT = timedelta(minutes=30)   # a run started this early waits for make_at (GitHub starts it at 06:55)
 RETRY_FIRST = timedelta(minutes=2)     # after a Short fails: 2, 4, 8, 16 minutes before the next try...
 RETRY_MOST = timedelta(minutes=20)     # ...up to 20, so Gemini's free per-minute limits recover
-UPLOAD_WAIT = timedelta(hours=1)       # YouTube's daily upload limit reached: its case tried again this much later (the
-                                       # limit seemed to count the last 24 hours' uploads, deleted and stopped ones too)
+UPLOAD_WAIT = timedelta(hours=1)       # YouTube's daily upload limit reached: its case tried again at most this much
+                                       # later, or when YouTube should take one again (upload_room_at), if that's sooner
+UPLOAD_SOONEST = timedelta(minutes=2)  # ...but not sooner than this
+PACIFIC = ZoneInfo("America/Los_Angeles")  # (YouTube's days may be California's: its upload limit isn't documented)
+LIMIT_STOP = "YouTube's daily upload limit"
 MAX_TRIES = 25                         # Shorts tried in one run before it stops (something's wrong every time)
 RUN_LIMIT = timedelta(hours=5, minutes=40)  # a run stops before GitHub's 6-hour job limit
 REELS_EVERY = 60                       # seconds: how often the cloud's morning run looks for Reels due (_reels_beside)
@@ -394,6 +406,37 @@ def _fill(slot: datetime, sched: dict, when: str, progress) -> dict:
     return publisher.run(row, slot, sched, progress=progress)
 
 
+def upload_room_at(now: datetime | None = None) -> datetime | None:
+    """When YouTube should take the channel's next upload, while its daily upload limit holds (it refused one in the
+    last 24 hours): the moment the oldest of the uploads filling the limit is 24 hours old (the limit being as many as
+    there were in the 24 hours before the refusal), or midnight in California if that's sooner (YouTube doesn't say
+    whether its days roll or are calendar days); now if there's room. None if YouTube hasn't refused one for 24 hours.
+    Seen 2026-10-29: 7 uploads at 14:05-14:39 IST (a backlog) plus the morning's 3 filled it, and the hourly tries from
+    08:12 on were all refused."""
+    now = now or _now()
+    hit = db.fresh_note("youtube_limit", timedelta(hours=24))
+    if not hit:
+        return None
+    times = [slots.parse(t) for t in db.upload_times(slots.iso(now - timedelta(hours=24)))]
+    limit = int(hit.get("count") or 0)
+    if not limit:  # (refused with none of ours in the 24 hours before: nothing to go by)
+        return None
+    if len(times) < limit:
+        return now
+    rolls = times[len(times) - limit] + timedelta(hours=24)
+    midnight = datetime.combine(now.astimezone(PACIFIC).date() + timedelta(days=1), datetime.min.time(), tzinfo=PACIFIC)
+    return min(rolls, midnight.astimezone(timezone.utc))
+
+
+def upload_limit_hit() -> datetime:
+    """YouTube just refused an upload for its daily limit: as many uploads as went up in the last 24 hours is the limit
+    for now (recorded for upload_room_at and the dashboard); when it should take one again."""
+    now = _now()
+    db.keep_note("youtube_limit", {"at": slots.iso(now),
+                                   "count": len(db.upload_times(slots.iso(now - timedelta(hours=24))))})
+    return upload_room_at(now) or now + UPLOAD_WAIT
+
+
 def _upload_limit(error: BaseException | None) -> bool:
     """Is it YouTube's daily upload limit? Then no Short goes up for a while, whichever case it is."""
     while error:
@@ -498,9 +541,15 @@ def _morning(progress) -> dict:
                 break
             if _upload_limit(e):  # YouTube's daily upload limit: the case stays queued, nothing new is made meanwhile
                 tries -= 1
-                progress(f"YouTube takes no more uploads for now (the channel's daily upload limit). The "
-                         f"{clock(slot, sched)} Short waits {UPLOAD_WAIT.seconds // 60} minutes, its case kept")
-                _wait(UPLOAD_WAIT.total_seconds())
+                room = upload_limit_hit()
+                if room > started + RUN_LIMIT:  # none before this run must end: a later run uploads it (its video kept)
+                    stopped = f"{LIMIT_STOP}: YouTube should take uploads again at about {clock(room, sched)}"
+                    break
+                wait = min(max(room - _now(), UPLOAD_SOONEST), UPLOAD_WAIT)
+                progress(f"YouTube takes no more uploads for now (the channel's daily upload limit); it should take one "
+                         f"again at about {clock(room, sched)}. The {clock(slot, sched)} Short waits until "
+                         f"{clock(_now() + wait, sched)}, its case kept")
+                _wait(wait.total_seconds())
                 continue
             failures += 1
             wait = min(RETRY_MOST, RETRY_FIRST * 2 ** min(failures - 1, 8))
@@ -534,9 +583,13 @@ def _morning(progress) -> dict:
             stats(progress=progress)
         except Exception as e:  # the numbers can wait for tomorrow; the Shorts are what matter
             progress(f"The day's numbers couldn't be read ({str(e)[:200]})")
-    if stopped and stopped != "the autopilot is paused":
+    waits = (stopped or "").startswith(LIMIT_STOP)  # (not a failure: a later run goes on when YouTube takes uploads)
+    if stopped and stopped != "the autopilot is paused" and not waits:
         raise RuntimeError(f"stopped with {done} of {total} Shorts of the day scheduled: {stopped}.{notes}")
-    if made or held:
+    if waits:
+        notify.run(f"⏳ Today's run stopped at YouTube's daily upload limit with {done} of {total} Shorts scheduled "
+                   f"({hours}): {stopped[len(LIMIT_STOP) + 2:]}, and a later run carries on then.{notes}")
+    elif made or held:
         if stopped:
             notify.run(f"⏸ Today's run is paused with {done} of {total} Shorts scheduled ({hours}).{notes}")
         else:
@@ -630,9 +683,10 @@ def reels(progress=_log, stay: float = 0) -> dict:
     return {"reels": posted} if posted else {"skipped": "no Reel is due"}
 
 
-def keep_reels(progress=_log) -> dict:
-    """At the end of a cloud run: the videos of its Reels still waiting, encrypted for GitHub to keep with the run
-    (tools/kept.py), so the Reels workflow can post them at their slots."""
+def keep_videos(progress=_log) -> dict:
+    """At the end of a cloud run: what's still needed of its videos, encrypted for GitHub to keep with the run
+    (tools/kept.py): its Reels still waiting (the Reels workflow posts them at their slots), and its Shorts made and
+    reviewed but not uploaded (YouTube's daily upload limit: the next run uploads them instead of making them again)."""
     run = kept.this_run()
     if not run:
         return {"skipped": "not a run in the cloud: the videos stay on this computer"}
@@ -641,6 +695,15 @@ def keep_reels(progress=_log) -> dict:
                and v["plan"]["instagram"].get("kept_in") == run]
     files = kept.keep([(v["id"], animator.preview_path(v["id"])) for v in waiting])
     progress(f"{len(files)} video{'s' if len(files) != 1 else ''} kept for the Reels still to post")
+    made = [v for v in db.planned_videos(limit=1000) if animator.preview_path(v["id"]).exists() and reviewer.passed(v["plan"])
+            and (v["plan"].get("render") or {}).get("id")]
+    for v in made:
+        files += kept.keep_files(publisher.kept_files(v["id"]))
+        db.update_video(v["id"], plan={**v["plan"], "kept_video": {"run": run, "render": v["plan"]["render"]["id"],
+                                                                    "at": db.now_iso()}})
+    if made:
+        progress(f"{len(made)} Short{'s' if len(made) != 1 else ''} made but not uploaded yet kept for the next run: "
+                 + ", ".join(f"#{v['id']}" for v in made))
     return {"kept": [f.name for f in files]}
 
 
@@ -649,7 +712,7 @@ def stats(learn: bool = False, progress=_log) -> dict:
 
 
 JOBS = {"morning": morning, "autopilot": autopilot, "prepare": prepare, "publish": publish, "instagram": reels,
-        "stats": stats, "keep": keep_reels}
+        "stats": stats, "keep": keep_videos}
 
 
 def run_job(name: str, **kwargs) -> dict:

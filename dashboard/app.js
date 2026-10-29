@@ -652,6 +652,17 @@ function instagramDown(a) {
     h("a", { href: "#youtube" }, "Channels page →"));
 }
 
+/** While YouTube's daily upload limit holds: when it should take the next upload, and that nothing waits for you
+ *  (tools/jobs.py upload_room_at). */
+function youtubeLimit(a) {
+  const lim = a.youtube_limit;
+  return lim && h("div", { class: "callout banner", dataset: { tone: "warn" } },
+    h("b", {}, `YouTube takes no more uploads until about ${clockIn(lim.room, scheduleTz())}. `),
+    `It's the channel's daily upload limit (${lim.count ?? "its"} uploads in 24 hours, deleted ones included). The `
+    + "open slots' Shorts go up then, by themselves: a run in the cloud waits for it, or the next one uploads them, "
+    + "and a Short already made is kept for it, not made again. Nothing to do.");
+}
+
 function overviewLede(a) {
   const sch = a.autopilot.schedule;
   const rhythm = `${plural(sch.posts_per_day, "Short")} a day, one every ${hours(sch.every_hours)} from ${sch.first_post} (${sch.timezone})`;
@@ -702,6 +713,7 @@ async function loadOverview() {
         : "drawn Shorts wait (no other look is used instead), and the morning run carries on as soon as it can draw. "),
       h("a", { href: "#settings" }, "Settings →")),
     instagramDown(a),
+    youtubeLimit(a),
     kpis([
       { label: "Posted today", value: posted, unit: `/ ${ap.slots.length}` },
       { label: "Next post", value: next ? clockIn(next.at, scheduleTz()) : "–",
@@ -1703,6 +1715,7 @@ async function loadSchedule() {
       h("b", {}, "Instagram isn't connected yet, "), "so its side shows “Not for Instagram”. Connect it on the ",
       h("a", { href: "#youtube" }, "Channels page"), ": the Shorts uploaded after that get their Reels."),
     instagramDown(a),
+    youtubeLimit(a),
     data.youtube.error && h("div", { class: "callout banner", dataset: { tone: "warn" } },
       h("b", {}, "YouTube didn't say how they stand just now "), `(${data.youtube.error}). The YouTube side shows what `
       + "the dashboard knows; it asks again in 2 minutes."),
@@ -2020,6 +2033,9 @@ async function loadInstagram() {
       const r = await api("/api/instagram/connect", { method: "POST", json: { token: token.value, app_id: appId.value, app_secret: secret.value } });
       toast(`Connected to @${r.username}${r.long_lived ? "" : ". Add the app's ID and secret too, or the token stops working within hours"}.`,
             r.long_lived ? "ok" : "info", 9000);
+      if (r.cloud?.copied) toast("The cloud (GitHub) has the new token too: its next runs use it.", "ok", 9000);
+      else if (r.cloud?.error) toast(`Connected here, but the cloud (GitHub) still has the old token: ${r.cloud.error}. `
+                                     + "Ask Claude to copy it, or run: python tools/cloud_secrets.py", "error", 15000);
       await loadState();
       loadInstagram();
     } catch (e) {
@@ -2062,6 +2078,11 @@ async function loadInstagram() {
             h("li", {}, "Copy the token, and the app's ", h("b", {}, "App ID"), " and ", h("b", {}, "App secret"), " (App settings → Basic). They stay on this computer, in .env."))),
         step(3, ig.connected, "Connect",
           ig.connected ? h("p", {}, "Connected to ", h("b", {}, `@${ig.username}`), expires ? ` (the token ${expires}).` : ".") : null,
+          !ig.local && h("div", { class: "callout", dataset: { tone: "warn" }, style: "margin:8px 0" },
+            h("b", {}, "Connect from the dashboard on your computer. "),
+            "Keys are kept only there (in .env), so this online page can't take them. On your computer, open the "
+            + "dashboard, paste the token, App ID and App secret here and press Connect: it also gives the new token "
+            + "to the cloud (GitHub) by itself."),
           ig.refused && h("div", { class: "callout", dataset: { tone: "warn" }, style: "margin:8px 0" },
             h("b", {}, "Meta refuses this connection. "), "If Meta blocked or restricted your app, its page on ",
             link("https://developers.facebook.com/apps/", "Meta for Developers"), " says why and what to do. Once it's "

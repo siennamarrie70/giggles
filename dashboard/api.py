@@ -35,6 +35,7 @@ from dotenv import set_key
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
+import cloud_secrets
 import db
 import draw
 import host
@@ -547,6 +548,14 @@ def _agents(planned: list[dict]) -> list[dict]:
     return out
 
 
+def _youtube_limit() -> dict | None:
+    """While YouTube's daily upload limit holds: when it should take the channel's next upload (tools/jobs.py)."""
+    room = jobs.upload_room_at()
+    if not room or room <= datetime.now(timezone.utc):
+        return None
+    return {"room": slots.iso(room), "count": (db.fresh_note("youtube_limit", timedelta(hours=24)) or {}).get("count")}
+
+
 @router.get("/api/state")
 def state():
     cfg = load_config()
@@ -578,6 +587,7 @@ def state():
         "host": {"ready": (host.HOST_DIR / "rig.json").exists(), "name": (cfg.get("host") or {}).get("name", "The Professor"),
                  "voice": (cfg.get("voice") or {}).get("name") or narration.VOICE, **_voice_state()},
         "drawing": _drawing_state(),
+        "youtube_limit": _youtube_limit(),
         # Google's page waiting for you comes first, then a Reel you're posting: the dashboard follows it, then the run
         "task": next((_public(t) for t in sorted(_tasks.values(), key=lambda t: (t["kind"] != "connect", t["kind"] != "reel"))
                       if t["status"] == "running"), None),
@@ -1376,7 +1386,12 @@ async def instagram_connect(request: Request):
         found = instagram.connect(str(body.get("token") or ""), body.get("app_id"), body.get("app_secret"))
     except Exception as e:
         raise HTTPException(422, f"Couldn't connect: {e}")
-    return {**instagram_status(), "page": found.get("page"), "long_lived": found.get("long_lived")}
+    try:  # the cloud's runs read their own copy of the token (GitHub's secrets): the new one goes there too
+        cloud = cloud_secrets.copy(cloud_secrets.INSTAGRAM)
+    except Exception as e:
+        cloud = {"error": str(e)[:300]}
+    publisher.reconnected()
+    return {**instagram_status(), "page": found.get("page"), "long_lived": found.get("long_lived"), "cloud": cloud}
 
 
 @router.patch("/api/instagram")
