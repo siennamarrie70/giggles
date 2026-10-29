@@ -154,13 +154,22 @@ def shot_for(name: str, plan: dict) -> dict | None:
     sources = {s["id"]: s for s in pack.get("sources") or []}
     people = {p["name"].lower(): p for p in pack.get("people") or []}
     item = by_id.get(ref)
+    # A photo or clip that's gone and can't be fetched again (a case made on an earlier cloud machine, 2026-10-29) is
+    # left out, as a drawing that's gone is: the line keeps what else it has, and the Reviewer watches the new render.
     if kind in ("footage", "archive") and item:
-        return {"kind": "footage", "path": str(clip_path(item)), "duration": item["duration"], "framed": kind == "archive",
+        try:
+            path = clip_path(item)  # (raises when it can't be fetched again)
+        except Exception:
+            return None
+        return {"kind": "footage", "path": str(path), "duration": item["duration"], "framed": kind == "archive",
                 "credit": item["credit"]}
     if kind == "photo" and item:
+        path = image_path(item)
+        if not path.exists():
+            return None
         shows = item.get("shows") or ""
         person = next((p for name_, p in people.items() if name_ and name_ in shows.lower()), None)
-        return {"kind": "photo", "path": str(image_path(item)), "credit": f"Photo: {item['author']}, {item['licence']}",
+        return {"kind": "photo", "path": str(path), "credit": f"Photo: {item['author']}, {item['licence']}",
                 "label": f"{person['name']} · {person['role']}" if person else None}
     if kind == "number" and item:
         return {"kind": "number", "value": item["value"], "label": item["label"]}
