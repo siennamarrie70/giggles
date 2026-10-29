@@ -565,7 +565,7 @@ def state():
             "music": len(short_render.music_tracks()),
             "lipsync": lipsync.ready(),
             "instagram": {"connected": instagram.is_configured(), "on": publisher.reels_on(),
-                          "username": env("INSTAGRAM_USERNAME")},
+                          "username": env("INSTAGRAM_USERNAME"), "down": publisher.instagram_down()},
         },
         "autopilot": _autopilot_state(cfg),
         "events": trends_fetch.calendar_signals(datetime.now(timezone.utc).date(), 10)["events"],

@@ -52,7 +52,9 @@ morning run posts the Reels whose slot comes while it goes, from a thread beside
 on its machine: _reels_beside); at its end `keep` encrypts the videos of the Reels still waiting for
 GitHub to keep with the run (tools/kept.py), and the Reels workflow (.github/workflows/reels.yml) runs
 `instagram --stay 40` after each slot, which fetches them from there and posts them, staying a while
-for retries and for YouTube being a little late making a Short public.
+for retries and for YouTube being a little late making a Short public. While Meta refuses Instagram's
+connection (the token or the Meta app, not one video) the Reels wait for it, no try counted, and a
+Reels run fails once a day so GitHub emails you (agents/publisher.py).
 
 PAUSED=true (in .env or GitHub's variables), or the dashboard's pause switch (kept in the database),
 stops the morning run and every automatic job. Cases, videos and uploads you start yourself still
@@ -608,7 +610,8 @@ def reels(progress=_log, stay: float = 0) -> dict:
     """Agent 6 posts to Instagram every Short whose slot has come and whose Reel is still to post. With `stay`
     minutes (the cloud's Reels workflow), it looks again every minute for Reels coming due meanwhile (a try again,
     or YouTube a little late making the Short public), until none is left to wait for. A Reel whose video is with a
-    run still going is left to that run."""
+    run still going is left to that run. While Meta refuses Instagram's connection the Reels wait for it
+    (agents/publisher.py): the job doesn't stay, and once a day (DOWN_RETELL) it fails, so GitHub emails you."""
     until = _now() + timedelta(minutes=stay)
     posted, left = [], set()
     while True:
@@ -616,12 +619,14 @@ def reels(progress=_log, stay: float = 0) -> dict:
             if row["id"] not in left:
                 result = publisher.run_instagram(row, progress=progress)
                 posted.append(result)
-                if result.get("waits_for_run"):
+                if result.get("waits_for_run") or result.get("waits_for_instagram"):
                     left.add(row["id"])
         coming = [v for v in publisher.reels_coming(slots.iso(until)) if v["id"] not in left]
-        if not coming or _now() >= until or paused():
+        if not coming or _now() >= until or paused() or publisher.instagram_down():
             break
         time.sleep(60)
+    if down := publisher.tell_down():
+        raise RuntimeError(publisher.down_message(down))
     return {"reels": posted} if posted else {"skipped": "no Reel is due"}
 
 
