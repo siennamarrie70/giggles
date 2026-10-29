@@ -230,6 +230,19 @@ video-making ones, ~650 MB). GitHub Actions is free for public repositories (4 c
   not linked to a Page the token can manage; fix it in Instagram's settings, generate a new token and connect again.
 - **Instagram token stops working**: a token connected without the App ID and secret lasts only hours; connect again
   with them (the Page token from a long-lived token doesn't expire unless you change your password or remove the app).
+- **Meta blocked the app (2026-10-29):** the Reels were refused with "Any of the pages_read_engagement, ...
+  permission(s) must be granted before impersonating a user's page" (code 190), and Meta's token check, asked with
+  the app's ID and secret, answered "API access blocked" (code 200). Meanwhile the Reels wait, no try counted, and
+  the dashboard and a daily failed Reels run (GitHub's email) say so (`workflows/produce_short.md`). To fix it:
+  1. developers.facebook.com → **My Apps** → the app (signed in as the Facebook account that made it). The top of its
+     dashboard, and the bell (alerts), say why: e.g. a verification to complete, a request for information to
+     answer, or a policy finding to appeal. Meta also emails that account. Do what it asks.
+  2. If Meta lifts the block, the same token usually works again by itself: the Reels go up within 30 minutes, with
+     nothing to do. If it doesn't (or you make a new app instead: step 2a.3 onwards), make a new token in the Graph
+     API Explorer and connect again on the Channels page.
+  3. **The cloud has its own copy of the token:** after connecting again here, copy the new values to GitHub's
+     secrets too (`gh secret set INSTAGRAM_ACCESS_TOKEN` and `INSTAGRAM_USER_ID`, typed or piped in, never on the
+     command line), or the cloud keeps the old one.
 - **Vercel Hobby is for non-commercial use.** Fine while growing; once the channel earns money, upgrade to Pro or move hosts.
 - **Vercel no longer runs the autopilot (2026-10-26):** its cron jobs are gone from `vercel.json`; GitHub Actions makes
   the Shorts.

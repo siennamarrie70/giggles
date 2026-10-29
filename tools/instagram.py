@@ -46,6 +46,13 @@ doesn't expire when it comes from a long-lived token) in .env: INSTAGRAM_ACCESS_
 INSTAGRAM_USER_ID and INSTAGRAM_USERNAME, plus FACEBOOK_APP_ID and FACEBOOK_APP_SECRET. Nothing
 about the account is kept anywhere else.
 
+When Meta refuses the connection itself, not one video, the error is Disconnected: the token, its
+permissions, the Meta app or the account (BROKEN codes). Then no Reel can go up until it's fixed, and
+the Publisher keeps them all waiting without counting tries (agents/publisher.py). Seen 2026-10-29:
+Meta blocked the app (its own key got "API access blocked", code 200), and from then on the Page's
+token got "Any of the pages_read_engagement, ... permission(s) must be granted before impersonating
+a user's page" (code 190), on this computer and on GitHub alike. check() asks with one harmless read.
+
 delete() deletes a posted Reel (the Schedule page's Delete). Meta's reference documents it for
 "Instagram API with Facebook Login" (DELETE /<IG_MEDIA_ID>, checked 2026-10-27), and the token needs
 one more permission for it, instagram_manage_contents; without it Instagram refuses and the error
@@ -87,10 +94,22 @@ UPLOAD_TRIES = 2                # sent again at once when Instagram drops it at 
                                 # again later, over hours: drops come in spells)
 MOST_KBPS = 8000                # the Reel copy's picture never above this
 SEND_WAYS = ("upload", "link")  # settings instagram.send: this computer sends the video, or Instagram fetches it
+BROKEN = {10, 102, 190, 368, *range(200, 300)}  # Meta's error codes for the token, its permissions, the app or the
+                                                # account (not one video): Disconnected
 
 
 class InstagramError(RuntimeError):
     pass
+
+
+class Disconnected(InstagramError):
+    """Meta refused the connection itself, not one video (BROKEN): no Reel can go up until it's fixed."""
+
+
+def refused_connection(text: str | None) -> bool:
+    """Whether an error saved earlier (its "(code N" part) was Meta refusing the connection (Disconnected)."""
+    found = re.search(r"\(code (\d+)", text or "")
+    return bool(found) and int(found[1]) in BROKEN
 
 
 def is_configured() -> bool:
@@ -108,8 +127,9 @@ def _check(resp: requests.Response) -> dict:
         code = ", ".join(f"{name} {err[key]}" for name, key in (("code", "code"), ("subcode", "error_subcode"))
                          if err.get(key))
         why = err.get("error_user_msg") or err.get("error_user_title")  # (Instagram's own words for what was wrong)
-        raise InstagramError(f"Instagram answered {resp.status_code}: {err.get('message') or resp.text[:300]}"
-                             + (f" ({code})" if code else "") + (f": {why}" if why else ""))
+        raise (Disconnected if err.get("code") in BROKEN else InstagramError)(
+            f"Instagram answered {resp.status_code}: {err.get('message') or resp.text[:300]}"
+            + (f" ({code})" if code else "") + (f": {why}" if why else ""))
     return body
 
 
@@ -244,10 +264,23 @@ def status() -> dict:
         me = _get(user, token, fields="username,name,media_count")
         limit = (_get(f"{user}/content_publishing_limit", token, fields="quota_usage,config").get("data") or [{}])[0]
     except (InstagramError, requests.RequestException) as e:
-        return {"connected": False, "error": str(e)[:300], "username": env("INSTAGRAM_USERNAME")}
+        return {"connected": False, "error": str(e)[:300], "username": env("INSTAGRAM_USERNAME"),
+                "refused": isinstance(e, Disconnected)}
     return {"connected": True, "username": me.get("username"), "name": me.get("name"), "posts": me.get("media_count"),
             "used_today": limit.get("quota_usage"), "daily_limit": (limit.get("config") or {}).get("quota_total"),
             **expiry(token)}
+
+
+def check() -> str | None:
+    """Whether Meta takes the connection now, with one harmless read (the account's name): None if it does, else why
+    not, in Meta's words. InstagramError when that can't be told (Meta unreachable, or another answer)."""
+    if not is_configured():
+        return "Instagram isn't connected (the dashboard's Channels page)"
+    try:
+        _get(env("INSTAGRAM_USER_ID"), env("INSTAGRAM_ACCESS_TOKEN"), fields="username")
+    except Disconnected as e:
+        return str(e)
+    return None
 
 
 def _seconds(video: Path) -> float:
@@ -353,6 +386,8 @@ def _by_link(upload: Path, token: str, user: str, how: dict, progress=print, ref
     except tunnel.TunnelError as e:
         progress(f"No temporary link could be made ({e}); sending the video to Instagram instead")
         return None
+    except Disconnected:  # (sending it would be refused the same way)
+        raise
     except InstagramError as e:  # (refused at the first real try, 2026-10-28: "Invalid parameter (code 100)")
         progress(f"Instagram didn't take the video from the temporary link ({e}); sending it instead")
         if refused is not None:

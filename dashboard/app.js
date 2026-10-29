@@ -386,9 +386,10 @@ function renderShell() {
     ["Gemini", s.gemini ? "ok" : "bad", s.gemini ? "Ready" : "Add key", null],
     ["YouTube", s.youtube ? "ok" : "warn", s.youtube ? "Connected" : "Not connected", "#youtube"],
     ["Lip-sync", s.lipsync ? "ok" : "off", s.lipsync ? "Rhubarb ready" : "Downloads on first use", null],
-    ["Instagram", s.instagram?.on ? "ok" : "off",
-     s.instagram?.on ? `Reels on${s.instagram.username ? ` · @${s.instagram.username}` : ""}`
-                     : s.instagram?.connected ? "Connected, Reels off" : "Optional", "#youtube"],
+    ["Instagram", s.instagram?.down ? "bad" : s.instagram?.on ? "ok" : "off",
+     s.instagram?.down ? "Refused by Meta"
+       : s.instagram?.on ? `Reels on${s.instagram.username ? ` · @${s.instagram.username}` : ""}`
+       : s.instagram?.connected ? "Connected, Reels off" : "Optional", "#youtube"],
     ["Music", s.music ? "ok" : "warn", s.music ? plural(s.music, "track") : "No tracks", "#music"],
     ["Database", "ok", s.database === "cloud" ? "Cloud" : "This PC", null],
     ["Telegram", s.telegram ? "ok" : "off", s.telegram ? "Alerts on" : "Optional", "#activity"],
@@ -639,6 +640,18 @@ function slotRows(slots) {
   });
 }
 
+/** While Meta refuses Instagram's connection (the token or the Meta app, not one video): what happens to the Reels
+ *  meanwhile, and what to do (agents/publisher.py instagram_down). */
+function instagramDown(a) {
+  const down = a.services.instagram?.down;
+  return down && h("div", { class: "callout banner", dataset: { tone: "warn" } },
+    h("b", {}, `Instagram has taken no Reels since ${fmtWhen(down.since)}: Meta refuses the connection. `),
+    `(${down.error}) The Reels wait, none is given up for this (until 2 days after its slot), and they go up by `
+    + "themselves once it works again. To fix it: open developers.facebook.com, My Apps, your app: it shows whether Meta "
+    + "blocked or restricted it, and why. With a new app or token, connect Instagram again. ",
+    h("a", { href: "#youtube" }, "Channels page →"));
+}
+
 function overviewLede(a) {
   const sch = a.autopilot.schedule;
   const rhythm = `${plural(sch.posts_per_day, "Short")} a day, one every ${hours(sch.every_hours)} from ${sch.first_post} (${sch.timezone})`;
@@ -688,6 +701,7 @@ async function loadOverview() {
         ? "Shorts are made with real footage (stock video, archive film and photos), so the day's Shorts still go up. "
         : "drawn Shorts wait (no other look is used instead), and the morning run carries on as soon as it can draw. "),
       h("a", { href: "#settings" }, "Settings →")),
+    instagramDown(a),
     kpis([
       { label: "Posted today", value: posted, unit: `/ ${ap.slots.length}` },
       { label: "Next post", value: next ? clockIn(next.at, scheduleTz()) : "–",
@@ -1688,6 +1702,7 @@ async function loadSchedule() {
     !ig.connected && h("div", { class: "callout banner" },
       h("b", {}, "Instagram isn't connected yet, "), "so its side shows “Not for Instagram”. Connect it on the ",
       h("a", { href: "#youtube" }, "Channels page"), ": the Shorts uploaded after that get their Reels."),
+    instagramDown(a),
     data.youtube.error && h("div", { class: "callout banner", dataset: { tone: "warn" } },
       h("b", {}, "YouTube didn't say how they stand just now "), `(${data.youtube.error}). The YouTube side shows what `
       + "the dashboard knows; it asks again in 2 minutes."),
@@ -2047,6 +2062,10 @@ async function loadInstagram() {
             h("li", {}, "Copy the token, and the app's ", h("b", {}, "App ID"), " and ", h("b", {}, "App secret"), " (App settings → Basic). They stay on this computer, in .env."))),
         step(3, ig.connected, "Connect",
           ig.connected ? h("p", {}, "Connected to ", h("b", {}, `@${ig.username}`), expires ? ` (the token ${expires}).` : ".") : null,
+          ig.refused && h("div", { class: "callout", dataset: { tone: "warn" }, style: "margin:8px 0" },
+            h("b", {}, "Meta refuses this connection. "), "If Meta blocked or restricted your app, its page on ",
+            link("https://developers.facebook.com/apps/", "Meta for Developers"), " says why and what to do. Once it's "
+            + "fixed, or with a new app, make a new token (step 2) and connect again. The Reels wait meanwhile."),
           ig.connected && ig.can_delete === false && h("div", { class: "callout", dataset: { tone: "warn" }, style: "margin:8px 0" },
             "Posting works. Delete on the Schedule page needs one more permission, instagram_manage_contents: make a new "
             + "token with it (step 2) and connect again. Until then, delete Reels in the Instagram app."),

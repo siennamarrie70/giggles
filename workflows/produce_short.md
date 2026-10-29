@@ -526,3 +526,20 @@ failed slot.
   (subcode 2207065). Instagram had taken the link; our own check while it processed asked for `video_status`,
   which exists only for a video sent to it (the check added on 2026-10-27 against the FINISHED-but-empty
   trap). Now `_processed(..., uploaded=False)` asks a fetched video for `status_code,status` only.
+- **Meta blocked the app, and the Reels stopped (2026-10-29).** The first cloud morning run's Reels (#67 at 08:00
+  IST, #69 at 10:00) were refused at every try with 400 "Any of the pages_read_engagement, pages_manage_metadata,
+  pages_read_user_content, pages_manage_ads, pages_show_list or pages_messaging permission(s) must be granted before
+  impersonating a user's page" (code 190), by the link way and the upload way alike. The same token failed the same
+  way from this computer, and Meta's own token check, asked with the app's ID and secret, answered "API access
+  blocked" (code 200): Meta had blocked the Meta app, so every token made through it stopped working (the last Reel
+  had gone up at 18:06 IST the day before). The GitHub runs still showed success, nobody was told (Telegram isn't set
+  up), and each refusal counted as a try, so every Reel would have been given up within about nine hours.
+  Now: `instagram._check` raises `Disconnected` for Meta's errors about the token, its permissions, the app or the
+  account (codes 10, 102, 190, 200-299, 368: `instagram.BROKEN`), and the link way doesn't fall back to sending
+  then. The Publisher counts no try for it: the break is recorded (note `instagram_down`), every Reel still to post
+  waits with its tries back to none, and one given up only for that comes back (`publisher._hold_reels`). Every 30
+  minutes (`DOWN_RECHECK`) one harmless read asks Meta again (`instagram.check`); once a Reel goes up, the others
+  are due at once (`_came_back`). You're told: a banner on the Overview and Schedule pages while it lasts, and a
+  Reels run that fails once a day (`DOWN_RETELL`), so GitHub emails you. A Reel still waits only until 2 days after
+  its slot (`REEL_DAYS`; its kept video lasts 3), so fix the connection within 2 days to lose none. The fix itself
+  is yours: developers.facebook.com, My Apps, the app shows why Meta blocked it (`workflows/setup_accounts.md`).

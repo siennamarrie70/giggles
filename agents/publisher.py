@@ -30,6 +30,15 @@ videos are kept, encrypted, with that run (tools/kept.py: the Reel records it as
 Reels workflow (.github/workflows/reels.yml) fetches each at its slot. With the database in the cloud,
 this computer's dashboard only shows Reels: it neither posts nor makes them again (_made_here).
 
+When Meta refuses the connection itself, not one video (the token, its permissions, the Meta app or
+the account: tools/instagram.py Disconnected), no Reel can go up until that's fixed. Then every Reel
+still to post waits for it with no try counted (one given up only for that comes back:
+_hold_reels), the connection is asked again every DOWN_RECHECK with one harmless read, and once a
+Reel goes up the others follow at once (_came_back). You're told: the dashboard's Overview page says
+so while it lasts, and a Reels run fails once a day (DOWN_RETELL; tools/jobs.py reels), so GitHub
+emails you. Seen 2026-10-29, when Meta blocked the app: before this, Reels #67 and #69 had spent five
+and four of their tries on it, and all of them would have been given up that evening.
+
 Beside each Short the Schedule page shows where it stands on YouTube and on Instagram (platforms())
 with your buttons for each. YouTube: Open, Post now (public at once; its slot stays its own and its
 Reel still waits for the slot), Stop, Delete (public or not; a Reel not posted yet goes with it).
@@ -79,6 +88,8 @@ REEL_DAYS = 2                          # a Reel not posted within this long afte
 POSTING_STALE = timedelta(minutes=30)  # a Reel "posting" for longer was cut off (the dashboard stopped)
 STUDIO_GRACE = timedelta(minutes=5)    # still private this long after its time: made private in YouTube Studio
 PUBLISH_LAG = timedelta(minutes=30)    # a Reel waits this long for YouTube to make its Short public (it's a little late)
+DOWN_RECHECK = timedelta(minutes=30)   # while Meta refuses Instagram's connection, it's asked again this often
+DOWN_RETELL = timedelta(hours=24)      # ...and a Reels run fails this often meanwhile, so GitHub emails you
 _reels = threading.RLock()             # one claim at a time, so a Reel goes up once whoever asks
 
 
@@ -361,6 +372,98 @@ def _on_youtube(youtube_id: str) -> str:
     return "publishing" if status.get("publishAt") else "vetoed"
 
 
+def instagram_down() -> dict | None:
+    """While Meta refuses Instagram's connection (no Reel can go up): since when, why in Meta's words, and when it was
+    last asked ("checked"). None while it works."""
+    note = db.latest_note("instagram_down") or {}
+    return note if note.get("since") else None
+
+
+def _hold_reels(until: str | None) -> list[int]:
+    """Every Reel still to post waits until `until` (None: it's due now) with its tries back to none, and one given up
+    only because Meta refused the connection comes back: a refused connection isn't its video's fault."""
+    held = []
+    for v in db.scheduled_videos(days=REEL_DAYS):
+        if (v["plan"].get("instagram") or {}).get("status") not in ("pending", "failed"):
+            continue
+        v = db.get_video(v["id"])  # (as it is now: another run may have just claimed it)
+        reel = v["plan"].get("instagram") or {}
+        lost = reel.get("status") == "failed" and instagram.refused_connection(reel.get("error"))
+        if reel.get("status") == "pending" or lost:
+            db.update_video(v["id"], plan={**v["plan"], "instagram": {**reel, "status": "pending", "tries": 0,
+                                                                      "retry_at": until}})
+            held.append(v["id"])
+    return held
+
+
+def _when(text: str) -> str:
+    sched = slots.plan()
+    return f"{slots.parse(text).astimezone(sched['tz']):%d %b %H:%M} ({sched['tz']})"
+
+
+def down_message(down: dict) -> str:
+    """What you're told while Meta refuses Instagram's connection."""
+    return (f"Instagram has taken no Reels since {_when(down['since'])}: Meta refuses the connection "
+            f"({down['error']}). The Reels wait (none is given up for this, until {REEL_DAYS} days after its slot) and go "
+            "up by themselves once it works again. To fix it: developers.facebook.com, My Apps, your app: it shows whether "
+            "Meta blocked or restricted it, and why. With a new app or token, connect Instagram again on the dashboard's "
+            "Channels page (workflows/setup_accounts.md, Instagram).")
+
+
+def _went_down(error, progress=log) -> dict:
+    """Meta refused the connection: recorded (instagram_down), every Reel waits for it (_hold_reels) until it's asked
+    again after DOWN_RECHECK, and you're told the first time."""
+    with _reels:
+        before = instagram_down()
+        down = {**(before or {"since": db.now_iso()}), "error": str(error)[:300], "checked": db.now_iso()}
+        db.keep_note("instagram_down", down)
+        _hold_reels(db.now_iso(DOWN_RECHECK))
+    if not before:
+        progress(f"Meta refuses Instagram's connection ({str(error)[:200]}): every Reel waits for it")
+        notify.run(f"⚠️ {down_message(down)}")
+    return down
+
+
+def _came_back(progress=log) -> None:
+    """A Reel went up while the connection was recorded as refused: it works again, and the Reels that waited are due
+    now."""
+    with _reels:
+        down = instagram_down()
+        if not down:
+            return
+        db.keep_note("instagram_down", {"since": None, "was": down, "back": db.now_iso()})
+        waited = _hold_reels(None)
+    progress(f"Instagram takes Reels again: {len(waited)} more waited, due now")
+    notify.run(f"✅ Instagram takes Reels again (refused since {_when(down['since'])}): the {len(waited)} that waited "
+               "go up now.")
+
+
+def tell_down() -> dict | None:
+    """The refused connection if you haven't been told about it for DOWN_RETELL (now marked told), else None."""
+    with _reels:
+        down = instagram_down()
+        if not down or (down.get("told") or "") > db.now_iso(-DOWN_RETELL):
+            return None
+        db.keep_note("instagram_down", {**down, "told": db.now_iso()})
+        return down
+
+
+def _still_refused(progress=log) -> dict | None:
+    """Whether a Reel must still wait for Instagram's connection: while it's recorded as refused, until DOWN_RECHECK
+    after it was last asked; then one harmless read asks again. Still refused: every Reel waits on. The read works (or
+    can't tell): this Reel tries for real (None), and once one goes up the others follow (_came_back)."""
+    down = instagram_down()
+    if not down:
+        return None
+    if (down.get("checked") or "") > db.now_iso(-DOWN_RECHECK):
+        return down
+    try:
+        why = instagram.check()
+    except Exception:  # (Meta unreachable, or another answer)
+        return None
+    return _went_down(why, progress) if why else None
+
+
 def _claim_reel(video_id: int, now: bool) -> tuple[dict | None, str | None]:
     """Marks a Short's Reel as being posted, so it goes up once whoever asks (the loop at its slot, or your Post now):
     the row as claimed and the Reel's status before, or None if it isn't for posting (posted or being posted already;
@@ -379,7 +482,8 @@ def _claim_reel(video_id: int, now: bool) -> tuple[dict | None, str | None]:
 def post_reel(row: dict, progress=log, now: bool = False) -> dict:
     """Posts a Short to Instagram as a Reel: once its slot has come and it's public on YouTube, or at once when you
     press Post now (even before it's public on YouTube: your call). In the cloud a video kept by an earlier run is
-    fetched from it first (tools/kept.py); one whose run is still going is left to that run, untouched."""
+    fetched from it first (tools/kept.py); one whose run is still going is left to that run, untouched. While Meta
+    refuses Instagram's connection it waits, untouched, except for your Post now, which tries anyway."""
     video_id = row["id"]
     out = animator.preview_path(video_id)
     run = (row["plan"].get("instagram") or {}).get("kept_in")
@@ -389,6 +493,9 @@ def post_reel(row: dict, progress=log, now: bool = False) -> dict:
         if kept.still_running(run):
             progress(f"Short #{video_id}'s video is with run {run}, still going: that run posts its Reel")
             return {"video_id": video_id, "skipped": f"run {run}, which made it, is still going", "waits_for_run": run}
+    if not now and (down := _still_refused(progress)):
+        return {"video_id": video_id, "skipped": f"Meta refuses Instagram's connection ({down['error'][:150]})",
+                "waits_for_instagram": True}
     row, before = _claim_reel(video_id, now)
     if not row:
         return {"video_id": video_id, "skipped": f"the Reel of Short #{video_id} is posted, or being posted, already"}
@@ -403,9 +510,18 @@ def post_reel(row: dict, progress=log, now: bool = False) -> dict:
         return {"video_id": video_id, "instagram": status, **extra}
 
     def again(e: Exception, what: str) -> dict:
-        """A try that didn't work: your Post now is tried once; at its slot it's tried again later (REEL_WAITS)."""
+        """A try that didn't work: your Post now is tried once; at its slot it's tried again later (REEL_WAITS). Meta
+        refusing the connection isn't counted as a try: every Reel waits for it (_went_down)."""
         if getattr(e, "link_refused", None):  # (why Instagram refused the temporary link before the sending failed)
             reel["link_refused"] = e.link_refused[:300]
+        if isinstance(e, instagram.Disconnected):
+            _went_down(e, progress)
+            if now:
+                done("pending" if before == "pending" else "failed", error=str(e)[:300])
+                raise RuntimeError(f"{what}: Meta refuses Instagram's connection ({e}). Connect Instagram again on the "
+                                   "Channels page; if that doesn't help, developers.facebook.com shows whether Meta "
+                                   "blocked your app") from e
+            return done("pending", error=str(e)[:300], tries=0, retry_at=db.now_iso(DOWN_RECHECK))
         if now:  # your Post now: tried once; a Reel that was waiting for its slot still waits for it
             done("pending" if before == "pending" else "failed", error=str(e)[:300])
             raise RuntimeError(f"{what}: {e}") from e
@@ -443,6 +559,7 @@ def post_reel(row: dict, progress=log, now: bool = False) -> dict:
     except Exception as e:
         return again(e, "Instagram didn't take it")
     notify.run(f"\U0001F4F8 On Instagram now: {meta['title']}" + (f"\n{posted['url']}" if posted.get("url") else ""))
+    _came_back(progress)  # (if the connection was refused until now, the Reels that waited go up next)
     if posted.get("link_refused"):  # (sent instead: kept to find out why Instagram refused the temporary link)
         reel["link_refused"] = posted["link_refused"][:300]
     return done("posted", id=posted["id"], url=posted.get("url"), posted_at=db.now_iso(), error=None, retry_at=None)
