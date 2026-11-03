@@ -401,24 +401,41 @@ def send_way() -> str:
     return way if way in SEND_WAYS else "upload"
 
 
-def publish(video: Path | str, caption: str, cover_at: float = 0.0, progress=print) -> dict:
+def publish(video: Path | str, caption: str, cover_at: float = 0.0, progress=print, ai_label: bool = False) -> dict:
     """Posts the video as a Reel (also shown in the feed); returns its id and link, and why Instagram refused the
-    temporary link if it did ("link_refused"; on an InstagramError, as its .link_refused)."""
+    temporary link if it did ("link_refused"; on an InstagramError, as its .link_refused). `ai_label`: Instagram's AI info label
+    (is_ai_generated, added to the API on 2026-06-22; Meta's notes don't say it covers Reels): if Instagram refuses a Reel with
+    it, the Reel goes up without it, and "label_refused" says why."""
     if not is_configured():
         raise InstagramError("Instagram isn't connected (the dashboard's Channels page)")
     token, user = env("INSTAGRAM_ACCESS_TOKEN"), env("INSTAGRAM_USER_ID")
     how = {"media_type": "REELS", "caption": caption[:CAPTION_CHARS], "share_to_feed": "true",
            "thumb_offset": str(max(0, int(cover_at * 1000)))}
+    if ai_label:
+        how["is_ai_generated"] = "true"
     upload, refused = _for_reels(Path(video), REEL_MB), []
+    label_refused = None
     try:
-        container = (_by_link(upload, token, user, how, progress, refused) if send_way() == "link" else None) \
-            or _by_upload(upload, token, user, how, progress)
+        try:
+            container = (_by_link(upload, token, user, how, progress, refused) if send_way() == "link" else None) \
+                or _by_upload(upload, token, user, how, progress)
+        except Disconnected:
+            raise
+        except InstagramError as e:
+            if not ai_label or not ("is_ai_generated" in str(e) or "(code 100" in str(e)):
+                raise
+            label_refused = str(e)
+            progress(f"Instagram refused the Reel with the AI label ({str(e)[:160]}): posting it without")
+            del how["is_ai_generated"]
+            container = (_by_link(upload, token, user, how, progress, refused) if send_way() == "link" else None) \
+                or _by_upload(upload, token, user, how, progress)
         media = _post(f"{user}/media_publish", token, creation_id=container)["id"]
         try:
             link = _get(media, token, fields="permalink").get("permalink")
         except InstagramError:
             link = None
-        return {"id": media, "url": link, **({"link_refused": refused[0]} if refused else {})}
+        return {"id": media, "url": link, **({"link_refused": refused[0]} if refused else {}),
+                **({"label_refused": label_refused} if label_refused else {})}
     except InstagramError as e:
         if refused:
             e.link_refused = refused[0]

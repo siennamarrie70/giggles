@@ -26,7 +26,9 @@ import random
 import re
 import sys
 
+import a3
 import db
+import draw
 import infographics
 import llm
 import research_fetch as rf
@@ -57,6 +59,8 @@ CATEGORIES = {  # the user's list of 2026-10-26, plus the economy and plain hist
     "history": "a historic event, decision or turning point: why it happened and what it changed",
     "economy": "an economic what-if or explainer (tariffs, growth, inflation, debt, trade), with real data",
 }
+PICTURES_NEEDED = {"mythology": 20, "history": 15, "business": 0}  # pictures a Short of each niche can use at most (Agent 4's
+# prompt: 20 scenes, 0-30%, 25-50% and 50-70% of them stock footage), so they're only picked while that many are left
 ON_THIS_DAY_FOR = {"history", "dark_history", "people", "crime", "mysteries", "science"}  # anniversaries help these
 WHY_NOW = ["trend", "anniversary", "evergreen", "request", "comment", "follow_up"]
 ARCHIVE_SOURCES = ["none", "film", "nasa"]
@@ -150,6 +154,10 @@ def choose_types(cfg: dict, recent: list[dict], waiting: int) -> list[str]:
         weights[c] *= min(2.0, max(0.5, lifts.get(c, 1.0)))
     if waiting >= 2:
         weights.pop("trending", None)
+    if draw.style() == "faceless":  # Cloudflare's free pictures run out during the day: types that need them go first,
+        left = draw.pictures_left()  # and the later Shorts are the types stock footage suits best (your choice, 2026-11-03)
+        roomy = {c: w for c, w in weights.items() if PICTURES_NEEDED[a3.niche(c)] <= left}
+        weights = roomy or weights
     last = [v["plan"]["brief"].get("category") for v in recent[:2]]
     fresh = {c: w for c, w in weights.items() if c not in last}
     pool = fresh or weights or {"business": 1.0}

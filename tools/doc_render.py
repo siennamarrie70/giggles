@@ -23,7 +23,8 @@ said; a name for a person's photo (top left); the case title over the opening; c
 words in the middle, above the Professor, with the word being said lit up. Charts, wide photos and
 maps keep what matters in the upper part of the frame, clear of him. Every shot gets the same look
 (a gentle grade in the case type's colour, a vignette, fine grain), so clips from different sources
-feel like one film; the Professor is drawn on top of it, crisp. The video ends half a second after
+feel like one film; the Professor is drawn on top of it, crisp. With settings host.enabled false (since
+2026-11-03) he isn't drawn at all, and the captions sit at CAPTION_Y. The video ends half a second after
 the last word: no end card, so it loops cleanly back to the opening line.
 
 Audio: the narration, a whoosh at each new beat, an impact under each number, a riser into the
@@ -646,7 +647,7 @@ class Doc:
         self.live = {}
         self.host = None
         setup = load_config().get("host") or {}
-        if setup.get("enabled", True) and (host.HOST_DIR / "rig.json").exists():
+        if host.shown() and (host.HOST_DIR / "rig.json").exists():
             track = narration.get("mouth")
             if track is None:  # the Animator normally works this out; a sample render may not have
                 track = host.mouth_track(self.wav, self.lines)

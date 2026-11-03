@@ -84,7 +84,8 @@ def pick_music(mood: str | None = None) -> Path | None:
     """A random track, from the given mood if the library has one."""
     tracks = music_tracks()
     notes = _music_notes()
-    matching = [p for p in tracks if mood and (notes.get(p.name) or {}).get("mood") == mood]
+    matching = [p for p in tracks if mood and (mood == (notes.get(p.name) or {}).get("mood")
+                                               or mood in ((notes.get(p.name) or {}).get("faceless") or []))]
     pool = matching or tracks
     return random.choice(pool) if pool else None
 

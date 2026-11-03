@@ -1,11 +1,11 @@
 """
 Agent 4, Animator: makes the video and its thumbnail. The Professor reads the script
 (tools/narration.py: Gemini's voice on the free tier, each line with its direction, every word timed
-by faster-whisper), his mouth shapes are worked out (Rhubarb, tools/host.py), each line's visuals
+by faster-whisper), his mouth shapes are worked out while he's on screen (Rhubarb, tools/host.py), each line's visuals
 become shots (real footage, archive film, photos with depth, satellite maps, charts, big numbers,
 quotes: agents.writer.shot_for), a music track in the script's mood is picked, and
 tools/doc_render.py draws and encodes the case, with a cover frame for the dashboard. Then the
-thumbnail, in the channel's one style (tools/thumbnail.py): a still from the case, the Professor, the
+thumbnail, in the channel's one style (tools/thumbnail.py): a still from the case, the Professor while he's on screen, the
 case type and the Writer's few bold words, which you can change in the Studio. One voice call per
 case and no other Gemini calls.
 
@@ -48,6 +48,15 @@ voice (DrawingResting). A Short made again for its Reel never changes its look: 
 Reviewer turns down (letters in it, the wrong style, odd hands, too dark) is drawn again, with a word on
 what to change, at most MAX_REDRAWS times.
 
+In the faceless look (the script's look: settings look.style, your choice on 2026-11-03) your own prompt for this agent
+(prompts/agent4.txt.enc, word for word) designs the scenes (direct(): tools/a4.py sets what can be worked out exactly and checks
+the rest, and what it still finds goes back with the design, at most DESIGN_TRIES times). gather() then gets each scene's picture
+or clip, following the prompt's fallback chain: an AI picture (Cloudflare), then stock video, then a stock photo; stock video
+(Pexels portrait, then Pixabay; one Gemini look at all of them, never a child, nothing graphic: tools/footage.py), then an AI picture,
+then a stock photo. Pictures are made in the order the design asks until Cloudflare's free allowance runs out, and what's left falls
+back: nothing waits for Cloudflare in this look. tools/faceless_render.py plays it. A scene the Reviewer turns down gets a new
+picture or another clip; the voice and everything else go as above.
+
 The plan remembers the track, the voice, the drawings and every clip, photo and film on screen, so
 the Publisher can add the credit lines and mark the clips used.
 
@@ -66,19 +75,24 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import a4
 import db
 import doc_render
 import draw
+import faceless_render
+import footage
 import host
 import infographics
+import llm
 import narration
+import prompts
 import short_render
 import slots
 import thumbnail
 from agents import writer
 from agents.base import act, lessons_for, log
 from agents.writer import shot_for
-from common import load_config, tmp_path
+from common import TMP_DIR, load_config, tmp_path
 
 # After failing, Gemini's voice rests REST_FIRST, twice as long after each failure in a row, up to REST_MOST.
 # (A whole hour from the first failure kept videos waiting long after Gemini was back: 2026-10-26.)
@@ -94,6 +108,12 @@ MAX_REDRAWS = 2                           # a scene the Reviewer turns down is d
 VOICE_FIXES = ("slower", "reread", "pauses")  # a case turned down for one of these is made again with a new reading
 REWRITE_FROM = 3                          # turned down this many times: the Writer writes it again before it's made
 REMOVE_FOR = 120                          # seconds a file the dashboard was serving is tried again for deletion
+DESIGN_TRIES = 3                          # tries at Agent 4's scene design
+GOOD_ENOUGH = 2                           # a design with no more than this many small faults (a picture's description a word or
+                                          # two short: none of it shows) isn't sent back again, to spare Gemini's free calls
+CLIP_SECONDS = 5                          # stock clips shorter than this aren't used (his scenes run about 3-4 s, up to 6)
+PER_QUERY = 2                             # stock candidates per scene, for the Gemini look
+SAFE_WORDS = 90                           # a picture's description is cut to this many words
 REDRAW_HINTS = {  # what a scene drawn again adds to its description, by the Reviewer's problem (FLUX has no "no":
     "bad_anatomy": "the figures small and seen from a distance",  # naming the problem would draw it)
     "off_style": "a flat hand-painted 2D illustration with ink outlines",
@@ -307,9 +327,11 @@ def _reading(row: dict, said: list[dict], how: dict, progress) -> tuple[dict, li
         raise VoiceResting(f"Gemini's voice didn't read it in his voice; Short #{row['id']} waits and is read when it "
                            f"does (tried again at about {_after(rest)})") from e
     _rested()
-    timed = [{**line, **t} for line, t in zip(said, spoken["lines"])]
-    progress("Working out his mouth shapes")
-    mouth = host.mouth_track(spoken["wav"], timed)
+    mouth = None  # (off screen nothing needs it; doc_render works it out if he's back on screen for a kept reading)
+    if host.shown():
+        timed = [{**line, **t} for line, t in zip(said, spoken["lines"])]
+        progress("Working out his mouth shapes")
+        mouth = host.mouth_track(spoken["wav"], timed)
     (work / "reading.json").write_text(json.dumps({"key": key, "spoken": spoken, "mouth": mouth}), encoding="utf-8")
     return spoken, mouth
 
@@ -349,10 +371,13 @@ def draw_scenes(row: dict, plan: dict, progress=log, now: bool = False) -> dict[
 
 def _written_again(plan: dict, progress=log, look: str | None = None) -> dict:
     """The plan with a new script from the Writer (from the same facts and photos; `look` or the one a case made now
-    gets), its clips found first if it's now footage; the drawings, the fixes and the review of the old lines go."""
+    gets), its clips found first if it's now footage; the drawings, the fixes and the review of the old lines go, and in the
+    faceless look the scene design and everything gathered for it."""
     pack = dict(plan.get("research") or {})
     written = writer.write(plan["brief"], pack, progress, look=look)
-    return {**{k: v for k, v in plan.items() if k not in ("drawings", "fixes", "review")}, "research": pack,
+    if written["script"].get("look") == "faceless":
+        pack["footage"] = []
+    return {**{k: v for k, v in plan.items() if k not in ("drawings", "fixes", "review", "manifest", "assets")}, "research": pack,
             "script": written["script"], "metadata": written["metadata"]}
 
 
@@ -377,7 +402,13 @@ def make_again(row: dict, progress=log) -> dict:
     remakes = int(plan.get("remakes") or 0) + 1
     if remakes >= REWRITE_FROM:
         progress(f"Case #{row['id']} was turned down again: the Writer writes it again, then the Animator makes it")
-        plan = _written_again(plan, progress)
+        plan = _written_again(plan, progress, "faceless" if plan["script"].get("look") == "faceless" else None)
+    elif plan["script"].get("look") == "faceless":
+        plan = {**_new_visuals(plan, major), "fixes": {**(plan.get("fixes") or {}), "round": 0, "changes": []}}
+        plan = {k: v for k, v in plan.items() if k != "review"}
+        if any(i.get("fix") in VOICE_FIXES for i in major):
+            plan["fixes"]["take"] = int(plan["fixes"].get("take") or 0) + 1
+        progress(f"Case #{row['id']} was turned down after the fixes: the Animator makes it again (time {remakes})")
     else:
         script = json.loads(json.dumps(plan["script"]))
         turned_down = {(i.get("what") or "").partition(":")[2] for i in major if (i.get("what") or "").startswith("scene:")}
@@ -425,6 +456,8 @@ def animate(row: dict, out: Path, progress=log, now: bool = False, again: bool =
     if not now and (rest := voice_resting()):
         raise VoiceResting(f"Gemini's voice is resting until about {_after(rest)}; Short #{row['id']} is read then")
     script = plan["script"]
+    if script.get("look") == "faceless":
+        return _animate_faceless(row, out, progress, again)
     drawn = script.get("look") == "drawn"
     if drawn:  # first: three seconds a drawing, and nothing is read while Cloudflare can't draw
         try:
@@ -486,6 +519,341 @@ def animate(row: dict, out: Path, progress=log, now: bool = False, again: bool =
             "layout_notes": len(made["layout"])}
 
 
+# --- the faceless look ------------------------------------------------------------------
+
+def direct(plan: dict, progress=log) -> dict:
+    """Your Agent 4 prompt designs the scenes for the script (tools/a4.py sets what's exact and checks the rest)."""
+    script = plan["script"]["a3"]
+    system, base = prompts.load("agent4"), json.dumps(script, ensure_ascii=False)
+    note, best = "", None
+    for attempt in range(DESIGN_TRIES):
+        progress("Designing the scenes" if not attempt else f"Fixing the scene design (try {attempt + 1})")
+        raw = llm.generate_json([base + note], None, system, thinking=writer.PROMPT_THINKING, timeout_ms=writer.PROMPT_TIMEOUT_MS)
+        if raw.get("status") not in (None, "ok"):
+            raise RuntimeError(f"the scenes couldn't be designed: {str(raw.get('error'))[:200]}")
+        made = a4.repair(raw, script)
+        must, should = a4.problems(made, script)
+        if best is None or (len(must), len(should)) < best[0]:
+            best = ((len(must), len(should)), made, must + should)
+        if not must and len(should) <= GOOD_ENOUGH:
+            break
+        note = ("\n\nHere is your best design so far, with its timings and counts worked out exactly by code:\n"
+                + json.dumps(best[1], ensure_ascii=False)
+                + "\n\nIt breaks these rules. Change only what's needed to fix every one, keep everything else exactly as it is, "
+                  "and output the whole JSON again:\n- " + "\n- ".join(best[2]))
+    if best[0][0]:
+        raise RuntimeError(f"the scene design doesn't follow the script: {best[2][0][:200]}")
+    design = best[1]
+    design["warnings"] = (design["warnings"] + best[2])[:10]
+    progress(f"{len(design['scenes'])} scenes: {design['summary']['ai_image_scenes']} AI pictures, "
+             f"{design['summary']['stock_video_scenes']} stock clips, {design['summary']['callout_count']} callouts")
+    return _safe_design(design, plan)
+
+
+def _safe_design(design: dict, plan: dict) -> dict:
+    """The channel's rules on what's drawn, in code, whatever the design says: no words in quotes or "a sign reading...", a
+    real person's name becomes their role (a figure, never a likeness), and a picture with anything graphic or a child isn't
+    made (that scene looks for stock footage instead; every clip has its own check)."""
+    people = list((plan.get("research") or {}).get("people") or [])
+    people += [{"name": n, "role": ""} for n in plan["script"]["a3"]["visual_context"]["real_people"]]
+    for scene in design["scenes"]:
+        for visual in [scene] + ([scene["secondary_visual"]] if scene.get("secondary_visual") else []):
+            cleaned = writer.clean_scene(visual["ai_image_prompt"], {"people": people}, words=SAFE_WORDS)
+            visual["ai_image_prompt"] = "" if cleaned == writer.SAME else cleaned
+            if not visual["ai_image_prompt"]:
+                visual["source_primary"] = "stock_video_api"
+    scenes = design["scenes"]
+    if len(scenes) > 1 and scenes[-1].get("reuse_asset_from"):
+        scenes[-1].update({k: scenes[0][k] for k in ("source_primary", "ai_image_prompt", "stock_query")})
+    design["summary"]["stock_video_scenes"] = sum(1 for s in scenes if s["source_primary"] == "stock_video_api")
+    design["summary"]["ai_image_scenes"] = len(scenes) - design["summary"]["stock_video_scenes"]
+    design["ai_disclosure_flag"] = bool(design["style_bible"]["photoreal"]) and design["summary"]["ai_image_scenes"] > 0
+    return design
+
+
+def _picture(name: str, visual: dict, row: dict, design: dict, fixes: dict, progress=log) -> dict | None:
+    """A scene's AI picture: your prompt's words and the style preset's, as they stand. None if there's no description or
+    Cloudflare's safety filter refuses it. Cloudflare out or used up raises draw.DrawingUnavailable."""
+    if not visual["ai_image_prompt"]:
+        return None
+    words = ", ".join(x for x in (visual["ai_image_prompt"], (fixes.get("hints") or {}).get(name),
+                                  design["style_bible"]["style_suffix"]) if x)
+    try:
+        path = draw.draw(words, scenes_dir(row["id"]), seed=int((fixes.get("seeds") or {}).get(name) or 0), progress=progress,
+                         exact=True)
+    except draw.DrawingUnavailable:
+        raise
+    except RuntimeError as e:
+        progress(f"Scene {name}'s picture couldn't be made ({str(e)[:160]})")
+        return None
+    return {"kind": "picture", "path": str(path)}
+
+
+def _candidates(wanted: list[tuple[str, dict]], topic: str, exclude: set[str], progress=log, photos: bool = False) -> dict[str, dict]:
+    """The checked stock clips (or photos) for these scenes: one search each, and one Gemini look at all of them (without
+    the look, none is used: it might show a child). Returns {scene: clip}."""
+    queries = list(dict.fromkeys(v["stock_query"] for _, v in wanted if v["stock_query"]))
+    if not queries:
+        return {}
+    try:
+        if photos:
+            found = [p for q in queries for p in footage.search_photos(q, exclude, PER_QUERY)]
+        else:
+            found = footage.search(queries, exclude=exclude, min_seconds=CLIP_SECONDS, per_query=PER_QUERY, landscape=False)
+    except RuntimeError as e:  # (no stock footage key)
+        progress(f"No stock footage: {e}")
+        return {}
+    if not found:
+        return {}
+    progress(f"Checking {len(found)} stock {'photos' if photos else 'clips'} for {len(wanted)} scenes")
+    try:
+        checked = footage.check(found, topic)
+    except Exception as e:
+        progress(f"Couldn't check them ({type(e).__name__}): none of them is used")
+        return {}
+    usable, taken, out = [c for c in checked if c["ok"]], set(), {}
+    for name, visual in wanted:
+        clip = next((c for c in usable if c["query"] == visual["stock_query"] and c["key"] not in taken), None)
+        if clip:
+            taken.add(clip["key"])
+            out[name] = clip
+    return out
+
+
+def gather(row: dict, plan: dict, progress=log) -> dict:
+    """Every scene's picture or clip, in the prompt's fallback order (see the top of this file); what's already here is kept.
+    Returns the plan with them: its assets for the renderer, its drawings and clips where the rest of the system looks
+    for them (the Publisher's credits, the dashboard, the thumbnail), and each line's visuals."""
+    design, fixes = plan["manifest"], plan.get("fixes") or {}
+    pack = dict(plan.get("research") or {})
+    rejected = set(fixes.get("rejected") or [])
+    items = {c["id"]: c for c in pack.get("footage") or [] if c.get("key") not in rejected}
+    assets, have = {}, plan.get("assets") or {}
+    wanted = []
+    for scene in design["scenes"]:
+        if scene.get("reuse_asset_from"):
+            continue
+        for name, visual in [(scene["scene_id"], scene)] + ([(scene["scene_id"] + "b", scene["secondary_visual"])]
+                                                             if scene.get("secondary_visual") else []):
+            kept = have.get(name)
+            if kept and kept["kind"] == "picture" and Path(kept["path"]).exists():
+                assets[name] = kept
+            elif kept and name in items:
+                try:
+                    assets[name] = {**kept, "path": str(_clip_file(items[name]))}
+                except Exception:
+                    wanted.append((name, visual))
+            else:
+                wanted.append((name, visual))
+    for name, _ in wanted:
+        items.pop(name, None)
+    exclude = set(db.used_clip_keys()) | rejected | {c["key"] for c in items.values() if c.get("key")}
+    topic = f"{plan['brief'].get('topic', '')}: {plan['brief'].get('angle', '')}"
+
+    def keep_clip(name: str, clip: dict, kind: str = "clip") -> bool:
+        try:
+            path = footage.download(clip)
+        except Exception as e:
+            progress(f"Couldn't download {clip['key']} ({type(e).__name__})")
+            return False
+        items[name] = {"id": name, "file": path.relative_to(TMP_DIR).as_posix(), "key": clip["key"], "source": clip["source"],
+                       "query": clip["query"], "shows": ((clip.get("check") or {}).get("shows") or "")[:120],
+                       "duration": clip["duration"], "credit": footage.credit(clip), "page_url": clip["page_url"],
+                       "download_url": clip["download_url"], "ext": clip.get("ext")}
+        exclude.add(clip["key"])
+        assets[name] = {"kind": kind, "path": str(path), "duration": clip["duration"], "key": clip["key"]}
+        return True
+
+    stock_first = [(n, v) for n, v in wanted if v["source_primary"] == "stock_video_api"]
+    picture_first = [(n, v) for n, v in wanted if v["source_primary"] != "stock_video_api"]
+    can_draw = not draw.resting()
+    if stock_first:
+        progress(f"Looking for {len(stock_first)} stock clips")
+        for name, clip in _candidates(stock_first, topic, exclude, progress).items():
+            keep_clip(name, clip)
+    no_clip = [(n, v) for n, v in stock_first if n not in assets]
+    still_needed = []
+    if picture_first or no_clip:
+        progress(f"Making {len(picture_first) + len(no_clip)} AI pictures")
+    for name, visual in picture_first + no_clip:
+        made = None
+        if can_draw:
+            try:
+                made = _picture(name, visual, row, design, fixes, progress)
+                _drawn()
+            except draw.DrawingUnavailable as e:
+                _rest_drawing(e)
+                can_draw = False
+                progress(f"Cloudflare can't draw more now ({str(e)[:120]}): the other scenes use stock footage")
+        if made:
+            assets[name] = made
+        else:
+            still_needed.append((name, visual))
+    if still_needed:
+        untried = [(n, v) for n, v in still_needed if (n, v) not in no_clip]
+        if untried:
+            for name, clip in _candidates(untried, topic, exclude, progress).items():
+                keep_clip(name, clip)
+        left = [(n, v) for n, v in still_needed if n not in assets]
+        if left:
+            for name, photo in _candidates(left, topic, exclude, progress, photos=True).items():
+                keep_clip(name, photo, "photo")
+    order = [s["scene_id"] for s in design["scenes"] if not s.get("reuse_asset_from")]
+    made_any = [assets[n] for n in order if n in assets]
+    if not made_any:
+        raise RuntimeError(f"none of Short #{row['id']}'s scenes has a picture or a clip")
+    last = None
+    for scene in design["scenes"]:  # a scene left with nothing keeps the picture before it, rather than failing the Short
+        name = scene["scene_id"]
+        if scene.get("reuse_asset_from"):
+            continue
+        if name not in assets:
+            assets[name] = last or made_any[0]
+            progress(f"Scene {name} has no picture of its own: it stays on the one before")
+        if scene.get("secondary_visual") and name + "b" not in assets:
+            assets[name + "b"] = assets[name]
+        last = assets[name]
+    pack["footage"] = list(items.values())
+    script = json.loads(json.dumps(plan["script"]))
+    by_id = {line.get("line_id"): line for line in script["lines"]}
+    for line in script["lines"]:
+        line["visuals"] = []
+    for scene in design["scenes"]:
+        name = scene["scene_id"]
+        if scene.get("reuse_asset_from") or not scene["line_ids"] or scene["line_ids"][0] not in by_id:
+            continue
+        kind = "scene" if assets[name]["kind"] == "picture" else "footage"
+        by_id[scene["line_ids"][0]]["visuals"].append(f"{kind}:{name}")
+    return {**plan, "assets": assets, "research": pack, "script": script,
+            "drawings": {n: a["path"] for n, a in assets.items() if a["kind"] == "picture"}}
+
+
+def _clip_file(item: dict) -> Path:
+    from agents.researcher import clip_path
+
+    return clip_path(item)
+
+
+def _new_visuals(plan: dict, issues: list[dict], changes: list | None = None) -> dict:
+    """The plan with what the Reviewer turned down let go, for gather() to replace: a picture gets a new seed (a new
+    drawing, with a word on what to change), at most MAX_REDRAWS times; a clip is rejected, and another is looked for."""
+    fixes = json.loads(json.dumps(plan.get("fixes") or {}))
+    assets = dict(plan.get("assets") or {})
+    for issue in issues:
+        what = issue.get("what") or ""
+        kind, _, name = what.partition(":")
+        if kind not in ("scene", "footage") or name not in assets or issue.get("fix") not in ("redraw", "swap"):
+            continue
+        asset = assets[name]
+        if asset["kind"] == "picture":
+            seeds = fixes.setdefault("seeds", {})
+            if int(seeds.get(name) or 0) >= MAX_REDRAWS:
+                continue
+            seeds[name] = int(seeds.get(name) or 0) + 1
+            hint = REDRAW_HINTS.get(issue.get("kind"))
+            if hint:
+                fixes.setdefault("hints", {})[name] = hint
+            if changes is not None:
+                changes.append(f"scene {name}'s picture made again" + (f" ({hint})" if hint else ""))
+        else:
+            if asset.get("key"):
+                fixes.setdefault("rejected", []).append(asset["key"])
+            if changes is not None:
+                changes.append(f"another clip for scene {name}")
+        del assets[name]
+    return {**plan, "assets": assets, "fixes": fixes}
+
+
+def _improve_faceless(plan: dict, progress=log) -> tuple[dict, list[str]]:
+    """improve() for the faceless look: a picture or clip replaced, a callout taken off, a line read slower, longer pauses, read
+    again, or made again."""
+    review = plan.get("review") or {}
+    major = [i for i in review.get("issues") or [] if i.get("severity") == "major" and i.get("fix")]
+    changes = []
+    plan = _new_visuals(plan, major, changes)
+    fixes = plan["fixes"]
+    fixes.setdefault("drops", [])
+    fixes.setdefault("slower", [])
+    for issue in major:
+        fix, k, what = issue.get("fix"), issue.get("line"), issue.get("what")
+        if fix == "drop" and k is not None and what == "callout":
+            drop = {"kind": "callout", "line": k}
+            if drop not in fixes["drops"]:
+                fixes["drops"].append(drop)
+                changes.append(f"took the callout off scene {k + 1}")
+        elif fix == "slower" and k is not None and k not in fixes["slower"]:
+            fixes["slower"].append(k)
+            changes.append(f"line {k + 1} is read again, slower")
+        elif fix == "pauses":
+            gap = round(min(MAX_GAP, max(narration.KEEP_GAP, float(fixes.get("keep_gap") or 0)) + GAP_STEP), 2)
+            if gap > float(fixes.get("keep_gap") or narration.KEEP_GAP):
+                fixes["keep_gap"] = gap
+                changes.append(f"longer pauses ({gap:g} s)")
+        elif fix == "reread" and "read again" not in changes:
+            fixes["take"] = int(fixes.get("take") or 0) + 1
+            changes.append("read again")
+        elif fix == "remake" and not changes:
+            changes.append("made again")
+    if changes:
+        fixes["round"] = int(fixes.get("round") or 0) + 1
+        fixes["changes"] = changes
+        fixes["after"] = review.get("of")
+    return plan, changes
+
+
+def _animate_faceless(row: dict, out: Path, progress=log, again: bool = False) -> dict:
+    """The design, its pictures and clips, the voice, music, the render and the thumbnail for one case; returns its updated
+    plan. `again`: as in animate(): a posted case made again for its Reel, nothing saved."""
+    cfg = load_config()
+    plan = row["plan"]
+    if not plan.get("manifest"):
+        design = direct(plan, progress)
+        plan = {**plan, "manifest": design, "script": {**plan["script"], "music_mood": design["music"]["mood"]}}
+        if not again:  # (it took Gemini's free calls: kept even if what follows fails)
+            db.update_video(row["id"], plan=plan)
+    plan = gather(row, plan, progress)
+    if not again:
+        db.update_video(row["id"], plan=plan)
+    script = plan["script"]
+    how = settings(plan)
+    said = [{"text": line["text"], "direction": ", ".join(d for d in (SLOWER if k in how["slower"] else "",
+                                                                       line.get("direction", "")) if d),
+             "slow": k in how["slower"], "pause": line.get("pause") or 0.0}
+            for k, line in enumerate(script["lines"])]
+    spoken, _ = _reading(row, said, how, progress)
+    if again:
+        track = short_render.MUSIC_DIR / plan["music"] if plan.get("music") else None
+        track = track if track and track.exists() else None
+    else:
+        track = short_render.pick_music(plan["manifest"]["music"]["mood"]) if cfg["music"]["volume"] > 0 else None
+    progress("Animating" + (f" with {track.stem}" if track else " (no music)"))
+    case = {"manifest": plan["manifest"], "assets": plan["assets"], "narration": spoken, "drops": how["drops"]}
+    made = faceless_render.render(case, out, track, cfg["music"]["volume"], cover_path=cover_path(row["id"]), progress=progress)
+    if again:
+        progress(f"Video made again: {made['seconds']:.0f} s, in {made['render_seconds']:.0f} s")
+        return {"video_id": row["id"], "length": made["seconds"], "render_seconds": made["render_seconds"],
+                "music": track.name if track else None, "voice": spoken["voice"]}
+    plan = {**plan, "music": track.name if track else None,
+            "voice": {"engine": spoken["engine"], "voice": spoken["voice"], "match": spoken["match"],
+                      "deeper": spoken.get("deeper", 0),
+                      "words_per_second": round(sum(len(l["text"].split()) for l in script["lines"])
+                                                / max(spoken["seconds"], 1), 2),
+                      **({"likeness": spoken["likeness"]} if spoken.get("likeness") else {})},
+            "render": {"id": uuid.uuid4().hex[:10], "made_at": db.now_iso(), "seconds": made["seconds"],
+                       "render_seconds": made["render_seconds"], "layout": made["layout"], "shots": made["shots"],
+                       "title_until": 0.01,  # (no title over the opening in this look)
+                       "lines": [{"start": t["start"], "end": t["end"]} for t in spoken["lines"]]},
+            "credits": credits(plan)}
+    try:
+        plan["thumbnail"] = make_thumbnail(row["id"], plan)
+    except Exception as e:
+        progress(f"Couldn't make the thumbnail ({type(e).__name__}: {str(e)[:120]})")
+    db.update_video(row["id"], plan=plan)
+    progress(f"Video ready: {made['seconds']:.0f} s, made in {made['render_seconds']:.0f} s")
+    return {"plan": plan, "video_id": row["id"], "length": made["seconds"], "render_seconds": made["render_seconds"],
+            "music": plan["music"], "voice": plan["voice"]["voice"], "layout_notes": len(made["layout"])}
+
+
 # --- the thumbnail -------------------------------------------------------------------
 
 def stills(plan: dict) -> list[str]:
@@ -493,8 +861,8 @@ def stills(plan: dict) -> list[str]:
     the drawn look, his art first (the drawings, in order), then the rest."""
     names = list(dict.fromkeys(v for line in plan["script"]["lines"] for v in line.get("visuals") or []
                                if v.split(":")[0] != "number" and not v.startswith("quote:")))
-    if plan["script"].get("look") == "drawn":
-        return [f"scene:{n}" for n in plan.get("drawings") or {}] + names
+    if plan["script"].get("look") in ("drawn", "faceless"):
+        return [f"scene:{n}" for n in plan.get("drawings") or {}] + [n for n in names if not n.startswith("scene:")]
     return sorted(names, key=lambda v: STILLS.index(v.split(":")[0]) if v.split(":")[0] in STILLS else len(STILLS))
 
 
@@ -541,6 +909,8 @@ def improve(plan: dict, progress=log) -> tuple[dict, list[str]]:
     """Acts on the Reviewer's notes about the latest version: the fixes go into plan["fixes"] (and a swapped shot or
     a cut line into the script itself). Returns the plan and what was changed, in words; nothing changed means
     nothing the Animator can do would fix it."""
+    if (plan.get("script") or {}).get("look") == "faceless":
+        return _improve_faceless(plan, progress)
     review = plan.get("review") or {}
     fixes = json.loads(json.dumps(plan.get("fixes") or {}))
     fixes.setdefault("drops", [])

@@ -56,6 +56,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import db
+import spoken
 import voiceprint
 from common import env, load_config, tmp_path
 
@@ -80,7 +81,7 @@ FAILED_FOR = 30 * 60            # seconds a model that failed is asked last (a b
 SLOW_LINE = 3.0                 # words a second (the Reviewer's limit is 3.3)
 PACED_WORDS = 6                 # shorter lines aren't paced (as the Reviewer)
 LEAST_TEMPO = 0.85              # never slowed more than this (a stronger stretch smears his voice)
-TOKEN = re.compile(r"\d+(?:\.\d+)?|[a-z]+|%")
+TOKEN = re.compile(r"\d[\d,]*(?:\.\d+)?|[a-z]+|%")
 STYLE = ("A wise, highly intelligent American professor in his sixties: a deep, low, resonant voice, calm and "
          "measured, never rushed; a master storyteller who draws you in.")
 VOICE = "Charon"
@@ -115,8 +116,15 @@ _whisper_lock = threading.RLock()  # re-entrant: hear() holds it while _model() 
 
 
 def tokens(text: str) -> list[str]:
-    """Words for matching what was said against the script: lower case, numbers and % on their own."""
-    return TOKEN.findall(text.lower().replace(",", "").replace("’", "'").replace("'", ""))
+    """Words for matching what was said against the script: lower case, a number as the words he'd say (the faceless look's
+    scripts spell them out, and whisper mostly hears digits: tools/spoken.py), "%" as "percent"."""
+    out = []
+    for token in TOKEN.findall(text.lower().replace("’", "'").replace("'", "")):
+        if token[0].isdigit():
+            out += spoken.words_for(token)
+        else:
+            out.append("percent" if token == "%" else token)
+    return out
 
 
 # --- reading ------------------------------------------------------------------
@@ -612,15 +620,40 @@ def slow_rushed(pcm, heard: list, lines: list[dict], timed: list[dict]):
     return pcm, heard, slowed
 
 
+def set_pauses(pcm, heard: list, lines: list[dict], timed: list[dict]):
+    """A line with a "pause" (the faceless look's pause_after_sec) gets that much quiet after it, if it hasn't that much
+    already; the words after it move along. Returns the reading and the heard words."""
+    import numpy as np
+
+    level = _levels(pcm)
+    for k, (line, t) in reversed(list(enumerate(zip(lines, timed)))):
+        want = float(line.get("pause") or 0)
+        if not want or k + 1 >= len(timed):
+            continue
+        gap = timed[k + 1]["start"] - t["end"]
+        add = want - gap
+        # Never in the middle of a word: where whisper's times overlap, or he's speaking in the gap, it's left as it is.
+        if add <= 0.01 or gap < 0 or _spoken(level, t["end"], timed[k + 1]["start"]):
+            continue
+        middle = t["end"] + gap / 2
+        at = int(middle * SAMPLE_RATE)
+        pcm = np.concatenate([pcm[:at], np.zeros(int(add * SAMPLE_RATE), dtype=pcm.dtype), pcm[at:]])
+        heard = [tuple(x + add if x >= middle else x for x in (a, b)) + (w,) for a, b, w in heard]
+    return pcm, heard
+
+
 def _finish(audio: bytes, heard: list, lines: list[dict], out: Path, engine: str, voice: str, match: float,
             deeper: int = 0, keep_gap: float = KEEP_GAP) -> dict:
-    """The reading's pauses tightened, a line the Reviewer found rushed slowed on its own if it still is, made
-    deeper, and saved; every word's time follows."""
+    """The reading's pauses tightened, a line the Reviewer found rushed slowed on its own if it still is, the pauses a
+    line asks for put in, made deeper, and saved; every word's time follows."""
     pcm, moved = tighten(_pcm(audio), heard, keep_gap)
     heard = [(moved(a), moved(b), w) for a, b, w in heard]
     timed, match = align(lines, heard)
     pcm, heard, slowed = slow_rushed(pcm, heard, lines, timed)
     if slowed:
+        timed, match = align(lines, heard)
+    if any(line.get("pause") for line in lines):
+        pcm, heard = set_pauses(pcm, heard, lines, timed)
         timed, match = align(lines, heard)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(_wav_bytes(lower(pcm, deeper)))

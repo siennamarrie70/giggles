@@ -52,6 +52,7 @@ jobs:
       INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
       INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
       REELS_KEY: ${{ secrets.REELS_KEY }}  # encrypts the Reels' videos kept with the run (tools/kept.py)
+      PROMPTS_KEY: ${{ secrets.PROMPTS_KEY }}  # opens your Agent 3 and 4 prompts (tools/prompts.py)
       PAUSED: ${{ vars.PAUSED }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0

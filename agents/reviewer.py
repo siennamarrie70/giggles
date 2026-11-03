@@ -54,6 +54,7 @@ from pathlib import Path
 
 import db
 import doc_render
+import host
 import llm
 import narration
 import notify
@@ -75,6 +76,7 @@ LONG_PAUSE = 1.5            # seconds between two lines
 LOUDNESS, LOUDNESS_OK, LOUDNESS_BAD = -14.0, 2.0, 3.0  # LUFS: off by more than OK is noted, by more than BAD fails
 MAX_PEAK = -0.1             # dBTP: above this it may clip
 DARK = "blackdetect=d=0.4:pic_th=0.85:pix_th=0.06"  # 85% of the picture near black for 0.4 s (the Professor stays lit)
+DARK_NO_HOST = "blackdetect=d=0.4:pic_th=0.95:pix_th=0.06"  # the same shots with him off screen (he kept ~11% lit)
 DARK_FOR = 1.0              # seconds of a shot too dark to see before it fails
 SILENT = "silencedetect=n=-50dB:d=1.0"
 HEAR_RATE = 16_000          # whisper's sample rate
@@ -85,7 +87,8 @@ FRAMES = 8
 HISTORY = 40
 LOOKBACK, RECURRING = 12, 3
 SIZE = (doc_render.W, doc_render.H)
-WORDS = {"caption": "the captions", "number": "the big number", "name": "the name", "title": "the title"}
+WORDS = {"caption": "the captions", "number": "the big number", "name": "the name", "title": "the title",
+         "callout": "the callout"}
 LOOK_PROBLEMS = {  # what the look may find: (fails the video, in words, fixed by swapping the shot)
     "text_cut_off": (True, "words cut off at the edge", False),
     "broken_picture": (True, "a broken, glitched or blank picture", True),
@@ -138,18 +141,45 @@ DRAWN_LOOK = """- garbled_text: letters, words or a signature painted inside a d
 - off_style: a drawn scene that looks like a photograph or a 3D render instead of a painting in the professor's own style
 - bad_anatomy: a drawn person with plainly twisted or extra limbs, hands or fingers, or a melted face
 """
+NO_HOST = (("told by a drawn,\nanime-style old professor (the host: he belongs in the lower-left corner) over",
+            "told by a narrator's voice, with no presenter on screen, over"),
+           ("scenes painted in his own art", "scenes painted in one art style"),
+           ("in the professor's own style", "in the channel's hand-painted style"),
+           ("- host_glitch: the professor looks broken (cut off oddly, distorted, doubled)\n", ""))
 
 
-def look_system(drawn: bool) -> str:
+FACELESS_SWAPS = (("over real footage, photos, maps and charts,\nwith captions in the middle that light up word by word, and sometimes a "
+                   "big number, a person's name (top left) or the\ncase title (at the start). A big number counts up before it lands, so "
+                   "a frame may show an in-between value: that's\nfine.",
+                   "over AI-made pictures and stock video, with captions in the lower part that light up word by word, and big words or "
+                   "numbers in the upper part or the middle (callouts). A number counts up and words type out letter by letter, so a "
+                   "frame may show an in-between value or a word part written: that's fine. A tilted red stamp is meant to be there. A "
+                   "frame may be caught in a transition (motion blur, a white flash, a brief glitch, a crossfade): that's fine too."),
+                  ("(stock footage is illustrative: only a clash counts)", "(the pictures are illustrative: only a clash counts)"))
+FACELESS_LOOK = """- garbled_text: letters, words or a signature inside an AI-made picture itself (not the video's own captions or callouts)
+- bad_anatomy: a person in a picture with plainly twisted or extra limbs, hands or fingers, or a melted face
+"""
+
+
+def look_system(drawn: bool, faceless: bool = False) -> str:
     """The look's instructions: the drawn look's videos are painted scenes in the host's style, with three more
-    things to look for."""
-    if not drawn:
-        return LOOK_SYSTEM
-    return (LOOK_SYSTEM.replace("over real footage, photos, maps and charts,",
-                                "over scenes painted in his own art (real photos framed inside them, maps, charts),")
-            .replace("(stock footage is illustrative: only a clash counts)",
-                     "(the drawings are illustrative: only a clash counts)")
-            .replace("(cut off oddly, distorted, doubled)\n", "(cut off oddly, distorted, doubled)\n" + DRAWN_LOOK))
+    things to look for; the faceless look's are AI pictures and stock video in your Agent 4 prompt's styles, with two. With him off
+    screen (settings host.enabled) he isn't mentioned."""
+    text = LOOK_SYSTEM
+    if faceless:
+        for was, now in FACELESS_SWAPS:
+            text = text.replace(was, now)
+        text = text.replace("(cut off oddly, distorted, doubled)\n", "(cut off oddly, distorted, doubled)\n" + FACELESS_LOOK)
+    elif drawn:
+        text = (text.replace("over real footage, photos, maps and charts,",
+                             "over scenes painted in his own art (real photos framed inside them, maps, charts),")
+                .replace("(stock footage is illustrative: only a clash counts)",
+                         "(the drawings are illustrative: only a clash counts)")
+                .replace("(cut off oddly, distorted, doubled)\n", "(cut off oddly, distorted, doubled)\n" + DRAWN_LOOK))
+    if not host.shown():
+        for was, now in NO_HOST:
+            text = text.replace(was, now)
+    return text
 
 
 def _swap_or_redraw(name: str) -> str:
@@ -203,7 +233,7 @@ def words_on_screen(layout: list[dict]) -> list[dict]:
                                  item["start"], "swap" if item["what"] and ":" in item["what"] else None, item["what"]))
             continue
         parts = str(item["what"]).split("+")
-        movable = next((p for p in ("name", "number", "title") if p in parts), None)
+        movable = next((p for p in ("name", "number", "title", "callout") if p in parts), None)
         words = " and ".join(WORDS.get(p, p) for p in parts)
         detail = {"overlap": f"{words} overlap", "covers_host": f"{words} cover the Professor's face",
                   "unsafe": f"{words} reach under YouTube's buttons or title"}.get(item["kind"], words)
@@ -218,7 +248,8 @@ def words_on_screen(layout: list[dict]) -> list[dict]:
 def probe(path: Path) -> dict:
     """One pass of ffmpeg over the video: its size, length and sound, its loudness and true peak, and the stretches
     that are too dark or silent."""
-    err = subprocess.run([short_render.ffmpeg_exe(), "-hide_banner", "-nostats", "-i", str(path), "-vf", DARK,
+    err = subprocess.run([short_render.ffmpeg_exe(), "-hide_banner", "-nostats", "-i", str(path), "-vf",
+                          DARK if host.shown() else DARK_NO_HOST,
                           "-af", f"ebur128=peak=true,{SILENT}", "-f", "null", "-"],
                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600).stderr
     size = re.search(r"Video: .*?, (\d{3,4})x(\d{3,4})", err)
@@ -377,7 +408,9 @@ def look(path: Path, plan: dict, timing: list[dict], seconds: float, progress=lo
     """One Gemini look at FRAMES frames (the opening, then evenly through the video); its findings and its score."""
     lines = plan["script"]["lines"]
     drawn = plan["script"].get("look") == "drawn"
-    problems = {k: v for k, v in LOOK_PROBLEMS.items() if drawn or k not in DRAWN_ONLY}
+    faceless = plan["script"].get("look") == "faceless"
+    problems = {k: v for k, v in LOOK_PROBLEMS.items() if (drawn or faceless or k not in DRAWN_ONLY)
+                and (k != "host_glitch" or host.shown()) and not (faceless and k == "off_style")}
     shots = (plan.get("render") or {}).get("shots") or []
     title_until = float((plan.get("render") or {}).get("title_until") or doc_render.TITLE_FOR)
     times = [1.0] + [round(seconds * (i + 0.5) / (FRAMES - 1), 2) for i in range(FRAMES - 1)]
@@ -393,7 +426,7 @@ def look(path: Path, plan: dict, timing: list[dict], seconds: float, progress=lo
         return [_issue("look", "minor", "no frames could be taken for the look")], None
     advice = lessons_for("reviewer")["advice"]
     progress(f"Looking at {len(shown)} frames")
-    answer = llm.generate_json(parts, _look_schema(problems), look_system(drawn)
+    answer = llm.generate_json(parts, _look_schema(problems), look_system(drawn, faceless)
                                + ("\nLearned so far:\n- " + "\n- ".join(advice) if advice else ""))
     issues = []
     for item in answer.get("frames") or []:

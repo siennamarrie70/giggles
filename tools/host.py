@@ -10,6 +10,10 @@ movements repeats a whole number of times over the video, so the last frame flow
 when the Short loops. A soft shadow behind him keeps him readable over bright footage, and his chest
 fades out above YouTube's title text.
 
+He's on screen only while settings host.enabled is true: since 2026-11-03 (your choice) it's false, so the
+videos and thumbnails show no face, and he's only a voice (tools/narration.py).
+
+  shown()                   is he on screen (settings host.enabled)?
   mouth_track(wav, lines)   how open his mouth is, when: [[start, end, 1-3], ...] (closed otherwise)
   Host(...)                 .draw(frame, t) puts him on a frame; .box is all the room he moves in
 
@@ -33,7 +37,7 @@ import numpy as np
 from PIL import Image
 
 import lipsync
-from common import ASSETS_DIR, TMP_DIR, tmp_path
+from common import ASSETS_DIR, TMP_DIR, load_config, tmp_path
 
 HOST_DIR = ASSETS_DIR / "host"
 W, H, FPS = 1080, 1920, 24
@@ -50,6 +54,11 @@ BLINK_EVERY = (2.0, 6.0)               # seconds between blinks; now and then a 
 BLINK = ("half", "closed", "closed", "half")  # a blink, frame by frame
 SHAPES = {"B": 1, "F": 1, "G": 1, "C": 2, "E": 2, "H": 2, "D": 3}  # Rhubarb's shapes -> his openings (X, A shut)
 EYES = (None, "half", "closed")
+
+
+def shown() -> bool:
+    """Is he on screen in the videos and thumbnails (settings host.enabled)?"""
+    return bool((load_config().get("host") or {}).get("enabled", True))
 
 
 def mouth_track(wav: Path | str, lines: list[dict]) -> list[list]:

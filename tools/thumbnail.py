@@ -2,7 +2,8 @@
 The case's thumbnail, made by Agent 4 in the channel's one style, so every case looks like part of
 the same series: a still from the case (a real photo, a frame of its footage, or its map or chart)
 graded like the video, the Professor big in the lower-left corner with the soft shadow he has in the
-videos, the case type in a coloured tab (no case number since 2026-10-27, as in the video), and 2-6 bold words (the Writer's
+videos (only while settings host.enabled is true: since 2026-11-03 it's false, so no face), the case
+type in a coloured tab (no case number since 2026-10-27, as in the video), and 2-6 bold words (the Writer's
 thumbnail text) with the key word in the case type's colour. Two sizes: the cover (1080x1920: the
 Shorts grid, Instagram and the dashboard) and a wide one (1280x720, where a 16:9 picture is shown).
 
@@ -30,6 +31,7 @@ import infographics as ig
 import short_render
 
 COVER, WIDE = (1080, 1920), (1280, 720)
+PICTURES = (".jpg", ".jpeg", ".png", ".webp")
 MARKED = re.compile(r"\*([^*]+)\*")
 MAX_WORDS = 6
 INK = (12, 14, 20)
@@ -50,7 +52,7 @@ def still(spec: dict, accent: tuple) -> Image.Image:
     """The background: a photo or a drawing (the drawn look), a frame of a clip a second in, or the map, chart or quote
     as the video draws it."""
     kind = spec.get("kind")
-    if kind in ("photo", "scene"):
+    if kind in ("photo", "scene") or str(spec.get("path") or "").lower().endswith(PICTURES):  # (a stock photo counts as footage)
         return Image.open(spec["path"]).convert("RGB")
     if kind == "footage":
         at = min(1.0, max(0.0, float(spec.get("duration") or 2) - 0.5))
@@ -161,8 +163,9 @@ def make(background: Image.Image, text: str, category: str, case_no=None, look: 
             layer = Image.new("RGBA", size, INK + (0,))
             layer.putalpha(right.point(lambda a: int(a * 0.55)))
             img.alpha_composite(layer)
-        him = _professor(round(h * (0.47 if not wide else 0.92)))
-        img.alpha_composite(him, (-him.width // 9, h - him.height + him.height // 14))
+        if host.shown():
+            him = _professor(round(h * (0.47 if not wide else 0.92)))
+            img.alpha_composite(him, (-him.width // 9, h - him.height + him.height // 14))
         draw = ImageDraw.Draw(img)
         if wide:
             tab = _tab(draw, (int(w * 0.43), 46), kicker, case_no, accent, 30)

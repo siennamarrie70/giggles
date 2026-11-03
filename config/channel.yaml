@@ -29,7 +29,8 @@ cases:
     mysteries: 2             # disappearances, unsolved mysteries, puzzling discoveries
     business: 1              # how companies rose and fell, founders' decisions, scandals
     technology: 1            # AI, inventions, technology rivalries
-    trending: 2              # this week's news, explained
+    trending: 0              # this week's news, explained (off, your choice, 2026-11-03: photorealistic AI pictures of real
+                             # events this week could pass as real footage)
     psychology: 2            # why people decide and believe what they do
     mythology: 2             # epics, legends, ancient civilizations
     people: 2                # famous people's rise, fall and comeback
@@ -49,9 +50,10 @@ cases:
 research:
   share_alike_images: false  # also use CC BY-SA photos (they arguably make the whole video share-alike)
 
-look:                        # how the Shorts look (your choice, 2026-10-27); a change applies to the cases written after it
-  style: "drawn"             # drawn: every line over a scene drawn in the Professor's art by Cloudflare (free; tools/draw.py),
-                             # real photos framed inside; footage: stock video, archive film and real photos (the look before)
+look:                        # how the Shorts look; a change applies to the cases written after it
+  style: "faceless"          # faceless: your own Agent 3 and Agent 4 prompts (prompts/), AI pictures, stock video and no face (your
+                             # choice, 2026-11-03); drawn: every line over a scene drawn in the Professor's art by Cloudflare (free;
+                             # tools/draw.py), real photos framed inside; footage: stock video, archive film and real photos
   art: >-
     anime-style 2D illustration in the look of a hand-painted animated film: clean dark ink outlines, soft painted cel shading, warm
     amber lamplight against deep navy shadows, a muted palette of rust, brown, cream and dark blue, a richly painted detailed background,
@@ -65,7 +67,7 @@ look:                        # how the Shorts look (your choice, 2026-10-27); a 
 host:                        # the Professor, who hosts every case (drawn from your character sheet: assets/host/)
   name: "The Professor"      # for the dashboard only: he never says it and it's never shown
   size: "M"                  # S, M or L: how big he floats in the lower-left corner
-  enabled: true
+  enabled: false             # false: no face in the videos or thumbnails, only his voice (your choice, 2026-11-03)
 
 voice:                       # his voice: Gemini's text-to-speech (free tier), chosen on the dashboard's Host page
   name: "Alnilam"            # one of Gemini's voices (deep ones: Charon, Alnilam, Orus, Sadaltager, Algenib)
@@ -91,4 +93,4 @@ metadata:
   language: en
 
 music:
-  volume: 1.3                # the music under the voices (0 = none); it dips while someone speaks
+  volume: 1.0                # the music under the voice (0 = none; 1 is your Agent 4 prompt's -20 dB); it dips while he speaks
