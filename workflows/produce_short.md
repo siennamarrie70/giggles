@@ -353,6 +353,14 @@ failed slot.
   #32 came out 13 s long and the Reviewer held it three times). Now `hear()` gets no prompt (105 of 106 words heard,
   match 0.94), and `tighten()` only cuts quiet audio: where whisper heard nothing but the voice is speaking, only the
   real pauses in it go.
+- **Words clipped at every long pause (found 2026-11-04, the user heard it):** whisper's word times aren't where the
+  sound is: on a raw reading the sound ran up to 0.44 s past a word's end (most after spelled-out numbers) and began up
+  to 0.21 s before the next word's start. `tighten()` cut everything but 0.1 s either side of those times unless 0.3 s
+  of speech was found in the gap, which removed sound in 14 of 15 gaps (2.7 of 46.8 s of sound, words and breaths).
+  Now only stretches measured as quiet are ever cut, in every look, `set_pauses()` puts its silence inside measured
+  quiet, and the faceless video ends 0.1 s after the sound of the last word (`voice_end`). Keeping that sound makes readings a few
+  seconds longer. When the cutting rules change again, raise `narration.CUT_RULES` so kept readings are read again.
+  The unfinished last line of a faceless Short is not this bug: the Agent 3 prompt asks for it, so the Short loops.
 - **Whisper's lock (2026-10-26):** `hear()` holds the model's lock while `_model()` loads it, so the lock is
   re-entrant (`RLock`); a plain Lock deadlocked forever. The model loads from `.tmp/models/whisper` without asking
   Hugging Face (works offline).

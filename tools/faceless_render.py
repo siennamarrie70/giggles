@@ -53,7 +53,7 @@ W, H, FPS = 1080, 1920, 30
 SAMPLE_RATE = 44_100
 RENDER_TIMEOUT_S = 900
 LEAD_CUT = 0.08          # a new scene starts this long before its first word
-END_PAD = 0.1            # the video ends this long after the last word (it loops straight back)
+END_PAD = 0.1            # the video ends this long after the sound of the last word (it loops straight back)
 AUDIT_EVERY = round(_AUDIT_AT_24 * FPS / 24)
 CAPTION_Y = 1420         # captions' middle: in the lower third, clear of YouTube's title text below
 CAPTION_X = 510          # ...and of its buttons on the right
@@ -476,7 +476,7 @@ def timed(manifest: dict, narration: dict) -> list[dict]:
     if sum(counts) != len(words):
         raise ValueError(f"the scenes cover {sum(counts)} words, the voice said {len(words)}")
     out, at = [], 0
-    last = max(line["end"] for line in narration["lines"])
+    last = max([line["end"] for line in narration["lines"]] + [narration.get("voice_end") or 0.0])
     total = round(last + END_PAD, 2)
     for k, (scene, count) in enumerate(zip(manifest["scenes"], counts)):
         mine = words[at:at + count]
