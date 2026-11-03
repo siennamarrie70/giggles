@@ -67,6 +67,9 @@ ARCHIVE_SOURCES = ["none", "film", "nasa"]
 RECENT_DAYS = 90
 FOLLOW_UP_EVERY = 4  # at most one case in this many is a follow-up
 TRIES = 3
+# Gemini's stock wording for a topic says nothing about which case it is: "the startling findings and paradox of the decoy effect"
+# counted as a repeat of "...of the bystander effect", and 3 rejected topics in a row failed the job (2026-11-04)
+STOCK_WORDS = {"startling", "findings", "paradox", "mysterious", "disappearance", "discovery", "invention", "secret", "double"}
 
 
 def _schema(categories: list[str]) -> dict:
@@ -117,7 +120,7 @@ def _schema(categories: list[str]) -> dict:
 
 
 def _words(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9]{4,}", (text or "").lower()) if w not in rf.STOPWORDS}
+    return {w for w in re.findall(r"[a-z0-9]{4,}", (text or "").lower()) if w not in rf.STOPWORDS and w not in STOCK_WORDS}
 
 
 def repeats(topic: str, earlier: list[str]) -> str | None:

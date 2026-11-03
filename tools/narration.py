@@ -6,8 +6,9 @@ American professor with a deep, calm voice), each line with its own direction ("
 time, so the captions, cuts, numbers and his mouth follow the voice exactly, and a read that
 doesn't match the script is caught (and read again). Pauses longer than MAX_GAP are tightened to
 KEEP_GAP: Gemini's narrators leave about a second between dramatic sentences (measured 2026-10-26),
-too slow for Shorts. Only quiet audio is ever cut: where whisper heard no words but the voice is
-speaking (it can skip a stretch), only the real pauses in it go. "deeper" lowers the voice 1 or 2
+too slow for Shorts. Only quiet audio is ever cut, measured from the sound itself: whisper's times only say
+where to look (on 2026-11-04 the sound ran up to 0.44 s past a word's end and began up to 0.21 s before the next
+word's start, and trusting them cut the ends and starts of words). "deeper" lowers the voice 1 or 2
 semitones without changing its timing (ffmpeg's rubberband filter, formants kept, so it still
 sounds like him).
 
@@ -72,8 +73,9 @@ WHISPER_REVISION = "d1d751a5f8271d482d14ca55d9e2deeebbae577f"  # pinned (unchang
 MAX_GAP, KEEP_GAP = 0.34, 0.2   # seconds: pauses longer than MAX_GAP are cut down to KEEP_GAP
 LEAD, TAIL = 0.06, 0.25         # silence kept before the first word and after the last
 FRAME = 0.01                    # seconds: loudness is measured in steps this long
-SPEECH_DB, PAUSE_DB = 20, 40    # within 20 dB of the voice's usual level is speech; 40 dB below it, a pause
-MISSED = 0.3                    # seconds of speech inside a "pause" that mean whisper missed words there
+PAUSE_DB = 40                   # 40 dB below the voice's usual level is a pause
+SHORTEST_QUIET = 0.06           # seconds: a quiet stretch shorter than this may be inside a word (the stop in "t" or "p")
+CUT_RULES = 2                   # goes up when the way a reading is cut changes, so a kept reading is read again
 MIN_MATCH = 0.85                # how closely what's heard must match the script
 FAILED_FOR = 30 * 60            # seconds a model that failed is asked last (a busy model tends to stay busy)
 # A line the Reviewer found rushed is read again "slowly", but Gemini doesn't always hear it (#52 came back at 3.7
@@ -439,16 +441,6 @@ def _levels(pcm):
     return level - np.percentile(level, 90)
 
 
-def _spoken(level, a: float, b: float) -> bool:
-    """Is someone speaking between a and b (seconds): a stretch of MISSED or longer at speech level?"""
-    run = 0
-    for k in range(int(a / FRAME), min(len(level), int(b / FRAME))):
-        run = run + 1 if level[k] > -SPEECH_DB else 0
-        if run * FRAME >= MISSED:
-            return True
-    return False
-
-
 def _pauses(level, a: float, b: float, total: float) -> list[tuple[float, float]]:
     """The quiet stretches between a and b (seconds); one that reaches the last frame ends at `total`."""
     out, start = [], None
@@ -465,9 +457,8 @@ def _pauses(level, a: float, b: float, total: float) -> list[tuple[float, float]
 
 def tighten(pcm, heard: list[tuple[float, float, str]], keep_gap: float = KEEP_GAP):
     """Cuts long pauses down to keep_gap (and the silence before the first and after the last word); returns the
-    new samples and a function mapping old times to new ones. A pause is where whisper heard no words, unless
-    someone is speaking there (whisper missed those words): then only its quiet stretches go, so no speech is
-    ever cut."""
+    new samples and a function mapping old times to new ones. Where whisper heard no words is only where to look:
+    what goes is what's really quiet there, so no speech is ever cut."""
     import numpy as np
 
     if not heard:
@@ -475,18 +466,12 @@ def tighten(pcm, heard: list[tuple[float, float, str]], keep_gap: float = KEEP_G
     total = len(pcm) / SAMPLE_RATE
     longest = max(MAX_GAP, keep_gap)
     first, last = heard[0][0], heard[-1][1]
-    # (from, to, silence kept at its start, at its end): before the first word, the long gaps, after the last
-    spans = [(0.0, first, 0.0, LEAD)]
-    spans += [(end, start, keep_gap / 2, keep_gap / 2)
-              for (_, end, _), (start, _, _) in zip(heard, heard[1:]) if start - end > longest]
-    spans.append((last, total, TAIL, 0.0))
+    # before the first word, the long gaps, after the last
+    spans = [(0.0, first)] + [(end, start) for (_, end, _), (start, _, _) in zip(heard, heard[1:]) if start - end > longest]
+    spans.append((last, total))
     level = _levels(pcm)
     cuts = []  # (from, to) in seconds, removed
-    for a, b, keep_a, keep_b in spans:
-        if not _spoken(level, a, b):
-            if b - a > keep_a + keep_b:
-                cuts.append((a + keep_a, b - keep_b))
-            continue
+    for a, b in spans:
         for x, y in _pauses(level, a, b, total):
             keep = (0.0, LEAD) if x <= 0 else (TAIL, 0.0) if y >= total else (keep_gap / 2, keep_gap / 2)
             if y - x > (sum(keep) if x <= 0 or y >= total else longest):
@@ -622,24 +607,37 @@ def slow_rushed(pcm, heard: list, lines: list[dict], timed: list[dict]):
 
 def set_pauses(pcm, heard: list, lines: list[dict], timed: list[dict]):
     """A line with a "pause" (the faceless look's pause_after_sec) gets that much quiet after it, if it hasn't that much
-    already; the words after it move along. Returns the reading and the heard words."""
+    already; the words after it move along. Returns the reading and the heard words. The quiet is measured from the sound
+    and the new silence goes in the middle of it: never in a word, so where he runs straight on it's left as it is."""
     import numpy as np
 
     level = _levels(pcm)
+    total = len(pcm) / SAMPLE_RATE
     for k, (line, t) in reversed(list(enumerate(zip(lines, timed)))):
         want = float(line.get("pause") or 0)
         if not want or k + 1 >= len(timed):
             continue
-        gap = timed[k + 1]["start"] - t["end"]
-        add = want - gap
-        # Never in the middle of a word: where whisper's times overlap, or he's speaking in the gap, it's left as it is.
-        if add <= 0.01 or gap < 0 or _spoken(level, t["end"], timed[k + 1]["start"]):
+        a, b = sorted((t["end"], timed[k + 1]["start"]))
+        quiet = [q for q in _pauses(level, max(0.0, a - 0.1), b + 0.1, total) if q[1] - q[0] >= SHORTEST_QUIET]
+        if not quiet:
             continue
-        middle = t["end"] + gap / 2
+        x, y = max(quiet, key=lambda q: q[1] - q[0])
+        add = want - (y - x)
+        if add <= 0.01:
+            continue
+        middle = (x + y) / 2
         at = int(middle * SAMPLE_RATE)
         pcm = np.concatenate([pcm[:at], np.zeros(int(add * SAMPLE_RATE), dtype=pcm.dtype), pcm[at:]])
         heard = [tuple(x + add if x >= middle else x for x in (a, b)) + (w,) for a, b, w in heard]
     return pcm, heard
+
+
+def voice_end(pcm) -> float:
+    """When the sound of his last word really ends, in seconds (whisper's time for it is often early)."""
+    import numpy as np
+
+    loud = np.nonzero(_levels(pcm) > -PAUSE_DB)[0]
+    return min(len(pcm) / SAMPLE_RATE, float(loud[-1] + 1) * FRAME) if len(loud) else len(pcm) / SAMPLE_RATE
 
 
 def _finish(audio: bytes, heard: list, lines: list[dict], out: Path, engine: str, voice: str, match: float,
@@ -658,7 +656,7 @@ def _finish(audio: bytes, heard: list, lines: list[dict], out: Path, engine: str
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(_wav_bytes(lower(pcm, deeper)))
     return {"wav": str(out), "seconds": round(len(pcm) / SAMPLE_RATE, 3), "engine": engine, "voice": voice,
-            "match": round(match, 3), "deeper": deeper, "lines": timed}
+            "match": round(match, 3), "deeper": deeper, "lines": timed, "voice_end": round(voice_end(pcm), 3)}
 
 
 # --- samples for the Host page -----------------------------------------------------

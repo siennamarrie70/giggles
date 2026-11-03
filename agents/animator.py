@@ -303,7 +303,7 @@ def _reading(row: dict, said: list[dict], how: dict, progress) -> tuple[dict, li
     this voice; otherwise a new one (kept for next time). A reading that isn't his voice (the old backup voice,
     Gemini's dropped legacy model, or one measured unlike him) is never reused."""
     voice = load_config().get("voice") or {}
-    key = hashlib.sha1(json.dumps([said, how["keep_gap"], how["take"],
+    key = hashlib.sha1(json.dumps([said, how["keep_gap"], how["take"], narration.CUT_RULES,
                                    [voice.get(k) for k in ("name", "model", "style", "deeper")]],
                                   sort_keys=True).encode("utf-8")).hexdigest()[:16]
     work = voice_dir(row["id"])
