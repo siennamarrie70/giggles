@@ -59,11 +59,14 @@ from common import env, load_config, tmp_path
 
 API = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}"
 MODEL = "@cf/black-forest-labs/flux-1-schnell"
+FACELESS_MODEL = MODEL   # the faceless look's pictures
+MAX_PROMPT = 2048        # the most FLUX.1 [schnell] takes, in characters
 STEPS = 4                # FLUX.1 [schnell] takes up to 8; 4 is its usual
 TILE, STEP = 4.8, 9.6    # neurons per 512x512 tile and per step (flux-1-schnell)
 SIZE = 1024              # what it draws: 1024x1024
 BUDGET = 9000            # neurons a day this stops at (Cloudflare's free plan: 10,000)
 SHORT_PICTURES = 9       # a drawn case's most drawings (agents/writer.py MAX_SCENES): a new one is drawn only if it fits
+PICTURES_A_DAY = 60      # pictures Cloudflare draws in a day in practice, before it refuses (64 on 2026-10-27)
 TIMEOUT = 120
 TRIES = 3
 ART = ("anime-style 2D illustration in the look of a hand-painted animated film: clean dark ink outlines, soft "
@@ -88,8 +91,10 @@ class DrawingUnavailable(RuntimeError):
 
 
 def style() -> str:
-    """The look set for new cases: "drawn" (scenes in his art) or "footage" (stock video, archive film, photos)."""
-    return "drawn" if str((load_config().get("look") or {}).get("style") or "").strip().lower() == "drawn" else "footage"
+    """The look set for new cases: "faceless" (your Agent 3 and 4 prompts: tools/a3.py, tools/a4.py), "drawn" (scenes in his
+    art) or "footage" (stock video, archive film, photos)."""
+    wanted = str((load_config().get("look") or {}).get("style") or "").strip().lower()
+    return wanted if wanted in ("faceless", "drawn") else "footage"
 
 
 def fallback() -> bool:
@@ -131,6 +136,14 @@ def cost(steps: int) -> float:
     return (SIZE // 512) ** 2 * TILE + steps * STEP
 
 
+def pictures_left() -> int:
+    """About how many more pictures Cloudflare will draw today (it refuses at about PICTURES_A_DAY: see the top), none
+    while it rests."""
+    if not is_configured() or resting():
+        return 0
+    return max(0, PICTURES_A_DAY - spent_today()["pictures"])
+
+
 def prompt_for(scene: str, art: str | None = None) -> str:
     return f"{(art or ART).strip().rstrip('.')}. {' '.join(scene.split()).rstrip('.')}. {NEVER}."
 
@@ -165,6 +178,11 @@ def picture_path(folder: Path, scene: str, seed: int, how: dict) -> Path:
     return Path(folder) / f"scene_{hashlib.sha1(key.encode('utf-8')).hexdigest()[:14]}.jpg"
 
 
+def _exact_path(folder: Path, prompt: str, seed: int, how: dict) -> Path:
+    key = json.dumps([prompt, int(seed), how["model"], how["steps"]])
+    return Path(folder) / f"pic_{hashlib.sha1(key.encode('utf-8')).hexdigest()[:14]}.jpg"
+
+
 def trim(picture: Image.Image) -> Image.Image:
     """The picture without a plain (near-white or near-black, flat) band round its edges, nor a thin strip at every
     edge (EDGE), at its size again."""
@@ -192,11 +210,15 @@ def _error(resp: requests.Response) -> str:
         return resp.text[:300]
 
 
-def draw(scene: str, folder: Path | str | None = None, seed: int = 0, progress=print) -> Path:
-    """The scene drawn in his art (a 1024x1024 JPEG in `folder`): the kept picture if it's been drawn before."""
+def draw(scene: str, folder: Path | str | None = None, seed: int = 0, progress=print, exact: bool = False) -> Path:
+    """The scene drawn in his art (a 1024x1024 JPEG in `folder`): the kept picture if it's been drawn before. `exact`: the
+    faceless look's pictures, whose words already say the style (the Agent 4 prompt's ai_image_prompt and style_suffix), so
+    nothing is added to them."""
     how = settings()
+    if exact:
+        how = {**how, "model": FACELESS_MODEL}
     folder = Path(folder or tmp_path("scenes", "misc", "x").parent)
-    out = picture_path(folder, scene, seed, how)
+    out = picture_path(folder, scene, seed, how) if not exact else _exact_path(folder, scene, seed, how)
     if out.exists() and out.stat().st_size > 1000:
         return out
     if not is_configured():
@@ -210,7 +232,7 @@ def draw(scene: str, folder: Path | str | None = None, seed: int = 0, progress=p
     url = API.format(account=env("CLOUDFLARE_ACCOUNT_ID"), model=how["model"])
     # Workers AI's schnell takes no seed (a 400 "unevaluated properties '/seed'", 2026-10-27): every call draws a new
     # picture, so the seed only names the kept file, and a new seed (a Reviewer's redraw) gets a new drawing
-    body = {"prompt": prompt_for(scene, how["art"]), "steps": how["steps"]}
+    body = {"prompt": scene[:MAX_PROMPT] if exact else prompt_for(scene, how["art"]), "steps": how["steps"]}
     last = ""
     for attempt in range(TRIES):
         try:

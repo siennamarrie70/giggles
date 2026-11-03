@@ -638,6 +638,18 @@ def _drawing_state() -> dict:
             "budget": draw.BUDGET}
 
 
+def _scenes_json(video_id: int, plan: dict) -> list[dict]:
+    """A faceless case's scenes for the Studio: each one's words, its picture or clip and its callout."""
+    assets, out = plan.get("assets") or {}, []
+    for scene in (plan.get("manifest") or {}).get("scenes") or []:
+        name = "S01" if scene.get("reuse_asset_from") else scene["scene_id"]
+        kind = (assets.get(name) or {}).get("kind")
+        thumb = f"/media/scene/{video_id}/{name}.jpg" if kind == "picture" else f"/media/clip/{video_id}/{name}.jpg" if kind else None
+        out.append({"id": scene["scene_id"], "text": scene["narration_text"], "kind": kind, "thumb": thumb,
+                    "callout": (scene.get("on_screen_text") or {}).get("text")})
+    return out
+
+
 def _drawings_json(video_id: int, plan: dict) -> dict:
     """A drawn case's drawings, by the number of the line each starts on: their pictures' addresses."""
     return {n: f"/media/scene/{video_id}/{n}.jpg{_stamp(Path(path))}" for n, path in (plan.get("drawings") or {}).items()
@@ -666,7 +678,8 @@ def _video_json(v: dict) -> dict:
     drawn = script.get("look") == "drawn"
     return {
         **out,
-        "look": "drawn" if drawn else "footage", "drawings": _drawings_json(v["id"], plan) if drawn else {},
+        "look": script.get("look") if script.get("look") in ("drawn", "faceless") else "footage",
+        "drawings": _drawings_json(v["id"], plan) if drawn else {}, "scenes": _scenes_json(v["id"], plan),
         "switched": plan.get("switched"),
         "category": brief.get("category"), "topic": brief.get("topic"), "angle": brief.get("angle"),
         "paradox": brief.get("paradox"),
@@ -1516,8 +1529,8 @@ def _validated(s: dict) -> dict:
             hashtags.append(tag)
     look = section("look")
     style = str(look.get("style") or "footage").strip().lower()
-    if style not in ("drawn", "footage"):
-        raise ValueError("The look: drawn or footage.")
+    if style not in ("faceless", "drawn", "footage"):
+        raise ValueError("The look: faceless, drawn or footage.")
     art = " ".join(str(look.get("art") or "").split())
     if style == "drawn" and not 40 <= len(art) <= 600:
         raise ValueError("The art: describe his style in 40 to 600 characters (every drawing starts with it).")

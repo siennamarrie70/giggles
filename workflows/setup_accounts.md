@@ -158,7 +158,7 @@ video-making ones, ~650 MB). GitHub Actions is free for public repositories (4 c
    `GEMINI_API_KEY`, `PEXELS_API_KEY`, `PIXABAY_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`,
    `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`,
    `YOUTUBE_REFRESH_TOKEN`, `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and for Reels
-   `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, `INSTAGRAM_USERNAME` and `REELS_KEY` (it encrypts the Reels'
+   `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, `INSTAGRAM_USERNAME` and `PROMPTS_KEY` (it opens your Agent 3 and 4 prompts: `tools/prompts.py`) and `REELS_KEY` (it encrypts the Reels'
    videos kept between runs; posting needs no Facebook app ID or secret). Claude can copy them all from `.env`
    with `gh secret set`, without showing them. Two workflows then run: **Morning run** and **Reels** (5 and 35
    minutes after each slot, posting the Reels of Shorts whose morning run has ended). Variables tab: `PAUSED` = `false` (`true` stops the cloud run;

@@ -209,7 +209,33 @@ failed slot.
   real photos with depth (near parts slide more than far ones), NASA's Blue Marble with the countries lit, charts and
   quote cards high in the frame. Numbers count up and land in gold, with an impact, the moment they're said. A
   person's photo gets their name top left (after the title fades). One grade, vignette and grain for all of it.
-- **The Professor:** always in the lower-left corner, about 440 px wide (`host.size`: S/M/L), his chest fading out
+- **The faceless look (`look.style: faceless`, the user's choice on 2026-11-03):** the user's own prompts for Agents 3 and 4 run the
+  writing and the scene design, word for word, encrypted in `prompts/*.enc` because the repository is public (key `PROMPTS_KEY`, in `.env`
+  and GitHub's secrets; after changing a prompt: `.venv/Scripts/python tools/prompts.py --seal agent3 file.txt`, and the same for
+  `agent4`).
+  - `tools/a3.py` and `tools/a4.py` hold the prompts' rules in code: what's exact is set, and what's still wrong goes back with the last answer (a script up
+    to 4 tries, a design up to 3). A script that can't keep every rule means another topic. Measured 2026-11-03 on real research:
+    with `thinking_level` LOW none of 3 scripts passed in 3 tries, and without the last answer sent back the tries didn't converge; with MEDIUM and the last
+    answer, Flash-Lite passed in 1-2 tries and took 15-40 s. Gemini-3.6-flash and 3.5-flash allow only 20 requests a day each on the free tier, so these
+    prompts use the Flash-Lite models first (a day's Gemini calls are printed at the end of each morning run: `llm.calls`). Google doesn't publish Flash-Lite's free limit; AI Studio's rate limit page shows it.
+  - The script gets only what the research found (2026-11-03): the Editor's paradox is written before the research and may assume what it never found ("nobody wanted it"), so it stays out of `conflicts`,
+    and the standing `do_not_claim` rules bar reactions and results no fact states. Given the paradox, the script kept saying it and the fact-checker kept rejecting it; without it, 2 tries was usual.
+    A topic whose facts hold no story still comes out as a flat list that keeps every rule. A model's score of the storytelling couldn't catch these: the same good script scored 3 and 6 out of 10.
+  - His pace stays calm (the user's choice): about 2.1 words a second against the prompt's 3.0, so a Short runs about 65-72 s and each scene about 3-4 s. Everything follows the
+    words as spoken, not the prompt's estimates. His voice settings and the Reviewer's pace rules are unchanged.
+  - Types: `tools/a3.py NICHE_FOR` counts the channel's types as the prompts' three niches (people, crime, mysteries, dark history = history; technology, economy,
+    psychology, science = business). Trending news is off (`cases.categories.trending: 0`), so photorealistic AI pictures never show this week's real events.
+  - Pictures: Cloudflare's free allowance is about 60 pictures a day and a Short wants 6-20. The Editor picks mythology and history only while enough are left
+    (`editor.PICTURES_NEEDED`); when they run out mid-Short the rest fall back as the prompt says (stock video, then a stock photo, then the picture before).
+  - Sound effects: the prompt's tags, as files in `assets/sfx/` named after the tag (CC0, `tools/sfx_fetch.py`; Pixabay's API has no sounds). Replace one by dropping a file with that name. A tag
+    with no file is silent. Music: its five moods are mapped onto the library in `assets/music/tracks.yaml` (`faceless:`); `search_query` is unused (no music API).
+  - Labels: the prompt's `ai_disclosure_flag` sets YouTube's `containsSyntheticMedia` and Instagram's `is_ai_generated`; if Instagram refuses a Reel with it, the Reel goes up without it and Telegram says so.
+  - The way back: `look.style: drawn`, `host.enabled: true`, `trending: 2` in `config/channel.yaml`, or tag `v5-before-faceless`. Old cases keep their own look.
+- **No face on screen since 2026-11-03 (the user's choice, `host.enabled: false`):** the videos and thumbnails show no
+  host, only his voice, and the captions sit at `CAPTION_Y`; no mouth shapes are worked out. The Reviewer isn't asked about him,
+  and its dark-shot check uses `pic_th` 0.95 instead of 0.85 (he kept about 11% of the frame lit), so it catches the same
+  shots. Shorts already made keep him. `host.enabled: true` brings all of this back, as described next.
+- **The Professor, when on screen:** in the lower-left corner, about 440 px wide (`host.size`: S/M/L), his chest fading out
   just above YouTube's title text, a soft shadow behind him. He bobs slowly, sways, tilts a degree, nods as each line
   starts, blinks every 2-6 s, and his mouth follows Rhubarb's shapes (held two frames, like hand-drawn animation).
   Every movement repeats a whole number of times over the video, so the loop is seamless. Captions sit in the middle,

@@ -1028,7 +1028,11 @@ function renderScripts() {
 
   root.replaceChildren(
     pageHead({ eyebrow: "03 · Agent 3 · Writer", agent: "writer", title: "Scripts",
-      lede: "Agent 3 turns the research into the Professor's script, told as a mystery: the paradox, the question, the "
+      lede: state.app.drawing?.look === "faceless"
+        ? "Agent 3 turns the research into a script with your own prompt: five beats that loop back to the start, every rule of "
+          + "the prompt checked in code, then read again by the fact-checker. Titles and descriptions can be edited before "
+          + "it's animated; its lines can't, because the scenes are built on them."
+        : "Agent 3 turns the research into the Professor's script, told as a mystery: the paradox, the question, the "
             + "people's decisions, the reveal, and a last line that echoes the first. Every line cites its facts, says how "
             + "he says it and what's on screen; a retention editor tightens it and a fact-checker reads it again. Edit "
             + "anything before it's animated.",
@@ -1085,6 +1089,7 @@ function scriptEditor(v) {
   const labelled = (text, control) => h("label", {}, text, control);
   const visuals = Object.entries(v.visuals).map(([key, text]) => [key, `${key} · ${text}`.slice(0, 90)]);
   const drawn = v.look === "drawn";
+  const faceless = v.look === "faceless";
   const drawLines = () => body.replaceChildren(...lines.map((l, k) => {
     const text = h("input", { class: "input", value: l.text, "aria-label": `Line ${k + 1}`,
                               oninput: e => { l.text = e.target.value; markDirty(); } });
@@ -1127,9 +1132,9 @@ function scriptEditor(v) {
     try {
       const updated = await api(`/api/videos/${v.id}`, { method: "PATCH", json: {
         case_title: caseTitle.value, title: title.value, description: description.value,
-        lines: lines.filter(l => l.text.trim()).map(l => ({ text: l.text, beat: l.beat, direction: l.direction || "",
+        ...(faceless ? {} : { lines: lines.filter(l => l.text.trim()).map(l => ({ text: l.text, beat: l.beat, direction: l.direction || "",
                                                             facts: l.facts || [], visuals: l.visuals || [],
-                                                            ...(drawn ? { scene: l.scene || "same" } : {}) })) } });
+                                                            ...(drawn ? { scene: l.scene || "same" } : {}) })) }) } });
       state.dirty.delete(v.id);
       const i = state.videos.findIndex(x => x.id === v.id);
       if (i >= 0) state.videos[i] = updated;
@@ -1157,9 +1162,10 @@ function scriptEditor(v) {
           scoreText && h("p", {}, h("b", {}, "Retention editor: "), scoreText, v.retention.rewritten ? ` · ${plural(v.retention.rewritten, "line")} rewritten` : ""),
           (v.habits || []).length > 0 && h("p", {}, h("b", {}, "Still sounds like a lecture: "), v.habits.join("; "))),
         h("div", { class: "field" }, h("label", {}, h("span", {}, "Case title · over the opening"), counted(caseTitle, LIMITS.caseTitle)), caseTitle),
-        h("p", { class: "sub-head" }, "The Professor's script · the hook, the setup, the turning point, the reveal, his closing thought"),
-        body,
-        h("div", { class: "row", style: "margin-top:10px" },
+        h("p", { class: "sub-head" }, faceless ? "The script · your prompt's five beats, looping back to the start"
+          : "The Professor's script · the hook, the setup, the turning point, the reveal, his closing thought"),
+        faceless ? scriptView(v) : body,
+        !faceless && h("div", { class: "row", style: "margin-top:10px" },
           h("button", { class: "btn btn-sm", type: "button", disabled: lines.length >= 18, onclick: () => {
             lines.push({ text: "", beat: "turn", direction: "", facts: [], visuals: [], check: "edited",
                          ...(drawn ? { scene: "same" } : {}) });
@@ -1167,7 +1173,7 @@ function scriptEditor(v) {
             drawLines();
           } }, "Add a line"),
           lengthNote),
-        h("p", { class: "hint", style: "margin-top:6px" }, "A line you change is marked “edited by you”: the fact-checker doesn't read it again, so keep its numbers to the facts (F1, F2…) it cites. ",
+        !faceless && h("p", { class: "hint", style: "margin-top:6px" }, "A line you change is marked “edited by you”: the fact-checker doesn't read it again, so keep its numbers to the facts (F1, F2…) it cites. ",
           drawn ? "Every line plays over a drawing in his art: describe it (one main subject, no names, no writing), or write “same” to stay on the one before. A changed drawing is drawn again when the video is made."
             : "Stock video is illustrative: real photos and archive film carry the specific claims."),
         h("p", { class: "sub-head" }, "On YouTube"),
@@ -1229,7 +1235,11 @@ function renderStudio() {
 
   root.replaceChildren(
     pageHead({ eyebrow: "04 · Agent 4 · Animator", agent: "animator", title: "Studio",
-      lede: "Agent 4 has the Professor read the script (Gemini's voice, free), moves his mouth with the words (Rhubarb), "
+      lede: state.app.drawing?.look === "faceless"
+        ? "Agent 4 designs every scene with your own prompt: its AI picture or stock clip, camera move, effects, colour, on-screen "
+          + "words and sound. The narrator reads the script (Gemini's voice, free), and the video and its thumbnail are made. "
+          + "Agent 5 then checks every video; one that fails comes back here with notes and is fixed."
+        : "Agent 4 has the Professor read the script (Gemini's voice, free), moves his mouth with the words (Rhubarb), "
             + "cuts the real footage, archive film, photos, maps, charts and numbers to every line, adds music in the "
             + "script's mood, makes the video on this PC with him floating in the corner, and its thumbnail. Agent 5 "
             + "then checks every video; one that fails comes back here with notes and is fixed.",
@@ -1377,9 +1387,21 @@ async function answerReviewer(v, action) {
   }
 }
 
+function sceneList(v) {
+  return h("ol", { class: "script" }, v.scenes.map(s => h("li", {},
+    h("span", { class: "beat-k" }, s.id),
+    h("div", { class: "scene-row" },
+      s.thumb && h("a", { href: s.thumb, target: "_blank", title: "Full size" }, h("img", { src: s.thumb, alt: "", loading: "lazy" })),
+      h("div", {},
+        h("p", { class: "line" }, s.text),
+        h("div", { class: "how" }, h("span", { class: "tag" }, s.kind === "picture" ? "AI picture" : s.kind === "clip" ? "stock clip" : s.kind === "photo" ? "stock photo" : "not made yet"),
+          s.callout && h("span", { class: "tag" }, s.callout)))))));
+}
+
 function scriptView(v) {
   // A case still being made, or one stopped before its script, has no lines yet (the Studio opened blank on it)
   if (!v.lines?.length) return h("p", { class: "muted" }, v.status === "making" ? "Agents 1-3 are still writing it." : "No script.");
+  if (v.look === "faceless" && v.scenes?.length) return sceneList(v);
   return h("ol", { class: "script" }, v.lines.map((l, k) => {
     const [checkText, checkTone] = CHECK[l.check] || ["Not checked", "idle"];
     return h("li", { class: ["closing", "echo"].includes(l.beat) || k === v.lines.length - 1 ? "punch" : "" },
@@ -1908,9 +1930,12 @@ async function loadHost() {
 
   $("#view-host").replaceChildren(...[
     pageHead({ eyebrow: "L2 · Library", title: "Host",
-      lede: `${d.name} hosts every case. He's drawn from your own character sheet, cut out and given a mouth and eyelids `
+      lede: d.enabled
+        ? `${d.name} hosts every case. He's drawn from your own character sheet, cut out and given a mouth and eyelids `
             + "that move, and floats in the lower-left corner the whole video: talking with the words, blinking, nodding as "
-            + "each line starts. His voice is one of Gemini's (free), read in his persona and made a little deeper.",
+            + "each line starts. His voice is one of Gemini's (free), read in his persona and made a little deeper."
+        : `${d.name} is the voice of every case: one of Gemini's (free), read in his persona and made a little deeper. `
+            + "His face isn't in the videos or thumbnails (your choice, set by host.enabled in the settings file).",
       actions: [taskButton("host-test", "Make a test clip", { primary: !d.test_clip, title: "He says his line from your sheet in his current voice (one free Gemini call)" })] }),
     d.resting && h("div", { class: "callout banner", dataset: { tone: "warn" } },
       h("b", {}, "His voice is resting. "), (d.used_up
@@ -2171,7 +2196,8 @@ async function loadSettings() {
           h("textarea", { class: "input", id: "s-voice", name: "voice", rows: 5, disabled: ro, value: s.channel.voice }), "s-voice")),
     card("look", "S2.2", "The look",
       row("How the Shorts look", "Changes apply to the cases written after you save; a case already written keeps its look.",
-        select("look_style", [["drawn", "Drawn in his art: every scene painted like the Professor"],
+        select("look_style", [["faceless", "Faceless: your Agent 3 and 4 prompts, AI pictures and stock video, no face"],
+                              ["drawn", "Drawn in his art: every scene painted like the Professor"],
                               ["footage", "Real footage: stock video, archive film and photos"]], s.look?.style || "footage"), "s-look_style"),
       row("His art", "Every drawing starts with these words (Cloudflare's FLUX draws from words alone). Keep the names of his colours and lines.",
         h("textarea", { class: "input", id: "s-art", name: "art", rows: 4, disabled: ro, value: s.look?.art || "" }), "s-art"),

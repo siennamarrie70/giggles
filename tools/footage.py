@@ -57,6 +57,8 @@ from common import env, tmp_path
 
 PEXELS_SEARCH = "https://api.pexels.com/v1/videos/search"
 PIXABAY_SEARCH = "https://pixabay.com/api/videos/"
+PEXELS_PHOTOS = "https://api.pexels.com/v1/search"
+PIXABAY_PHOTOS = "https://pixabay.com/api/"
 ARCHIVE_SEARCH = "https://archive.org/advancedsearch.php"
 ARCHIVE_META = "https://archive.org/metadata/{id}"
 ARCHIVE_FILE = "https://archive.org/download/{id}/{name}"
@@ -191,14 +193,51 @@ def search_pixabay(query: str, per_page: int = 15) -> list[dict]:
     return clips
 
 
+def search_photos(query: str, exclude: set[str] | frozenset = frozenset(), wanted: int = 2) -> list[dict]:
+    """Up to `wanted` unused stock photos for a search (the last step of the faceless look's fallback chain), shaped like
+    the clips of search(): Pexels portrait, then Pixabay."""
+    found = []
+    key = env("PEXELS_API_KEY")
+    if key:
+        try:
+            resp = requests.get(PEXELS_PHOTOS, headers={"Authorization": key}, timeout=30,
+                                params={"query": query, "orientation": "portrait", "per_page": 8, "locale": "en-US"})
+            resp.raise_for_status()
+            for photo in resp.json().get("photos", []):
+                src = photo.get("src") or {}
+                if src.get("large2x") and src.get("medium"):
+                    found.append({"key": f"pexels-photo:{photo['id']}", "source": "Pexels", "page_url": photo.get("url"),
+                                  "credit_name": photo.get("photographer") or "a Pexels photographer",
+                                  "credit_url": photo.get("photographer_url") or photo.get("url"), "duration": 0.0,
+                                  "download_url": src["large2x"], "preview_urls": [src["medium"]], "query": query, "ext": ".jpg"})
+        except requests.RequestException:
+            pass
+    key = env("PIXABAY_API_KEY")
+    if key and len(found) < wanted:
+        try:
+            resp = requests.get(PIXABAY_PHOTOS, timeout=30, params={"key": key, "q": query[:100], "image_type": "photo",
+                                                                     "orientation": "vertical", "safesearch": "true", "per_page": 8})
+            resp.raise_for_status()
+            for hit in resp.json().get("hits", []):
+                if hit.get("largeImageURL") and hit.get("webformatURL"):
+                    found.append({"key": f"pixabay-photo:{hit['id']}", "source": "Pixabay", "page_url": hit.get("pageURL"),
+                                  "credit_name": hit.get("user") or "a Pixabay photographer", "credit_url": hit.get("pageURL"),
+                                  "duration": 0.0, "download_url": hit["largeImageURL"], "preview_urls": [hit["webformatURL"]],
+                                  "query": query, "ext": ".jpg"})
+        except requests.RequestException:
+            pass
+    return [p for p in found if p["key"] not in exclude][:wanted]
+
+
 def search(queries: list[str], exclude: set[str] | frozenset = frozenset(), min_seconds: float = 4,
-           per_query: int = 3) -> list[dict]:
+           per_query: int = 3, landscape: bool = True) -> list[dict]:
     """Up to per_query unused clips for each search: portrait Pexels first (fills the frame), then landscape
-    Pexels, then Pixabay, for searches that still need more."""
+    Pexels (unless `landscape` is off), then Pixabay, for searches that still need more."""
     if not (env("PEXELS_API_KEY") or env("PIXABAY_API_KEY")):
         raise RuntimeError("No stock footage key set. Add PEXELS_API_KEY (and optionally PIXABAY_API_KEY) to .env.")
     picked, seen = {q: [] for q in queries}, set(exclude)
-    for search_fn in (lambda q: search_pexels(q, "portrait"), lambda q: search_pexels(q, "landscape", 10), search_pixabay):
+    for search_fn in ((lambda q: search_pexels(q, "portrait"),) + ((lambda q: search_pexels(q, "landscape", 10),) if landscape else ())
+                      + (search_pixabay,)):
         for query in queries:
             if len(picked[query]) >= per_query:
                 continue
@@ -470,7 +509,7 @@ def check(candidates: list[dict], topic: str) -> list[dict]:
 # --- files and credits ------------------------------------------------------------------
 
 def path_for(clip: dict) -> Path:
-    return tmp_path("footage", _file_name(clip["key"]) + ".mp4")
+    return tmp_path("footage", _file_name(clip["key"]) + (clip.get("ext") or ".mp4"))
 
 
 def download(clip: dict) -> Path:
@@ -503,7 +542,8 @@ def credit(clip: dict) -> str:
     if clip.get("source") == "Internet Archive":
         year = f" ({clip['year']})" if clip.get("year") else ""
         return f"Film: \"{text_clean.no_links(clip['title'])}\"{year}, Internet Archive, public domain - {clip['page_url']}"
-    return f"Video: {text_clean.no_links(clip['credit_name'])} ({clip['source']}) {clip.get('page_url') or ''}".strip()
+    kind = "Photo" if clip.get("ext") == ".jpg" else "Video"
+    return f"{kind}: {text_clean.no_links(clip['credit_name'])} ({clip['source']}) {clip.get('page_url') or ''}".strip()
 
 
 def main() -> int:

@@ -12,7 +12,8 @@ next case, and it's made again by itself until it passes (agents/reviewer.py hol
 YouTube: uploaded as private with the slot as its publish time, so YouTube makes it public on the
 minute; a slot only minutes away, or already passed, goes up public at once. Category Education, "not
 made for kids", no synthetic-media label (a drawn host, real footage, real photos and charts aren't
-realistic synthetic footage). Then its thumbnail: the Animator's wide one (16:9), which YouTube
+realistic synthetic footage), except a faceless Short whose design says so (your Agent 4 prompt's ai_disclosure_flag:
+photorealistic AI pictures), which also gets Instagram's AI label. Then its thumbnail: the Animator's wide one (16:9), which YouTube
 shows in YouTube Studio, search on computers, shared links and embeds (verified channels only). The
 Shorts tab and feed show a frame YouTube picks from the video: custom Shorts covers are only for
 YouTube Partner Program channels (since 2026-07-24), set in YouTube Studio on a computer, not
@@ -212,6 +213,11 @@ def caption(meta: dict, plan: dict) -> str:
     return text[:instagram.CAPTION_CHARS]
 
 
+def ai_made(plan: dict) -> bool:
+    """Does the video need the platforms' AI label: your Agent 4 prompt's ai_disclosure_flag (photorealistic AI pictures)."""
+    return bool((plan.get("manifest") or {}).get("ai_disclosure_flag"))
+
+
 def reels_on() -> bool:
     return bool((load_config().get("instagram") or {}).get("enabled")) and instagram.is_configured()
 
@@ -239,7 +245,7 @@ def upload(row: dict, slot: datetime, sched: dict, progress=log) -> dict:
         result = youtube_upload.run(out, meta["title"], description(meta, plan), meta["tags"],
                                     publish_at=None if live_now else slots.iso(slot), public=live_now,
                                     category_id=cfg["metadata"]["category_id"], language=cfg["metadata"]["language"],
-                                    synthetic_media=False)
+                                    synthetic_media=ai_made(plan))
     except (animator.Resting, youtube_upload.UploadLimit):  # not the case's fault: it waits for Gemini's voice,
         db.update_video(row["id"], status="planned", slot=None, claimed_at=None)  # Cloudflare's drawing or YouTube's
         raise                                                                     # daily upload limit, no try counted
@@ -594,13 +600,16 @@ def post_reel(row: dict, progress=log, now: bool = False) -> dict:
     meta = plan["metadata"]
     try:
         posted = instagram.publish(out, caption(meta, plan), float((plan.get("thumbnail") or {}).get("at") or 0),
-                                   progress=progress)
+                                   progress=progress, **({"ai_label": True} if ai_made(plan) else {}))
     except Exception as e:
         return again(e, "Instagram didn't take it")
     notify.run(f"\U0001F4F8 On Instagram now: {meta['title']}" + (f"\n{posted['url']}" if posted.get("url") else ""))
     _came_back(progress)  # (if the connection was refused until now, the Reels that waited go up next)
     if posted.get("link_refused"):  # (sent instead: kept to find out why Instagram refused the temporary link)
         reel["link_refused"] = posted["link_refused"][:300]
+    if posted.get("label_refused"):
+        reel["label_refused"] = posted["label_refused"][:300]
+        notify.run("\u26A0\uFE0F Instagram refused the AI label on a Reel, so it went up without it: " + meta["title"])
     return done("posted", id=posted["id"], url=posted.get("url"), posted_at=db.now_iso(), error=None, retry_at=None)
 
 

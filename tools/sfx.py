@@ -3,11 +3,16 @@ Sound effects for the documentary cases, as 24 kHz mono samples: the three CC0 w
 assets/sfx (decoded once into .tmp/sfx), plus an impact (a low hit, for a number landing) and a
 riser (rising noise, before a reveal) made here in code, so there's nothing to license.
 
+The faceless look's sounds go by the tags of your Agent 4 prompt: effect(tag) is the file named after the tag in assets/sfx (fetched by
+tools/sfx_fetch.py, or one you put there, any common format), or for a few tags the sounds above; a tag with no sound is silent, and
+never fails a video.
+
 Usage:
     python tools/sfx.py --out .tmp/sfx   # writes impact.wav and riser.wav to listen to
 """
 
 import argparse
+import re
 import subprocess
 import sys
 import wave
@@ -18,6 +23,9 @@ from common import ASSETS_DIR, tmp_path
 
 SAMPLE_RATE = 24_000
 SFX_DIR = ASSETS_DIR / "sfx"
+SOUND_FILES = (".mp3", ".wav", ".ogg", ".m4a", ".flac")
+IN_CODE = {"deep_sub_drop": "impact", "cinematic_boom": "impact", "bass_hit": "impact", "stamp_thud": "impact", "cinematic_riser": "riser"}
+TAG = re.compile(r"[a-z0-9_]{1,40}")
 
 
 @lru_cache(maxsize=1)
@@ -74,6 +82,42 @@ def riser():
     env = (t / t[-1]) ** 2.2
     out = (out / np.abs(out).max() + tone) * env
     return (out / np.abs(out).max() * 0.8).astype(np.float32)
+
+
+def _decoded(path: Path, rate: int):
+    import numpy as np
+
+    import short_render
+
+    raw = subprocess.run([short_render.ffmpeg_exe(), "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", str(rate), "-f", "s16le",
+                          "-"], capture_output=True, check=True, timeout=60).stdout
+    return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768
+
+
+@lru_cache(maxsize=64)
+def effect(tag: str, rate: int = 44_100):
+    """The sound for a tag of the Agent 4 prompt at its full level (the design sets how loud), or None if it has none."""
+    import numpy as np
+
+    if not TAG.fullmatch(tag or ""):
+        return None
+    sound = None
+    found = next((p for p in sorted(SFX_DIR.glob(f"{tag}.*")) if p.suffix.lower() in SOUND_FILES), None)
+    try:
+        if found:
+            sound = _decoded(found, rate)
+        elif tag in IN_CODE:
+            made = {"impact": impact, "riser": riser}[IN_CODE[tag]]()
+            sound = np.interp(np.arange(int(len(made) * rate / SAMPLE_RATE)) * SAMPLE_RATE / rate, np.arange(len(made)), made)
+        elif tag.startswith("whoosh") and whooshes():
+            made = whooshes()[0 if tag == "whoosh_fast" else -1]
+            sound = np.interp(np.arange(int(len(made) * rate / SAMPLE_RATE)) * SAMPLE_RATE / rate, np.arange(len(made)), made)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if sound is None or not len(sound):
+        return None
+    peak = float(np.abs(sound).max())
+    return (sound / peak * 0.95).astype(np.float32) if peak > 0 else None
 
 
 def main() -> int:

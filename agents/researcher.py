@@ -460,7 +460,7 @@ def find_footage(brief: dict, progress=log) -> tuple[list[dict], list[dict]]:
 def add_footage(brief: dict, pack: dict, progress=log) -> None:
     """The clips of a case researched for drawings (none were looked for) that's made with real footage after all
     (Cloudflare can't draw): found now, into its pack."""
-    if pack.get("look") == "footage" or pack.get("footage") or pack.get("archive"):
+    if pack.get("look") in ("footage", "faceless") or pack.get("footage") or pack.get("archive"):
         return  # (its clips were looked for: researched for footage, or before packs said which)
     clips, films = find_footage(brief, progress)
     progress(f"{len(clips)} stock clips" + (f" and {len(films)} archive films" if films else "") + " to use instead")
@@ -529,12 +529,16 @@ real people made that drove it, and the twist that answers the question."""
         raise RuntimeError(f"only {checked} facts about {brief['topic']} could be checked against the sources "
                            f"(need {MIN_CHECKED}, and {MIN_FACTS} with the data)")
     progress(f"{len(facts)} facts checked against the sources ({dropped} dropped)")
-    lead_images = [(rf.wiki_page(s["title"]) or {}).get("image") for s in sources if s["kind"] == "wikipedia"]
-    images = find_images(brief, lead_images, folder, progress)
-    add_depth(images, progress)
-    progress(f"{len(images)} photos to use")
     look = draw.style_now()
-    if look == "drawn":  # every line plays over a drawing: no clips to find
+    images = []
+    if look != "faceless":  # (the faceless look's pictures come from your Agent 4 prompt: no photos or clips to find)
+        lead_images = [(rf.wiki_page(s["title"]) or {}).get("image") for s in sources if s["kind"] == "wikipedia"]
+        images = find_images(brief, lead_images, folder, progress)
+        add_depth(images, progress)
+        progress(f"{len(images)} photos to use")
+    if look == "faceless":
+        clips, films = [], []
+    elif look == "drawn":  # every line plays over a drawing: no clips to find
         clips, films = [], []
         progress("The drawn look: no stock or archive clips needed")
     else:

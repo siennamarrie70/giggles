@@ -93,7 +93,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the agents/ p
 
 import db  # noqa: E402
 import kept  # noqa: E402
+import llm  # noqa: E402
 import notify  # noqa: E402
+import prompts  # noqa: E402
 import slots  # noqa: E402
 import trends_fetch  # noqa: E402
 import youtube_auth  # noqa: E402
@@ -279,7 +281,7 @@ def _must_wait(error: BaseException | None) -> bool:
     refusing the key, YouTube's sign-in or its daily upload limit? Then the run waits instead of throwing away good
     cases (on 2026-10-27 the upload limit threw away 16 cases made one after another: #49-#64)."""
     while error:
-        if isinstance(error, (animator.Resting, youtube_auth.YouTubeAuthError, youtube_upload.UploadLimit)):
+        if isinstance(error, (animator.Resting, youtube_auth.YouTubeAuthError, youtube_upload.UploadLimit, prompts.NoPromptKey)):
             return True
         if any(sign in str(error) for sign in ("All Gemini models failed", "Gemini rejected the API key")):
             return True
@@ -469,16 +471,19 @@ def morning(progress=_log) -> dict:
     It stops early (an error, so GitHub marks the run failed and emails you) when YouTube's sign-in is broken,
     after MAX_TRIES Shorts, or at RUN_LIMIT; the pause switch stops it quietly. In the cloud the Reels whose slot
     comes meanwhile are posted beside it (_reels_beside)."""
-    if not (kept.in_cloud() and publisher.reels_on()):
-        return _morning(progress)
-    stop = threading.Event()
-    beside = threading.Thread(target=_reels_beside, args=(stop, progress), name="reels", daemon=True)
-    beside.start()
     try:
-        return _morning(progress)
+        if not (kept.in_cloud() and publisher.reels_on()):
+            return _morning(progress)
+        stop = threading.Event()
+        beside = threading.Thread(target=_reels_beside, args=(stop, progress), name="reels", daemon=True)
+        beside.start()
+        try:
+            return _morning(progress)
+        finally:
+            stop.set()
+            beside.join(REELS_FINISH.total_seconds())  # (a Reel being posted isn't cut off)
     finally:
-        stop.set()
-        beside.join(REELS_FINISH.total_seconds())  # (a Reel being posted isn't cut off)
+        progress(f"Gemini calls this run: {dict(llm.calls) or 'none'}")
 
 
 def _reels_beside(stop: threading.Event, progress) -> None:

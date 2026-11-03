@@ -47,6 +47,7 @@ Blippy Trance.mp3:
   title: Blippy Trance
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Blippy%20Trance.mp3
 Brittle Rille.mp3:
+  faceless: [mysterious_ethereal]
   credit: 'Music: "Brittle Rille" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -83,6 +84,7 @@ Celebration.mp3:
   title: Celebration
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Celebration.mp3
 Cretaceous Dawn.mp3:
+  faceless: [epic_orchestral]
   credit: 'Music: "Cretaceous Dawn" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -107,6 +109,7 @@ Del Rio Bravo.mp3:
   title: Del Rio Bravo
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Del%20Rio%20Bravo.mp3
 Echoes of Time.mp3:
+  faceless: [dark_ambient]
   credit: 'Music: "Echoes of Time" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -119,6 +122,7 @@ Echoes of Time.mp3:
   title: Echoes of Time
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Echoes%20of%20Time.mp3
 Eternal Terminal.mp3:
+  faceless: [epic_orchestral]
   credit: 'Music: "Eternal Terminal" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -131,6 +135,7 @@ Eternal Terminal.mp3:
   title: Eternal Terminal
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Eternal%20Terminal.mp3
 Final Battle of the Dark Wizards.mp3:
+  faceless: [epic_orchestral, tense_cinematic]
   credit: 'Music: "Final Battle of the Dark Wizards" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -143,6 +148,7 @@ Final Battle of the Dark Wizards.mp3:
   title: Final Battle of the Dark Wizards
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Final%20Battle%20of%20the%20Dark%20Wizards.mp3
 Floating Cities.mp3:
+  faceless: [mysterious_ethereal]
   credit: 'Music: "Floating Cities" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -179,6 +185,7 @@ Gonna Start.mp3:
   title: Gonna Start
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Gonna%20Start.mp3
 Grand Dark Waltz Moderato.mp3:
+  faceless: [tense_cinematic]
   credit: 'Music: "Grand Dark Waltz Moderato" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -191,6 +198,7 @@ Grand Dark Waltz Moderato.mp3:
   title: Grand Dark Waltz Moderato
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Grand%20Dark%20Waltz%20Moderato.mp3
 Hall of the Mountain King.mp3:
+  faceless: [epic_orchestral]
   credit: 'Music: "Hall of the Mountain King" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -215,6 +223,7 @@ Happy Happy Game Show.mp3:
   title: Happy Happy Game Show
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Happy%20Happy%20Game%20Show.mp3
 Immersed.mp3:
+  faceless: [mysterious_ethereal]
   credit: 'Music: "Immersed" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -263,6 +272,7 @@ March of the Spoons.mp3:
   title: March of the Spoons
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/March%20of%20the%20Spoons.mp3
 Minima.mp3:
+  faceless: [suspense_electronic]
   credit: 'Music: "Minima" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -311,6 +321,7 @@ Peaceful Desolation.mp3:
   title: Peaceful Desolation
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Peaceful%20Desolation.mp3
 SCP-x3x (I am Not OK).mp3:
+  faceless: [dark_ambient]
   credit: 'Music: "SCP-x3x (I am Not OK)" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -323,6 +334,7 @@ SCP-x3x (I am Not OK).mp3:
   title: SCP-x3x (I am Not OK)
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/SCP-x3x.mp3
 SCP-x5x (Outer Thoughts).mp3:
+  faceless: [dark_ambient, mysterious_ethereal]
   credit: 'Music: "SCP-x5x (Outer Thoughts)" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -347,6 +359,7 @@ Screen Saver.mp3:
   title: Screen Saver
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Screen%20Saver.mp3
 Simplex.mp3:
+  faceless: [suspense_electronic]
   credit: 'Music: "Simplex" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -359,6 +372,7 @@ Simplex.mp3:
   title: Simplex
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Simplex.mp3
 Symmetry.mp3:
+  faceless: [tense_cinematic, suspense_electronic]
   credit: 'Music: "Symmetry" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -371,6 +385,7 @@ Symmetry.mp3:
   title: Symmetry
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Symmetry.mp3
 The Complex.mp3:
+  faceless: [tense_cinematic, suspense_electronic]
   credit: 'Music: "The Complex" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0
@@ -407,6 +422,7 @@ Two Finger Johnny.mp3:
   title: Two Finger Johnny
   url: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Two%20Finger%20Johnny.mp3
 Undaunted.mp3:
+  faceless: [epic_orchestral]
   credit: 'Music: "Undaunted" by Kevin MacLeod (incompetech.com)
 
     Licensed under Creative Commons: By Attribution 4.0

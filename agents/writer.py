@@ -42,6 +42,14 @@ Cloudflare can't draw, new cases are written in the real-footage look (draw.styl
 look.when_out), and a case written for drawings that can't be drawn is written again for footage
 (write(..., look="footage"), from agents/animator.py), its clips found first.
 
+The faceless look (settings look.style: faceless, your choice on 2026-11-03) takes a different path, write_faceless(): your own
+prompt for this agent (prompts/agent3.txt.enc, word for word) writes the script, tools/a3.py works out what can be worked out
+exactly and checks every rule of the prompt's Final Check, and what it still breaks goes back with the script, its word counts
+exact, up to FACELESS_TRIES times. The fact-checker below reads every line against all the facts (one sentence often runs over
+several of these short lines); its corrections go through the same rules, and what it can't support goes back the same way. The
+retention editor isn't used (its rewrites would break the prompt's word budgets). The prompt's output has no title or
+description, so a small separate reading writes those from the script, leaving the prompt as it is.
+
 Usage:
     python -m agents.writer --pack pack.json --brief brief.json      # prints a script (nothing is saved)
 """
@@ -52,10 +60,13 @@ import re
 import sys
 from pathlib import Path
 
+import a3
 import db
 import draw
 import llm
+import prompts
 import short_render
+import spoken
 import text_clean
 from agents.base import act, advice, lessons_for, log, taught
 from agents.researcher import numbers_in
@@ -104,6 +115,11 @@ NOT_DRAWN = re.compile(r"\b(blood\w*|gore|gory|corpses?|dead (?:body|bodies|man|
                        re.IGNORECASE)  # never drawn: graphic things, and children
 YOUNG = re.compile(r"\b(?:young(?:er|est)?|youthful|boyish|girlish)\s+", re.IGNORECASE)  # "a young guard" came out a
 # boy (the first drawn case, 2026-10-27): the word goes, the guard stays
+# The faceless look
+FACELESS_TRIES = 4             # tries at a script that keeps every rule of the prompt (measured 2026-11-03: 1-3 are usual)
+PROMPT_THINKING = "MEDIUM"     # how hard Gemini thinks over your two long prompts: with LOW, none of 3 scripts met the prompt's
+                               # word budgets in 3 tries; with MEDIUM, Flash-Lite met them in 1 or 2 (2026-11-03)
+PROMPT_TIMEOUT_MS = 240_000    # (they take 15-40 s when Gemini isn't busy)
 
 
 # --- visuals ------------------------------------------------------------------
@@ -207,6 +223,13 @@ def _supported_numbers(fact_ids: list[str], pack: dict) -> set[str]:
 def unsupported_numbers(line: dict, pack: dict, before: dict | None = None) -> set[str]:
     """Numbers in the line that neither its facts nor the line before it back up."""
     facts = (line.get("facts") or []) + ((before or {}).get("facts") or [])
+    if line.get("role"):  # the faceless look spells its numbers out ("nine thousand eight hundred sixty")
+        by_id = {f["id"]: f for f in pack.get("facts") or []}
+        have = set()
+        for fid in facts:
+            if fid in by_id:
+                have |= spoken.written_numbers(by_id[fid]["claim"]) | spoken.written_numbers(by_id[fid]["quote"])
+        return {f"{number:g}" for number in spoken.unsupported(line["text"], have)}
     return numbers_in(line["text"]) - _supported_numbers(facts, pack)
 
 
@@ -244,9 +267,9 @@ def lecture_habits(lines: list[dict]) -> list[str]:
     return found
 
 
-def clean_scene(text, pack: dict) -> str:
+def clean_scene(text, pack: dict, words: int = SCENE_WORDS) -> str:
     """A scene the drawing can use: no words in quotes or "a sign reading...", a real person's name as their role
-    (a figure, never a likeness), at most SCENE_WORDS words; SAME (the drawing before) when it asks for "same" or
+    (a figure, never a likeness), at most `words` words; SAME (the drawing before) when it asks for "same" or
     for anything graphic or a child."""
     text = " ".join(str(text or "").split())
     if not text or text.lower().strip(" .'\"") in (SAME, "the same", "same as before", "keep", "same scene"):
@@ -260,7 +283,7 @@ def clean_scene(text, pack: dict) -> str:
             if part:
                 text = re.sub(rf"\b{re.escape(part)}(['’]s)?\b", lambda m: figure + ("'s" if m.group(1) else ""), text,
                               flags=re.IGNORECASE)
-    text = " ".join(re.sub(r"\s+([,.;:])", r"\1", text).split()[:SCENE_WORDS]).strip(" ,;:-")
+    text = " ".join(re.sub(r"\s+([,.;:])", r"\1", text).split()[:words]).strip(" ,;:-")
     if not text or NOT_DRAWN.search(text):
         return SAME
     return text
@@ -584,16 +607,17 @@ too. If every score is 7 or more, rewrite nothing."""
     return lines, {"scores": scores, "rewritten": changed, "rejected": rejected}
 
 
-def fact_check(lines: list[dict], pack: dict, progress=log) -> tuple[list[dict], int, bool]:
+def fact_check(lines: list[dict], pack: dict, progress=log, story: bool = False) -> tuple[list[dict], int, bool]:
     """A reading of every line against its facts' quotes: fixes overstated lines, cuts unsupported ones. Returns the
-    lines (each marked), how many were cut and whether the hook was one of them."""
+    lines (each marked), how many were cut and whether the hook was one of them. story: the faceless look's short lines,
+    where one sentence runs over several: each is read against all the facts, not only the ones it cites."""
     by_id = {f["id"]: f for f in pack.get("facts") or []}
     items = []
     for n, line in enumerate(lines, start=1):
         before = lines[n - 2] if n > 1 else None
         items.append({"line": n, "beat": line["beat"], "text": line["text"],
-                      "facts": [{"claim": by_id[f]["claim"], "quote": by_id[f]["quote"]}
-                                for f in line["facts"] + ((before or {}).get("facts") or [])],
+                      **({} if story else {"facts": [{"claim": by_id[f]["claim"], "quote": by_id[f]["quote"]}
+                                                     for f in line["facts"] + ((before or {}).get("facts") or [])]}),
                       "numbers_not_in_its_facts": sorted(unsupported_numbers(line, pack, before))})
     schema = {"type": "object", "properties": {"verdicts": {"type": "array", "items": {
         "type": "object",
@@ -611,8 +635,11 @@ what it says with the facts it cites (their claims and the source quotes behind 
   that's when it broke.'), and the narrator's closing thought (beat 'closing'): a reflection on what the story means,
   unless it slips in a new specific fact, name or number
 Numbers must match the facts exactly. Be strict about facts and relaxed about style."""
+    asked = items
+    if story:
+        system, asked = STORY_CHECK, {"facts": [{"claim": f["claim"], "quote": f["quote"]} for f in by_id.values()], "lines": items}
     progress("Fact-checking every line against its sources")
-    verdicts = {v.get("line"): v for v in llm.generate_json([json.dumps(items, ensure_ascii=False, indent=1)], schema,
+    verdicts = {v.get("line"): v for v in llm.generate_json([json.dumps(asked, ensure_ascii=False, indent=1)], schema,
                                                             system).get("verdicts") or []}
     kept, cut, hook_cut = [], 0, False
     for n, line in enumerate(lines, start=1):
@@ -636,9 +663,144 @@ Numbers must match the facts exactly. Be strict about facts and relaxed about st
     return kept, cut, hook_cut
 
 
+STORY_CHECK = """You fact-check the script of a YouTube Short: a true story told fast, in short lines. It may tell the story with
+energy; it may not add to the facts. For each line, compare what it says with the facts given (any of them; their claims and the
+source quotes behind them) and with what the lines before it have established:
+- supported: what it states is in the facts. Wording may differ, and a punchy summary of what they show is fine ('The bank lost.'
+  when the facts show it paid out and closed)
+- overstated: mostly right but goes further than the facts (a number, a date, a cause, a superlative); give the fixed line, as
+  short and as punchy as the original, starting with the same word
+- unsupported: it states an event, a reaction, a motive, a cause or a result none of the facts state ('Nobody believed it.',
+  'Critics laughed.', 'It ruined him.')
+- not_a_claim: a question, a tease or a moment of tension that states nothing new ('The rival had other ideas.', 'Wait for the final
+  number.', 'So who got the money?'), and the unfinished last line that leads back to the start (beat 'closing')
+Numbers must match the facts exactly. Be strict about facts and relaxed about style."""
+TITLES_SCHEMA = {"type": "object", "properties": {
+    "case_title": {"type": "string", "description": f"a few plain words, at most {TITLE_CHARS} characters"},
+    "title": {"type": "string"}, "description": {"type": "string"}, "hashtags": {"type": "array", "items": {"type": "string"}},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "thumbnail_text": {"type": "string", "description": "2 to 5 words for the thumbnail, the key word in *asterisks*"},
+}, "required": ["case_title", "title", "description", "hashtags", "tags", "thumbnail_text"]}
+
+
+def _untrue_titles(meta: dict, pack: dict, progress=log) -> list[str]:
+    """The title, the thumbnail's words and the description read as the script's lines are: an overstated one takes its
+    correction, and what's returned are those the facts don't support or that mention a child (empty: none)."""
+    every = [f["id"] for f in pack.get("facts") or []]
+    lines = [{"text": text, "beat": "title", "facts": every, "field": field}
+             for field, text in (("title", meta["title"]), ("thumbnail_text", meta["thumbnail_text"].replace("*", "")),
+                                 ("description", meta["description"])) if text]
+    kept = {line["field"]: line for line in fact_check(lines, pack, progress, story=True)[0]}
+    wrong = []
+    for line in lines:
+        now = kept.get(line["field"])
+        if not now or a3.CHILD_WORDS.search(now["text"]) or re.search(r"\b(?:sons?|daughters?)\b", now["text"], re.IGNORECASE):
+            wrong.append(line["field"])
+        elif now["check"] == "fixed":
+            meta[line["field"]] = now["text"]
+    return wrong
+
+
+def _titles(brief: dict, script: dict, pack: dict, cfg: dict, progress=log) -> tuple[str, dict]:
+    """The case's title on screen and YouTube's title, description and hashtags, from the finished script (the Agent 3
+    prompt's output has none of them, and your prompt stays as it is). They get a second try if the fact-checker
+    can't support them; what still isn't supported falls back to plain words."""
+    recent = [v["plan"]["metadata"]["title"] for v in db.recent_videos(days=30)
+              if v["format"] == db.FORMAT and v["plan"].get("metadata")][:30]
+    system = f"""You write the titles for {cfg['channel']['name']}, a YouTube Shorts channel, for {cfg['channel']['audience']}.
+From the finished script, write:
+case_title: at most {TITLE_CHARS} characters, a few plain words.
+thumbnail_text: 2 to 5 bold words for the thumbnail that make the story plain without giving away the answer (the paradox, the
+stakes or the question), with the one key word in *asterisks*: 'One phone *sank* Nokia'. Never a lie, a shock word the video
+doesn't earn, or the case_title again.
+title: at most 70 characters, sentence case, honest and intriguing (the question or the paradox), may end with one emoji.
+description: 2-3 short sentences ending on a question for the comments. Never a claim the script doesn't make.
+hashtags: 2-4, lowercase. tags: 5-10 search keywords.
+All of it says only what the script says. The channel's rules, for all of it: {'; '.join(a3.STANDING)}."""
+    prompt = (f"Topic: {brief['topic']}\nThe question: {brief.get('angle', '')}\nThe script:\n"
+              + "\n".join(line["text"] for line in script["lines"])
+              + f"\n\nRecent titles (don't repeat them): {recent or 'none yet'}\n"
+              f"What has worked so far: {advice(('hook', 'hashtag')) or 'not enough data yet'}\n" + taught("writer"))
+    note, wrong = "", []
+    for _ in range(2):
+        progress("Writing the title and description")
+        raw = llm.generate_json([prompt + note], TITLES_SCHEMA, system)
+        case_title = text_clean.screen_text(str(raw.get("case_title", "")), TITLE_CHARS) or brief["topic"][:TITLE_CHARS]
+        meta = metadata(raw, brief, cfg)
+        wrong = _untrue_titles(meta, pack, progress)
+        if not wrong:
+            break
+        note = ("\n\nThe facts behind the script don't support these, or they mention a child: write them again, saying only what the "
+                "script says.\n- " + "\n- ".join(f"{field}: {meta[field]}" for field in wrong))
+    for field in wrong:
+        meta[field] = case_title if field == "title" else ""  # (with no words of its own, the thumbnail uses the case's title)
+    return case_title, meta
+
+
+def write_faceless(brief: dict, pack: dict, progress=log) -> dict:
+    """The script in the faceless look, from your Agent 3 prompt: see the top of this file. A topic whose script can't keep
+    every rule in FACELESS_TRIES raises, and the Editor picks another."""
+    cfg = load_config()
+    given = a3.agent2_json(brief, pack)
+    if len(given["facts"]) < a3.MIN_FACTS:
+        raise ValueError(f"only {len(given['facts'])} facts for the script")
+    if brief.get("follow_up_of") and (earlier := db.get_video(brief["follow_up_of"])):
+        given["angle"] += (f" This is a follow-up (part 2) to an earlier video: "
+                           f"{earlier['plan'].get('metadata', {}).get('title') or earlier['theme']}.")
+    system, base = prompts.load("agent3"), json.dumps(given, ensure_ascii=False)
+    note, best, lines = "", None, None
+    for attempt in range(FACELESS_TRIES):
+        progress("Writing the script" if not attempt else f"Fixing the script (try {attempt + 1})")
+        raw = llm.generate_json([base + note], None, system, thinking=PROMPT_THINKING, timeout_ms=PROMPT_TIMEOUT_MS)
+        if raw.get("status") not in (None, "ok"):
+            raise ValueError(f"the script couldn't be written: {str(raw.get('error'))[:200]}")
+        made = a3.repair(raw, given)
+        found = a3.problems(made, given)
+        read = not found
+        if read:  # it keeps the rules: now the fact-checker reads it, its corrections kept to the same rules
+            flat = a3.flatten(made)
+            checked, _, _ = fact_check(flat, pack, progress, story=True)
+            kept = {line["line_id"]: line for line in checked}
+            for line in flat:
+                now = kept.get(line["line_id"])
+                if not now:
+                    found.append(f"{line['line_id']} ('{line['text']}') states something its facts don't support: use only "
+                                 "what the facts say, and cite every fact it uses.")
+                elif now["check"] == "fixed":
+                    a3.retext(made, line["line_id"], now["text"])
+            if any(line["check"] == "fixed" for line in checked):
+                made = a3.repair(made, given)
+                found += a3.problems(made, given)
+            if not found:
+                checks = {line["line_id"]: line["check"] for line in checked}
+                lines = [{**line, "check": checks.get(line["line_id"], "ok")} for line in a3.flatten(made)]
+                break
+        # (one the fact-checker has read goes ahead of an unread one: what's wrong with that one isn't known yet)
+        if best is None or len(found) <= best[0] or (read and not best[3]):
+            best = (len(found), made, found, read)
+        note = ("\n\nHere is your best script so far. Its word_count numbers are exact, counted by code:\n"
+                + json.dumps(best[1], ensure_ascii=False)
+                + "\n\nIt breaks these rules. Change only the lines needed to fix every one, keep all the other lines exactly "
+                  "as they are, and output the whole JSON again:\n- " + "\n- ".join(best[2])
+                + "\n\nA line you change must still pull the listener on to the next: its role and its energy stay, never a dry fact "
+                  "or a list of names to fill out the words. A line that isn't in the facts gets its tension from what the facts do "
+                  "say (a number, a date, a name, a lawsuit, someone quitting), or it claims nothing new: a question or a tease.")
+        progress(f"The script broke {len(found)} rule(s) of the prompt: {found[0][:140]}")
+    if lines is None:
+        raise ValueError(f"no script kept every rule of the prompt in {FACELESS_TRIES} tries ({best[0] if best else '?'} left: "
+                         f"{best[2][0][:120] if best else ''})")
+    script = {"case_title": "", "lines": lines, "music_mood": "", "seconds": round(estimate_seconds(lines), 1), "cut": 0,
+              "retention": {}, "habits": [], "look": "faceless", "a3": made}
+    script["case_title"], meta = _titles(brief, script, pack, cfg, progress)
+    progress(f"Script: {len(lines)} lines, {made['total_word_count']} words, about {script['seconds']:.0f} s")
+    return {"script": script, "metadata": meta, "lines": len(lines), "cut": 0, "estimate": script["seconds"]}
+
+
 def write(brief: dict, pack: dict, progress=log, look: str | None = None) -> dict:
-    """The script in `look` ("drawn" or "footage"; by default the one a case made now gets). A pack researched for
-    drawings that's written for footage gets its clips first (into the pack)."""
+    """The script in `look` ("faceless", "drawn" or "footage"; by default the one a case made now gets). A pack researched
+    for drawings that's written for footage gets its clips first (into the pack)."""
+    if (look or draw.style_now()) == "faceless":
+        return write_faceless(brief, pack, progress)
     cfg = load_config()
     cases = cfg["cases"]
     target, max_seconds = int(cases.get("target_seconds", 60)), int(cases.get("max_seconds", 75))
@@ -735,6 +897,8 @@ def apply_edits(plan: dict, edits: dict) -> dict:
     cfg = load_config()
     script, meta, pack, brief = plan["script"], plan["metadata"], plan["research"], plan["brief"]
     if "lines" in edits:
+        if script.get("look") == "faceless":
+            raise ValueError("This look's lines can't be edited: its scenes are built on them. Use Make it again for a new script.")
         drawn = script.get("look") == "drawn"
         menu = visual_menu(pack, brief, drawn)
         old = {line["text"]: line for line in script["lines"]}
