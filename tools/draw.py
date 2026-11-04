@@ -91,10 +91,11 @@ class DrawingUnavailable(RuntimeError):
 
 
 def style() -> str:
-    """The look set for new cases: "faceless" (your Agent 3 and 4 prompts: tools/a3.py, tools/a4.py), "drawn" (scenes in his
-    art) or "footage" (stock video, archive film, photos)."""
+    """The look set for new cases: "montage" (your Agent 3 prompt, real archive material in the Constructivist Montage look:
+    tools/montage.py), "faceless" (your Agent 3 and 4 prompts: tools/a3.py, tools/a4.py), "drawn" (scenes in his art) or "footage"
+    (stock video, archive film, photos)."""
     wanted = str((load_config().get("look") or {}).get("style") or "").strip().lower()
-    return wanted if wanted in ("faceless", "drawn") else "footage"
+    return wanted if wanted in ("montage", "faceless", "drawn") else "footage"
 
 
 def fallback() -> bool:

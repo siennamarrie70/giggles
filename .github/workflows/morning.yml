@@ -68,23 +68,23 @@ jobs:
       - name: Install (requirements-worker.txt, the dashboard's packages and the video-making ones)
         run: pip install -r requirements-worker.txt
 
-      - name: Restore the models (whisper, depth, voice, lip-sync; about 1 GB, kept between runs)
+      - name: Restore the models (whisper, depth, voice, lip-sync, cut-outs; about 1.2 GB, kept between runs)
         id: models
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .tmp/models
-          key: models-v1
+          key: models-v2
 
       - name: Every model on this machine (the missing ones download once)
         working-directory: tools
-        run: python -c "import depth, lipsync, narration; depth.model_path(); lipsync.ensure_rhubarb(); narration._model()"
+        run: python -c "import cutout, depth, lipsync, narration; cutout.model_path(); depth.model_path(); lipsync.ensure_rhubarb(); narration._model()"
 
       - name: Keep the models for the next run
         if: ${{ steps.models.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .tmp/models
-          key: models-v1
+          key: models-v2
 
       - name: ffmpeg with the rubberband filter (it makes his voice deeper)
         run: |
@@ -100,7 +100,7 @@ jobs:
         if: ${{ inputs.test }}
         run: |
           python tools/jobs.py prepare
-          python tools/jobs.py publish --dry-run
+          python tools/jobs.py publish --dry-run --newest
 
       - name: Morning run
         if: ${{ !inputs.test }}

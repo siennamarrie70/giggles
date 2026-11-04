@@ -54,6 +54,7 @@ import depth
 import draw
 import footage
 import infographics
+import archive_find
 import llm
 import research_fetch as rf
 from agents.base import act, lessons_for, log, taught
@@ -460,7 +461,7 @@ def find_footage(brief: dict, progress=log) -> tuple[list[dict], list[dict]]:
 def add_footage(brief: dict, pack: dict, progress=log) -> None:
     """The clips of a case researched for drawings (none were looked for) that's made with real footage after all
     (Cloudflare can't draw): found now, into its pack."""
-    if pack.get("look") in ("footage", "faceless") or pack.get("footage") or pack.get("archive"):
+    if pack.get("look") in ("footage", "faceless", "montage") or pack.get("footage") or pack.get("archive"):
         return  # (its clips were looked for: researched for footage, or before packs said which)
     clips, films = find_footage(brief, progress)
     progress(f"{len(clips)} stock clips" + (f" and {len(films)} archive films" if films else "") + " to use instead")
@@ -472,7 +473,7 @@ def clip_path(item: dict) -> Path:
     path = TMP_DIR / item["file"]
     if not path.exists():
         if item.get("start") is not None:
-            return footage.cut(item, item["start"])
+            return footage.cut(item, item["start"], item.get("seconds") or footage.CUT_SECONDS)
         return footage.download(item)
     return path
 
@@ -531,12 +532,18 @@ real people made that drove it, and the twist that answers the question."""
     progress(f"{len(facts)} facts checked against the sources ({dropped} dropped)")
     look = draw.style_now()
     images = []
-    if look != "faceless":  # (the faceless look's pictures come from your Agent 4 prompt: no photos or clips to find)
+    material = None
+    if look == "montage":  # real film and photographs, checked; too little raises, and the Editor picks another topic
+        material = archive_find.gather(brief, folder, brief.get("category") in COMBAT_OK, progress)
+        images = material["images"]
+    elif look != "faceless":  # (the faceless look's pictures come from your Agent 4 prompt: no photos or clips to find)
         lead_images = [(rf.wiki_page(s["title"]) or {}).get("image") for s in sources if s["kind"] == "wikipedia"]
         images = find_images(brief, lead_images, folder, progress)
         add_depth(images, progress)
         progress(f"{len(images)} photos to use")
-    if look == "faceless":
+    if look == "montage":
+        clips, films = material["footage"], material["archive"]
+    elif look == "faceless":
         clips, films = [], []
     elif look == "drawn":  # every line plays over a drawing: no clips to find
         clips, films = [], []

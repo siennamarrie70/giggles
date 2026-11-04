@@ -60,6 +60,10 @@ picture or another clip; the voice and everything else go as above.
 The plan remembers the track, the voice, the drawings and every clip, photo and film on screen, so
 the Publisher can add the credit lines and mark the clips used.
 
+In the Constructivist Montage look (settings look.style: montage, your choice on 2026-11-04), tools/montage.py directs the scenes from the
+script and the case's real material, tools/montage_render.py draws them, and the music is one of the look's own scores. A picture the
+Reviewer turns down is swapped for another of the case's real ones.
+
 Usage:
     python -m agents.animator --id 12      # renders Short #12's preview into .tmp/out/short_12.mp4
 """
@@ -84,6 +88,8 @@ import footage
 import host
 import infographics
 import llm
+import montage
+import montage_render
 import narration
 import prompts
 import short_render
@@ -402,7 +408,14 @@ def make_again(row: dict, progress=log) -> dict:
     remakes = int(plan.get("remakes") or 0) + 1
     if remakes >= REWRITE_FROM:
         progress(f"Case #{row['id']} was turned down again: the Writer writes it again, then the Animator makes it")
-        plan = _written_again(plan, progress, "faceless" if plan["script"].get("look") == "faceless" else None)
+        plan = _written_again(plan, progress, plan["script"]["look"] if plan["script"].get("look") in ("faceless", "montage") else None)
+    elif plan["script"].get("look") == "montage":
+        plan = _swap_pictures(plan, major)
+        plan = {**plan, "fixes": {**(plan.get("fixes") or {}), "round": 0, "changes": []}}
+        plan = {k: v for k, v in plan.items() if k != "review"}
+        if any(i.get("fix") in VOICE_FIXES for i in major):
+            plan["fixes"]["take"] = int(plan["fixes"].get("take") or 0) + 1
+        progress(f"Case #{row['id']} was turned down after the fixes: the Animator makes it again (time {remakes})")
     elif plan["script"].get("look") == "faceless":
         plan = {**_new_visuals(plan, major), "fixes": {**(plan.get("fixes") or {}), "round": 0, "changes": []}}
         plan = {k: v for k, v in plan.items() if k != "review"}
@@ -456,6 +469,8 @@ def animate(row: dict, out: Path, progress=log, now: bool = False, again: bool =
     if not now and (rest := voice_resting()):
         raise VoiceResting(f"Gemini's voice is resting until about {_after(rest)}; Short #{row['id']} is read then")
     script = plan["script"]
+    if script.get("look") == "montage":
+        return _animate_montage(row, out, progress, again)
     if script.get("look") == "faceless":
         return _animate_faceless(row, out, progress, again)
     drawn = script.get("look") == "drawn"
@@ -854,6 +869,140 @@ def _animate_faceless(row: dict, out: Path, progress=log, again: bool = False) -
             "music": plan["music"], "voice": plan["voice"]["voice"], "layout_notes": len(made["layout"])}
 
 
+# --- the Constructivist Montage look -------------------------------------------------------
+
+def _names(plan: dict) -> dict[str, str]:
+    """A picture's id -> its name as the rest of the system knows it (photo:I1, archive:A1, footage:B1)."""
+    pack = plan.get("research") or {}
+    return {x["id"]: f"{kind}:{x['id']}" for kind, key in (("archive", "archive"), ("photo", "images"), ("footage", "footage")) for x in pack.get(key) or []}
+
+
+def _with_visuals(plan: dict) -> dict:
+    """Each line's visuals are the pictures of the scene it's in, so the Publisher's credits and the Studio see what's really on screen."""
+    names = _names(plan)
+    script = json.loads(json.dumps(plan["script"]))
+    for line in script["lines"]:
+        line["visuals"] = []
+    for scene in (plan.get("manifest") or {}).get("scenes") or []:
+        for k in scene.get("lines") or []:
+            if 0 <= k < len(script["lines"]):
+                script["lines"][k]["visuals"] = [names[i] for i in scene.get("items") or [] if i in names]
+    return {**plan, "script": script}
+
+
+def _swap_pictures(plan: dict, issues: list[dict], changes: list | None = None) -> dict:
+    """The pictures the Reviewer turned down, out of the design for good, others put in their places. Several pictures can be on screen at
+    once, so when it's a safety problem every picture on screen at that moment goes: which one it was isn't known."""
+    fixes = json.loads(json.dumps(plan.get("fixes") or {}))
+    banned = set(fixes.get("banned") or [])
+    shots = (plan.get("render") or {}).get("shots") or []
+    gone = set()
+    for issue in issues:
+        if issue.get("fix") != "swap":
+            continue
+        at, what = issue.get("at"), issue.get("what") or ""
+        here = {s["name"] for s in shots if at is not None and s["start"] <= at < s["end"]}
+        safety = issue.get("kind") in ("child_visible", "graphic")
+        names = here if safety or len(here) <= 4 else {what}
+        gone |= {n.partition(":")[2] for n in names | ({what} if what else set()) if ":" in n}
+    gone -= banned
+    if not gone:
+        return plan
+    banned |= gone
+    fixes["banned"] = sorted(banned)
+    if changes is not None:
+        changes.append(f"took {len(gone)} picture{'s' if len(gone) > 1 else ''} out ({', '.join(sorted(gone))})")
+    return _with_visuals({**plan, "fixes": fixes, "manifest": montage.without(plan["manifest"], banned, plan.get("research") or {})})
+
+
+def _improve_montage(plan: dict, progress=log) -> tuple[dict, list[str]]:
+    """improve() for this look: a picture swapped, a scene's words taken off, a line read slower, longer pauses, read again, or made again."""
+    review = plan.get("review") or {}
+    major = [i for i in review.get("issues") or [] if i.get("severity") == "major" and i.get("fix")]
+    changes = []
+    plan = _swap_pictures(plan, major, changes)
+    fixes = json.loads(json.dumps(plan.get("fixes") or {}))
+    fixes.setdefault("drops", [])
+    fixes.setdefault("slower", [])
+    for issue in major:
+        fix, k, what = issue.get("fix"), issue.get("line"), issue.get("what")
+        if fix == "drop" and k is not None and what == "type":
+            drop = {"kind": "type", "line": k}
+            if drop not in fixes["drops"]:
+                fixes["drops"].append(drop)
+                changes.append(f"took the big words off the scene at line {k + 1}")
+        elif fix == "slower" and k is not None and k not in fixes["slower"]:
+            fixes["slower"].append(k)
+            changes.append(f"line {k + 1} is read again, slower")
+        elif fix == "pauses":
+            gap = round(min(MAX_GAP, max(narration.KEEP_GAP, float(fixes.get("keep_gap") or 0)) + GAP_STEP), 2)
+            if gap > float(fixes.get("keep_gap") or narration.KEEP_GAP):
+                fixes["keep_gap"] = gap
+                changes.append(f"longer pauses ({gap:g} s)")
+        elif fix == "reread" and "read again" not in changes:
+            fixes["take"] = int(fixes.get("take") or 0) + 1
+            changes.append("read again")
+        elif fix == "remake" and not changes:
+            changes.append("made again")
+    if changes:
+        fixes["round"] = int(fixes.get("round") or 0) + 1
+        fixes["changes"] = changes
+        fixes["after"] = review.get("of")
+    return {**plan, "fixes": fixes}, changes
+
+
+def _animate_montage(row: dict, out: Path, progress=log, again: bool = False) -> dict:
+    """The director's design, the voice, the score, the render and the thumbnail for one case; returns its updated plan. `again`: as in
+    animate(): a posted case made again for its Reel, nothing saved."""
+    cfg = load_config()
+    plan = row["plan"]
+    if not plan.get("manifest"):
+        plan = _with_visuals({**plan, "manifest": montage.direct(plan, progress)})
+        if not again:  # (it took Gemini's free calls: kept even if what follows fails)
+            db.update_video(row["id"], plan=plan)
+    assets = montage.assets(plan)
+    shown = {i for scene in plan["manifest"]["scenes"] for i in scene.get("items") or []}
+    if shown - set(assets):  # (lost and can't be fetched again: others take their places)
+        progress(f"{len(shown - set(assets))} pictures are gone: others take their places")
+        plan = _with_visuals({**plan, "manifest": montage.without(plan["manifest"], shown - set(assets), plan.get("research") or {})})
+    script = plan["script"]
+    how = settings(plan)
+    said = [{"text": line["text"], "direction": ", ".join(d for d in (SLOWER if k in how["slower"] else "", line.get("direction", "")) if d),
+             "slow": k in how["slower"], "pause": line.get("pause") or 0.0}
+            for k, line in enumerate(script["lines"])]
+    spoken, _ = _reading(row, said, how, progress)
+    if again:
+        track = short_render.MUSIC_DIR / plan["music"] if plan.get("music") else None
+        track = track if track and track.exists() else None
+    else:
+        scores = short_render.montage_scores()
+        track = scores[row["id"] % len(scores)] if scores and cfg["music"]["volume"] > 0 else None
+    progress("Animating" + (f" with {track.stem}" if track else " (no music)"))
+    case = {"manifest": plan["manifest"], "assets": assets, "narration": spoken, "drops": how["drops"]}
+    made = montage_render.render(case, out, track, cfg["music"]["volume"], cover_path=cover_path(row["id"]), progress=progress)
+    if again:
+        progress(f"Video made again: {made['seconds']:.0f} s, in {made['render_seconds']:.0f} s")
+        return {"video_id": row["id"], "length": made["seconds"], "render_seconds": made["render_seconds"],
+                "music": plan.get("music"), "voice": spoken["voice"]}
+    plan = {**plan, "music": track.relative_to(short_render.MUSIC_DIR).as_posix() if track else None,
+            "voice": {"engine": spoken["engine"], "voice": spoken["voice"], "match": spoken["match"], "deeper": spoken.get("deeper", 0),
+                      "words_per_second": round(sum(len(line["text"].split()) for line in script["lines"]) / max(spoken["seconds"], 1), 2),
+                      **({"likeness": spoken["likeness"]} if spoken.get("likeness") else {})},
+            "render": {"id": uuid.uuid4().hex[:10], "made_at": db.now_iso(), "seconds": made["seconds"],
+                       "render_seconds": made["render_seconds"], "layout": made["layout"], "shots": made["shots"],
+                       "title_until": 0.01,  # (the title is part of the look here: the Reviewer's title rule doesn't apply)
+                       "lines": [{"start": t["start"], "end": t["end"]} for t in spoken["lines"]]},
+            "credits": credits(plan)}
+    try:
+        plan["thumbnail"] = make_thumbnail(row["id"], plan)
+    except Exception as e:
+        progress(f"Couldn't make the thumbnail ({type(e).__name__}: {str(e)[:120]})")
+    db.update_video(row["id"], plan=plan)
+    progress(f"Video ready: {made['seconds']:.0f} s, made in {made['render_seconds']:.0f} s")
+    return {"plan": plan, "video_id": row["id"], "length": made["seconds"], "render_seconds": made["render_seconds"],
+            "music": plan["music"], "voice": plan["voice"]["voice"], "layout_notes": len(made["layout"])}
+
+
 # --- the thumbnail -------------------------------------------------------------------
 
 def stills(plan: dict) -> list[str]:
@@ -861,6 +1010,8 @@ def stills(plan: dict) -> list[str]:
     the drawn look, his art first (the drawings, in order), then the rest."""
     names = list(dict.fromkeys(v for line in plan["script"]["lines"] for v in line.get("visuals") or []
                                if v.split(":")[0] != "number" and not v.startswith("quote:")))
+    if plan["script"].get("look") == "montage":  # (every picture of the case can be its cover, whether or not it's been directed yet)
+        return names + [n for n in _names(plan).values() if n not in names]
     if plan["script"].get("look") in ("drawn", "faceless"):
         return [f"scene:{n}" for n in plan.get("drawings") or {}] + [n for n in names if not n.startswith("scene:")]
     return sorted(names, key=lambda v: STILLS.index(v.split(":")[0]) if v.split(":")[0] in STILLS else len(STILLS))
@@ -881,7 +1032,9 @@ def make_thumbnail(video_id: int, plan: dict, text: str | None = None, backgroun
     if not spec:
         raise RuntimeError("the case has no picture for a thumbnail")
     category = plan["brief"]["category"]
-    images = thumbnail.make(thumbnail.still(spec, infographics.accent(category)), text, category)
+    picture = thumbnail.still(spec, infographics.accent(category))
+    images = (montage_render.posters(picture, thumbnail.words(text)) if plan["script"].get("look") == "montage"
+              else thumbnail.make(picture, text, category))
     thumbnail.save(images, *thumb_paths(video_id))
     shot = next((s for s in (plan.get("render") or {}).get("shots") or [] if s.get("name") == background), None)
     return {"text": text, "background": background, "at": round(shot["start"] + 0.6, 2) if shot else 1.2,
@@ -909,6 +1062,8 @@ def improve(plan: dict, progress=log) -> tuple[dict, list[str]]:
     """Acts on the Reviewer's notes about the latest version: the fixes go into plan["fixes"] (and a swapped shot or
     a cut line into the script itself). Returns the plan and what was changed, in words; nothing changed means
     nothing the Animator can do would fix it."""
+    if (plan.get("script") or {}).get("look") == "montage":
+        return _improve_montage(plan, progress)
     if (plan.get("script") or {}).get("look") == "faceless":
         return _improve_faceless(plan, progress)
     review = plan.get("review") or {}

@@ -82,7 +82,9 @@ SKIP_DOMAINS = ("youtube.com", "facebook.com", "twitter.com", "x.com", "instagra
 MIN_ARTICLE = 800
 MAX_PAGE = 5 * 1024 * 1024  # bytes of an article's page (they're 50 KB-2 MB)
 PAGE_SECONDS = 45  # to read one page, all of it
-IMAGE_HOSTS = ("upload.wikimedia.org",)
+IMAGE_HOSTS = ("upload.wikimedia.org", "thumb.wikimedia.org")  # (Wikimedia began serving thumbnails from thumb. by 2026-11)
+VIDEO_TYPES = ("video/webm", "video/ogg", "application/ogg", "video/mp4", "video/mpeg")
+MIN_VIDEO_SECONDS, MIN_VIDEO_SIDE, MAX_VIDEO_HEIGHT = 8, 240, 720
 MAX_IMAGE = 40 * 1024 * 1024  # bytes (a Commons photo at 1280 px is under 1 MB; an original can be 30)
 FEEDS = [  # news sites' public RSS feeds, searched for the topic's words
     "https://feeds.bbci.co.uk/news/business/rss.xml", "https://feeds.bbci.co.uk/news/world/rss.xml",
@@ -569,6 +571,49 @@ def commons_images(query: str, limit: int = 6, share_alike: bool = False) -> lis
         image = _image(item["info"], item["title"], share_alike)
         if image:
             found.append(image)
+        if len(found) >= limit:
+            break
+    return found
+
+
+def _video(info: dict, title: str, share_alike: bool) -> dict | None:
+    """A Commons video we may reuse, or None: a licence that's clearly free, a real length, and big enough to watch."""
+    meta = info.get("extmetadata") or {}
+    licence = strip_markup((meta.get("LicenseShortName") or {}).get("value", ""))
+    restrictions = (meta.get("Restrictions") or {}).get("value", "")
+    if not licence_ok(licence, share_alike) or "trademark" in restrictions.lower():
+        return None
+    if info.get("mime") not in VIDEO_TYPES or not info.get("url") or float(info.get("duration") or 0) < MIN_VIDEO_SECONDS:
+        return None
+    if max(info.get("width") or 0, info.get("height") or 0) < MIN_VIDEO_SIDE or NOT_PHOTOS.search(title):
+        return None
+    author = strip_markup((meta.get("Artist") or {}).get("value", "")) or "unknown author"
+    author = re.sub(r"\s*\(talk\)\s*$", "", author)[:80]
+    # (Wikimedia refuses scripted reads of a video's original after one or two, 2026-11-04; its converted copies are fine)
+    copies = [d for d in info.get("derivatives") or [] if str(d.get("type") or "").startswith("video/") and d.get("src")
+              and 240 <= int(d.get("height") or 0) <= MAX_VIDEO_HEIGHT]
+    best = max(copies, key=lambda d: int(d.get("height") or 0), default=None)
+    return {"title": title.removeprefix("File:"), "url": best["src"] if best else info["url"], "page": info.get("descriptionurl"),
+            "width": (best or info).get("width"), "height": (best or info).get("height"), "duration": float(info["duration"]),
+            "licence": licence, "author": author,
+            "description": strip_markup((meta.get("ImageDescription") or {}).get("value", ""))[:200],
+            "credit": f"{author}, {licence}, via Wikimedia Commons"}
+
+
+def commons_videos(query: str, limit: int = 6, share_alike: bool = False) -> list[dict]:
+    """Videos on Commons for a search whose licence we can reuse, best matches first."""
+    def fetch():
+        data = _get_json(COMMONS_API, {"action": "query", "generator": "search", "gsrnamespace": 6,
+                                       "gsrsearch": f"{query} filetype:video", "gsrlimit": 20,
+                                       "prop": "videoinfo", "viprop": "url|size|mime|extmetadata|derivatives", "format": "json",
+                                       "formatversion": 2})
+        pages = sorted(data.get("query", {}).get("pages", []), key=lambda p: p.get("index", 0))
+        return [{"title": p["title"], "info": (p.get("videoinfo") or [{}])[0]} for p in pages]
+    found = []
+    for item in _cached(f"commons_videos:{query}", WEEK, fetch):
+        video = _video(item["info"], item["title"], share_alike)
+        if video:
+            found.append(video)
         if len(found) >= limit:
             break
     return found

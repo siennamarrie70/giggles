@@ -51,8 +51,10 @@ research:
   share_alike_images: false  # also use CC BY-SA photos (they arguably make the whole video share-alike)
 
 look:                        # how the Shorts look; a change applies to the cases written after it
-  style: "faceless"          # faceless: your own Agent 3 and Agent 4 prompts (prompts/), AI pictures, stock video and no face (your
-                             # choice, 2026-11-03); drawn: every line over a scene drawn in the Professor's art by Cloudflare (free;
+  style: "montage"           # montage: Constructivist Montage, real archive film and photos in ink on paper with one red, your Agent 3
+                             # prompt, and a Short waits rather than go without real material (your choice, 2026-11-04); faceless: your
+                             # own Agent 3 and Agent 4 prompts (prompts/), AI pictures, stock video and no face (your choice,
+                             # 2026-11-03; set it back here to return to it); drawn: every line over a scene drawn in the Professor's art by Cloudflare (free;
                              # tools/draw.py), real photos framed inside; footage: stock video, archive film and real photos
   art: >-
     anime-style 2D illustration in the look of a hand-painted animated film: clean dark ink outlines, soft painted cel shading, warm

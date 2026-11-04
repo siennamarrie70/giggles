@@ -63,14 +63,15 @@ ARCHIVE_SEARCH = "https://archive.org/advancedsearch.php"
 ARCHIVE_META = "https://archive.org/metadata/{id}"
 ARCHIVE_FILE = "https://archive.org/download/{id}/{name}"
 ARCHIVE_PAGE = "https://archive.org/details/{id}"
-ARCHIVE_BASE = ("(collection:prelinger OR collection:FedFlix) AND mediatype:movies AND "
-                "licenseurl:(*publicdomain*)")  # public domain items only
+ARCHIVE_BASE = ("(collection:prelinger OR collection:FedFlix OR collection:usnationalarchives) AND mediatype:movies AND "
+                "licenseurl:(*publicdomain*)")  # marked public domain, in collections known for it (never a random upload)
 NASA_SEARCH = "https://images-api.nasa.gov/search"
 NASA_ASSET = "https://images-api.nasa.gov/asset/{id}"
 NASA_PAGE = "https://images.nasa.gov/details/{id}"
 HEADERS = {"User-Agent": "ezzy-case-studies/1.0 (archive footage for documentary Shorts)"}
-FILM_HOSTS = ("archive.org", "nasa.gov")  # where an archive film's address may point (it goes straight to ffmpeg)
-WEB_ONLY = ["-protocol_whitelist", "https,tls,tcp,http"]  # ffmpeg, for a web address: no local files, no other schemes
+FILM_HOSTS = ("archive.org", "nasa.gov", "wikimedia.org")  # where an archive film's address may point (it goes straight to ffmpeg)
+WEB_ONLY = ["-protocol_whitelist", "https,tls,tcp,http", "-user_agent", HEADERS["User-Agent"]]  # ffmpeg, for a web address: no local
+# files, no other schemes; named as this channel (Wikimedia refuses clients that don't say who they are)
 MAX_DOWNLOAD = 400 * 1024 * 1024  # bytes: a stock clip bigger than this isn't downloaded (they're 10-80 MB)
 MIN_LONG_SIDE = 960   # softer than this looks poor at 1080x1920 (stock; archive film is what it is)
 MAX_LONG_SIDE = 1920  # no point downloading 4K for a 1080p Short
@@ -303,7 +304,7 @@ def _probe(url: str) -> float:
 
 def _grab(url: str, at: float) -> bytes | None:
     """One frame of a video on the web at `at` seconds, as a small JPEG (ffmpeg reads only that part of it)."""
-    small = f"scale='if(gt(iw,ih),{FRAME_SIZE},-2)':'if(gt(iw,ih),-2,{FRAME_SIZE})'"
+    small = f"scale='if(gt(iw,ih),{FRAME_SIZE},-2)':'if(gt(iw,ih),-2,{FRAME_SIZE})',format=yuvj420p"
     try:
         raw = subprocess.run([_ffmpeg(), "-v", "error", "-ss", f"{at:.2f}", *WEB_ONLY, "-i", _film_url(url), "-frames:v", "1",
                               "-vf", small,

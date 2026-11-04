@@ -73,7 +73,7 @@ Usage:
     python tools/jobs.py morning               # the day's run (what GitHub runs at 06:55)
     python tools/jobs.py autopilot [--now]     # one Short; --now: the next open slot, even if it isn't due
     python tools/jobs.py prepare
-    python tools/jobs.py publish [--dry-run]   # --dry-run makes and reviews but doesn't upload
+    python tools/jobs.py publish [--dry-run] [--newest]  # --dry-run makes and reviews but doesn't upload; --newest: the case made last
     python tools/jobs.py instagram [--stay 40]  # posts the Reels whose slot has come (--stay: and those due soon)
     python tools/jobs.py keep                  # (the cloud, after a run) the videos still needed, kept
     python tools/jobs.py stats [--learn]
@@ -91,7 +91,9 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the agents/ package
 
+import archive_find  # noqa: E402
 import db  # noqa: E402
+import draw  # noqa: E402
 import kept  # noqa: E402
 import llm  # noqa: E402
 import notify  # noqa: E402
@@ -121,6 +123,8 @@ UPLOAD_WAIT = timedelta(hours=1)       # YouTube's daily upload limit reached: i
 UPLOAD_SOONEST = timedelta(minutes=2)  # ...but not sooner than this
 PACIFIC = ZoneInfo("America/Los_Angeles")  # (YouTube's days may be California's: its upload limit isn't documented)
 LIMIT_STOP = "YouTube's daily upload limit"
+NO_TOPIC_STOP = "No topic with enough real material"
+EMPTY_IN_A_ROW = 2                     # slots in a row with no topic that can be made (Constructivist Montage): the run ends quietly
 MAX_TRIES = 25                         # Shorts tried in one run before it stops (something's wrong every time)
 RUN_LIMIT = timedelta(hours=5, minutes=40)  # a run stops before GitHub's 6-hour job limit
 REELS_EVERY = 60                       # seconds: how often the cloud's morning run looks for Reels due (_reels_beside)
@@ -318,13 +322,32 @@ def research_folder(topic: str) -> Path:
     return tmp_path("research", f"{_now():%Y%m%d-%H%M%S}-{slug}", "x").parent
 
 
+class NoTopic(RuntimeError):
+    """The Constructivist Montage look found no topic it can make right now: not a failure (your choice, 2026-11-04: a Short waits rather
+    than go up without real material, and there's no daily quota). The slot stays open for a later run."""
+
+
 def _make_case(progress, ready_now: bool = False) -> dict:
     """Agent 1 picks the case, Agent 2 researches it, Agent 3 writes it: a plan ready for the queue. A
     topic the sources can't support, or that the Writer can't script past the fact-check (it rewrites
-    once itself), is swapped for another one."""
+    once itself), is swapped for another one. In the Constructivist Montage look a quick search comes first, so a topic without real
+    material costs only the Editor's call, and running out of topics isn't a failure: the Short just waits (NoTopic)."""
     avoid, why = [], []
+    in_montage = draw.style_now() == "montage"
     for attempt in range(TOPIC_TRIES):
-        brief = editor.run(progress=progress, avoid=avoid, ready_now=ready_now)["brief"]
+        try:
+            brief = editor.run(progress=progress, avoid=avoid, ready_now=ready_now)["brief"]
+        except Exception as e:
+            if not in_montage or _must_wait(e):
+                raise
+            why.append(str(e)[:120])
+            break
+        if in_montage and not archive_find.quick_check(brief, progress)["enough"]:
+            progress(f"“{brief['topic']}” hasn't enough free archive material"
+                     + ("; choosing another case" if attempt + 1 < TOPIC_TRIES else ""))
+            avoid.append(brief["topic"])
+            why.append(f"{brief['topic']}: too little free archive material")
+            continue
         try:
             pack = researcher.run(brief, research_folder(brief["topic"]), progress=progress)["pack"]
             written = writer.run(brief, pack, progress=progress)
@@ -338,6 +361,8 @@ def _make_case(progress, ready_now: bool = False) -> dict:
             continue
         return {"brief": brief, "research": pack, "script": written["script"], "metadata": written["metadata"],
                 "approval": "waiting" if brief["needs_approval"] else None}
+    if in_montage:
+        raise NoTopic(f"{NO_TOPIC_STOP} was found ({'; '.join(why)}). The Short waits")
     raise RuntimeError(f"no case could be made ({'; '.join(why)})")
 
 
@@ -369,6 +394,8 @@ def autopilot(force: bool = False, slot: datetime | None = None, progress=_log) 
     for attempt in range(CASE_TRIES):
         try:
             return _fill(slot, sched, when, progress)
+        except NoTopic:
+            raise
         except Exception as e:
             if _must_wait(e):
                 raise
@@ -394,6 +421,9 @@ def _fill(slot: datetime, sched: dict, when: str, progress) -> dict:
         progress(f"No case ready: making one for the {when} slot")
         try:
             plan = _make_case(progress, ready_now=True)
+        except NoTopic as e:  # (the slot goes back: a later run tries it)
+            db.update_video(video_id, status="skipped", error=str(e)[:500])
+            raise
         except Exception as e:
             db.update_video(video_id, status="skipped", error=str(e)[:500])
             raise RuntimeError(f"Couldn't make the {when} Short: {e}") from e
@@ -515,6 +545,7 @@ def _morning(progress) -> dict:
     if not youtube_auth.is_configured():
         raise RuntimeError("YouTube isn't connected: connect it on the dashboard's YouTube page")
     made, held, tries, failures, day, stopped = [], [], 0, 0, None, None
+    empty = 0
     while True:
         if paused():
             stopped = "the autopilot is paused"
@@ -540,6 +571,13 @@ def _morning(progress) -> dict:
             progress(f"{str(e)[:200]}. The {clock(slot, sched)} Short waits ({wait / 60:.0f} minutes)")
             _wait(wait)
             continue
+        except NoTopic as e:  # the look found nothing it can make: not a failure, and no reason to keep spending Gemini's calls
+            empty += 1
+            progress(str(e)[:300])
+            if empty >= EMPTY_IN_A_ROW:
+                stopped = f"{NO_TOPIC_STOP} for the {clock(slot, sched)} Short"
+                break
+            continue
         except Exception as e:
             if _signed_out(e):
                 stopped = f"YouTube's sign-in needs renewing ({e})"
@@ -563,6 +601,7 @@ def _morning(progress) -> dict:
             _wait(wait.total_seconds())
             continue
         failures = 0
+        empty = 0
         if result.get("youtube_id"):
             made.append(result)
         elif result.get("held"):
@@ -589,9 +628,13 @@ def _morning(progress) -> dict:
         except Exception as e:  # the numbers can wait for tomorrow; the Shorts are what matter
             progress(f"The day's numbers couldn't be read ({str(e)[:200]})")
     waits = (stopped or "").startswith(LIMIT_STOP)  # (not a failure: a later run goes on when YouTube takes uploads)
-    if stopped and stopped != "the autopilot is paused" and not waits:
+    no_topic = (stopped or "").startswith(NO_TOPIC_STOP)  # (nor this: there's no daily quota, and a catch-up run tries again)
+    if stopped and stopped != "the autopilot is paused" and not waits and not no_topic:
         raise RuntimeError(f"stopped with {done} of {total} Shorts of the day scheduled: {stopped}.{notes}")
-    if waits:
+    if no_topic:
+        notify.run(f"🗂 This run made {len(made)} Short{'' if len(made) == 1 else 's'}: {done} of {total} of the day are scheduled ({hours}). "
+                   f"It found no more topics with enough real archive material; the next catch-up run tries again.{notes}")
+    elif waits:
         notify.run(f"⏳ Today's run stopped at YouTube's daily upload limit with {done} of {total} Shorts scheduled "
                    f"({hours}): {stopped[len(LIMIT_STOP) + 2:]}, and a later run carries on then.{notes}")
     elif made or held:
@@ -743,6 +786,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     parser.add_argument("job", choices=list(JOBS))
     parser.add_argument("--dry-run", action="store_true", help="publish only: render but don't upload")
+    parser.add_argument("--newest", action="store_true", help="publish only: the case made last, not the oldest ready one (the cloud test's)")
     parser.add_argument("--now", action="store_true", help="autopilot only: the next open slot, even if not due")
     parser.add_argument("--learn", action="store_true", help="stats only: rewrite the playbook now")
     parser.add_argument("--stay", type=float, default=0, help="instagram only: minutes to keep looking for Reels due")
@@ -752,6 +796,8 @@ def main() -> int:
         print(json.dumps(skipped))
         return 0
     kwargs = {"dry_run": True} if args.dry_run and args.job == "publish" else {}
+    if args.newest and args.job == "publish" and (queue := db.planned_videos(500)):
+        kwargs["video_id"] = queue[-1]["id"]
     if args.job == "autopilot":
         check()
         kwargs = {"force": args.now}
