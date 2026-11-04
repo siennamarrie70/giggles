@@ -1028,7 +1028,7 @@ function renderScripts() {
 
   root.replaceChildren(
     pageHead({ eyebrow: "03 · Agent 3 · Writer", agent: "writer", title: "Scripts",
-      lede: state.app.drawing?.look === "faceless"
+      lede: ["faceless", "montage"].includes(state.app.drawing?.look)
         ? "Agent 3 turns the research into a script with your own prompt: five beats that loop back to the start, every rule of "
           + "the prompt checked in code, then read again by the fact-checker. Titles and descriptions can be edited before "
           + "it's animated; its lines can't, because the scenes are built on them."
@@ -1089,7 +1089,7 @@ function scriptEditor(v) {
   const labelled = (text, control) => h("label", {}, text, control);
   const visuals = Object.entries(v.visuals).map(([key, text]) => [key, `${key} · ${text}`.slice(0, 90)]);
   const drawn = v.look === "drawn";
-  const faceless = v.look === "faceless";
+  const faceless = ["faceless", "montage"].includes(v.look);
   const drawLines = () => body.replaceChildren(...lines.map((l, k) => {
     const text = h("input", { class: "input", value: l.text, "aria-label": `Line ${k + 1}`,
                               oninput: e => { l.text = e.target.value; markDirty(); } });
@@ -1235,7 +1235,11 @@ function renderStudio() {
 
   root.replaceChildren(
     pageHead({ eyebrow: "04 · Agent 4 · Animator", agent: "animator", title: "Studio",
-      lede: state.app.drawing?.look === "faceless"
+      lede: state.app.drawing?.look === "montage"
+        ? "Agent 4 directs the Constructivist Montage: each line's shot, its real archive film and photos, and the few words on screen. "
+          + "The narrator reads the script (Gemini's voice, free), and the video and its thumbnail are made in ink on paper with one red, cut "
+          + "to a machine beat. Agent 5 then checks every video; one that fails comes back here with notes and is fixed."
+        : state.app.drawing?.look === "faceless"
         ? "Agent 4 designs every scene with your own prompt: its AI picture or stock clip, camera move, effects, colour, on-screen "
           + "words and sound. The narrator reads the script (Gemini's voice, free), and the video and its thumbnail are made. "
           + "Agent 5 then checks every video; one that fails comes back here with notes and is fixed."
@@ -1394,14 +1398,14 @@ function sceneList(v) {
       s.thumb && h("a", { href: s.thumb, target: "_blank", title: "Full size" }, h("img", { src: s.thumb, alt: "", loading: "lazy" })),
       h("div", {},
         h("p", { class: "line" }, s.text),
-        h("div", { class: "how" }, h("span", { class: "tag" }, s.kind === "picture" ? "AI picture" : s.kind === "clip" ? "stock clip" : s.kind === "photo" ? "stock photo" : "not made yet"),
+        h("div", { class: "how" }, h("span", { class: "tag" }, s.format ? s.format : s.kind === "picture" ? "AI picture" : s.kind === "clip" ? "stock clip" : s.kind === "photo" ? "stock photo" : "not made yet"),
           s.callout && h("span", { class: "tag" }, s.callout)))))));
 }
 
 function scriptView(v) {
   // A case still being made, or one stopped before its script, has no lines yet (the Studio opened blank on it)
   if (!v.lines?.length) return h("p", { class: "muted" }, v.status === "making" ? "Agents 1-3 are still writing it." : "No script.");
-  if (v.look === "faceless" && v.scenes?.length) return sceneList(v);
+  if (["faceless", "montage"].includes(v.look) && v.scenes?.length) return sceneList(v);
   return h("ol", { class: "script" }, v.lines.map((l, k) => {
     const [checkText, checkTone] = CHECK[l.check] || ["Not checked", "idle"];
     return h("li", { class: ["closing", "echo"].includes(l.beat) || k === v.lines.length - 1 ? "punch" : "" },
@@ -2196,7 +2200,8 @@ async function loadSettings() {
           h("textarea", { class: "input", id: "s-voice", name: "voice", rows: 5, disabled: ro, value: s.channel.voice }), "s-voice")),
     card("look", "S2.2", "The look",
       row("How the Shorts look", "Changes apply to the cases written after you save; a case already written keeps its look.",
-        select("look_style", [["faceless", "Faceless: your Agent 3 and 4 prompts, AI pictures and stock video, no face"],
+        select("look_style", [["montage", "Constructivist Montage: your Agent 3 prompt, real archive film and photos, ink on paper with one red"],
+                              ["faceless", "Faceless: your Agent 3 and 4 prompts, AI pictures and stock video, no face"],
                               ["drawn", "Drawn in his art: every scene painted like the Professor"],
                               ["footage", "Real footage: stock video, archive film and photos"]], s.look?.style || "footage"), "s-look_style"),
       row("His art", "Every drawing starts with these words (Cloudflare's FLUX draws from words alone). Keep the names of his colours and lines.",

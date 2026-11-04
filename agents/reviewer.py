@@ -161,12 +161,31 @@ FACELESS_LOOK = """- garbled_text: letters, words or a signature inside an AI-ma
 """
 
 
-def look_system(drawn: bool, faceless: bool = False) -> str:
+MONTAGE_SWAPS = (("told by a drawn,\nanime-style old professor (the host: he belongs in the lower-left corner) over real footage, photos, maps and charts,\nwith captions in the middle that light up word by word, and sometimes a "
+                   "big number, a person's name (top left) or the\ncase title (at the start). A big number counts up before it lands, so "
+                   "a frame may show an in-between value: that's\nfine.",
+                   "told by a narrator's voice, with no presenter on screen, in the Constructivist Montage style: real archive film, photographs and documents, all printed in black ink on cream "
+                   "paper with one red, with type on diagonal bands. All of this is correct and intended, so it is never a problem: tilted "
+                   "and slanted windows, pictures cropped hard, old soft or grainy film, several pictures at once, huge type, type on a red "
+                   "band or a black block over a picture, a red ring, a dark or red ground, a small source tag on a picture, a frame almost "
+                   "black with one red dot, and a frame caught in a slam, a flash or a red wipe. Captions sit on a dark bar in the lower "
+                   "part, with the word being said on a red tab. A number counts up before it lands, so a frame may show an in-between value "
+                   "(even 0), and words stamp in letter by letter, so a word may be part written: that's fine."),
+                  ("(stock footage is illustrative: only a clash counts)", "(archive pictures of the same time and subject are fine: only a clash counts)"),
+                  ("- stretched: a squashed or stretched picture\n", ""),
+                  ("- text_overlap: two of the video's own words or numbers on top of each other (text that's part of the footage, like a\n  sign, doesn't count)\n",
+                   "- text_overlap: two lines of the video's own words or numbers printed over each other so that one can't be read\n"))
+
+
+def look_system(drawn: bool, faceless: bool = False, montage: bool = False) -> str:
     """The look's instructions: the drawn look's videos are painted scenes in the host's style, with three more
-    things to look for; the faceless look's are AI pictures and stock video in your Agent 4 prompt's styles, with two. With him off
-    screen (settings host.enabled) he isn't mentioned."""
+    things to look for; the faceless look's are AI pictures and stock video in your Agent 4 prompt's styles, with two; the Constructivist
+    Montage look's are real archive material in ink on paper. With him off screen (settings host.enabled) he isn't mentioned."""
     text = LOOK_SYSTEM
-    if faceless:
+    if montage:
+        for was, now in MONTAGE_SWAPS:
+            text = text.replace(was, now)
+    elif faceless:
         for was, now in FACELESS_SWAPS:
             text = text.replace(was, now)
         text = text.replace("(cut off oddly, distorted, doubled)\n", "(cut off oddly, distorted, doubled)\n" + FACELESS_LOOK)
@@ -233,7 +252,7 @@ def words_on_screen(layout: list[dict]) -> list[dict]:
                                  item["start"], "swap" if item["what"] and ":" in item["what"] else None, item["what"]))
             continue
         parts = str(item["what"]).split("+")
-        movable = next((p for p in ("name", "number", "title", "callout") if p in parts), None)
+        movable = next((p for p in ("name", "number", "title", "callout", "type") if p in parts), None)
         words = " and ".join(WORDS.get(p, p) for p in parts)
         detail = {"overlap": f"{words} overlap", "covers_host": f"{words} cover the Professor's face",
                   "unsafe": f"{words} reach under YouTube's buttons or title"}.get(item["kind"], words)
@@ -409,8 +428,10 @@ def look(path: Path, plan: dict, timing: list[dict], seconds: float, progress=lo
     lines = plan["script"]["lines"]
     drawn = plan["script"].get("look") == "drawn"
     faceless = plan["script"].get("look") == "faceless"
+    in_montage = plan["script"].get("look") == "montage"
     problems = {k: v for k, v in LOOK_PROBLEMS.items() if (drawn or faceless or k not in DRAWN_ONLY)
-                and (k != "host_glitch" or host.shown()) and not (faceless and k == "off_style")}
+                and (k != "host_glitch" or host.shown()) and not (faceless and k == "off_style")
+                and not (in_montage and k == "stretched")}
     shots = (plan.get("render") or {}).get("shots") or []
     title_until = float((plan.get("render") or {}).get("title_until") or doc_render.TITLE_FOR)
     times = [1.0] + [round(seconds * (i + 0.5) / (FRAMES - 1), 2) for i in range(FRAMES - 1)]
@@ -426,7 +447,7 @@ def look(path: Path, plan: dict, timing: list[dict], seconds: float, progress=lo
         return [_issue("look", "minor", "no frames could be taken for the look")], None
     advice = lessons_for("reviewer")["advice"]
     progress(f"Looking at {len(shown)} frames")
-    answer = llm.generate_json(parts, _look_schema(problems), look_system(drawn, faceless)
+    answer = llm.generate_json(parts, _look_schema(problems), look_system(drawn, faceless, in_montage)
                                + ("\nLearned so far:\n- " + "\n- ".join(advice) if advice else ""))
     issues = []
     for item in answer.get("frames") or []:

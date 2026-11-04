@@ -737,9 +737,9 @@ All of it says only what the script says. The channel's rules, for all of it: {'
     return case_title, meta
 
 
-def write_faceless(brief: dict, pack: dict, progress=log) -> dict:
-    """The script in the faceless look, from your Agent 3 prompt: see the top of this file. A topic whose script can't keep
-    every rule in FACELESS_TRIES raises, and the Editor picks another."""
+def write_faceless(brief: dict, pack: dict, progress=log, look: str = "faceless") -> dict:
+    """The script from your Agent 3 prompt (the faceless look's and the Constructivist Montage look's, word for word): see the top of this
+    file. A topic whose script can't keep every rule in FACELESS_TRIES raises, and the Editor picks another."""
     cfg = load_config()
     given = a3.agent2_json(brief, pack)
     if len(given["facts"]) < a3.MIN_FACTS:
@@ -790,7 +790,7 @@ def write_faceless(brief: dict, pack: dict, progress=log) -> dict:
         raise ValueError(f"no script kept every rule of the prompt in {FACELESS_TRIES} tries ({best[0] if best else '?'} left: "
                          f"{best[2][0][:120] if best else ''})")
     script = {"case_title": "", "lines": lines, "music_mood": "", "seconds": round(estimate_seconds(lines), 1), "cut": 0,
-              "retention": {}, "habits": [], "look": "faceless", "a3": made}
+              "retention": {}, "habits": [], "look": look, "a3": made}
     script["case_title"], meta = _titles(brief, script, pack, cfg, progress)
     progress(f"Script: {len(lines)} lines, {made['total_word_count']} words, about {script['seconds']:.0f} s")
     return {"script": script, "metadata": meta, "lines": len(lines), "cut": 0, "estimate": script["seconds"]}
@@ -799,8 +799,8 @@ def write_faceless(brief: dict, pack: dict, progress=log) -> dict:
 def write(brief: dict, pack: dict, progress=log, look: str | None = None) -> dict:
     """The script in `look` ("faceless", "drawn" or "footage"; by default the one a case made now gets). A pack researched
     for drawings that's written for footage gets its clips first (into the pack)."""
-    if (look or draw.style_now()) == "faceless":
-        return write_faceless(brief, pack, progress)
+    if (look or draw.style_now()) in ("faceless", "montage"):
+        return write_faceless(brief, pack, progress, look or draw.style_now())
     cfg = load_config()
     cases = cfg["cases"]
     target, max_seconds = int(cases.get("target_seconds", 60)), int(cases.get("max_seconds", 75))
@@ -897,7 +897,7 @@ def apply_edits(plan: dict, edits: dict) -> dict:
     cfg = load_config()
     script, meta, pack, brief = plan["script"], plan["metadata"], plan["research"], plan["brief"]
     if "lines" in edits:
-        if script.get("look") == "faceless":
+        if script.get("look") in ("faceless", "montage"):
             raise ValueError("This look's lines can't be edited: its scenes are built on them. Use Make it again for a new script.")
         drawn = script.get("look") == "drawn"
         menu = visual_menu(pack, brief, drawn)

@@ -74,6 +74,13 @@ def music_tracks() -> list[Path]:
     return sorted(p for p in MUSIC_DIR.glob("*") if p.suffix.lower() in MUSIC_EXTS) if MUSIC_DIR.exists() else []
 
 
+def montage_scores() -> list[Path]:
+    """The Constructivist Montage look's own scores (assets/music/montage, made by tools/montage_scores.py): a machine beat at 120 BPM,
+    starting on the beat, so the cuts land on it. Original, from free CC0 samples, so they need no credit."""
+    folder = MUSIC_DIR / "montage"
+    return sorted(p for p in folder.glob("*") if p.suffix.lower() in MUSIC_EXTS) if folder.exists() else []
+
+
 def music_moods() -> list[str]:
     """The moods the library's tracks are tagged with (assets/music/tracks.yaml)."""
     notes = _music_notes()

@@ -59,6 +59,34 @@ CATEGORIES = {  # the user's list of 2026-10-26, plus the economy and plain hist
     "history": "a historic event, decision or turning point: why it happened and what it changed",
     "economy": "an economic what-if or explainer (tariffs, growth, inflation, debt, trade), with real data",
 }
+# The Constructivist Montage look shows only real archive material, so types that have it come up far more (your choice, 2026-11-04)
+MONTAGE_WEIGHT = {"history": 1.6, "dark_history": 1.6, "people": 1.3, "science": 1.2, "business": 1.0, "mysteries": 1.0, "crime": 0.8,
+                  "technology": 0.5, "economy": 0.3, "mythology": 0.3, "psychology": 0.2, "trending": 0.0}
+MONTAGE_BRIEF = """The video shows only real archive material about the subject itself: public-domain film, old photographs and documents,
+printed in ink on paper, with no drawings and no AI pictures. So the case must have happened in the age of photography and film, between about
+1860 and 1975 (or be part of the space program, whose footage NASA gives away), and something about it must have been filmed or photographed at
+the time: a named ship, machine, factory, building, expedition, disaster or person a camera really pointed at. Best of all are subjects with many
+people, machines or a big effort behind them: engineering and construction, factories and industries, expeditions, inventors, explorers, world's
+fairs, early flight, and disasters told without gore. Never choose anything before about 1860 (no camera saw it), a modern brand, a person famous
+only since 1980, an idea with no pictures of it, or anything mainly on the internet: they don't have the material. Write archive as 2 or 3 short
+searches for old film of the subject itself ("Hindenburg", "Ford assembly line"), and image_subjects as 3 to 6 plain names of the things in the
+case exactly as an archive would file them: the ship's name, the place, the person, the machine, never a general idea like "old streets" or
+"medieval town". Set archive_source to film (or nasa for space)."""
+ARCHIVE_RICH = ("great ocean liners and their fates", "airships", "the first aeroplanes and the people who flew them", "long-distance air races", "polar expeditions",
+                "mountaineering firsts", "giant dams", "canals cut through continents", "great bridges and how they were built", "skyscraper races", "transcontinental railways",
+                "the first subways", "steam locomotives and their record runs", "car factories and assembly lines", "steel towns", "coal mining towns", "oil booms",
+                "shipyards in wartime", "the first telephone exchanges", "early radio and television", "the first computers and the people who ran them",
+                "typewriters and office machines", "world's fairs", "the great exhibitions", "early cinema and its inventors", "inventors' rivalries", "patent fights between inventors",
+                "famous aviators", "record-breaking land speed attempts", "Grand Prix racing before 1960", "the dust bowl", "the Great Depression's public works", "the New Deal's great projects",
+                "Prohibition", "famous escapes and prisons before 1960", "city fires and floods long ago", "great earthquakes before 1950", "lighthouse keepers", "whaling",
+                "the Apollo program", "the Mercury and Gemini missions", "the first satellites", "rocket pioneers", "the Hoover Dam", "the Panama Canal", "the Golden Gate Bridge",
+                "the Empire State Building", "the Titanic's sisters", "the Hindenburg", "the Model T", "the Wright brothers", "Thomas Edison's factory", "Nikola Tesla's experiments",
+                "Marie Curie's laboratory", "Harry Houdini", "Amelia Earhart", "Charles Lindbergh's flight", "Ernest Shackleton", "Roald Amundsen", "the Klondike gold rush",
+                "the California gold rush photographs", "immigrants at Ellis Island", "farm machines that changed America", "the first supermarkets", "department stores in their golden age",
+                "newspaper wars", "circuses and their trains", "early Olympic Games", "marathon dance contests", "the first traffic lights and city streets")
+FOOTAGE_BRIEF = """The video is real footage: stock video that sets the scene (b-roll: filmable things, never brand names or
+real people, since stock clips can't show the real company), real photos, maps and charts, and archive film of the
+real thing for older history, old products and adverts, and space."""
 PICTURES_NEEDED = {"mythology": 20, "history": 15, "business": 0}  # pictures a Short of each niche can use at most (Agent 4's
 # prompt: 20 scenes, 0-30%, 25-50% and 50-70% of them stock footage), so they're only picked while that many are left
 ON_THIS_DAY_FOR = {"history", "dark_history", "people", "crime", "mysteries", "science"}  # anniversaries help these
@@ -157,6 +185,9 @@ def choose_types(cfg: dict, recent: list[dict], waiting: int) -> list[str]:
         weights[c] *= min(2.0, max(0.5, lifts.get(c, 1.0)))
     if waiting >= 2:
         weights.pop("trending", None)
+    if draw.style() == "montage":
+        weights = {c: w * MONTAGE_WEIGHT.get(c, 1.0) for c, w in weights.items()}
+        weights = {c: w for c, w in weights.items() if w > 0} or {"history": 1.0}
     if draw.style() == "faceless":  # Cloudflare's free pictures run out during the day: types that need them go first,
         left = draw.pictures_left()  # and the later Shorts are the types stock footage suits best (your choice, 2026-11-03)
         roomy = {c: w for c, w in weights.items() if PICTURES_NEEDED[a3.niche(c)] <= left}
@@ -175,6 +206,13 @@ def choose_types(cfg: dict, recent: list[dict], waiting: int) -> list[str]:
 def _signals(cfg: dict, category_choices: list[str]) -> dict:
     from jobs import trend_signals
 
+    if draw.style() == "montage":  # (this week's searches and news have no old film, and they pulled it back to the same few topics)
+        out = {}
+        try:
+            out["on_this_day"] = [f"{e['year']}: {e['text'][:150]}" for e in rf.on_this_day() if 1860 <= int(e["year"]) <= 1975][:12]
+        except Exception as e:
+            log(f"On this day unavailable: {e}")
+        return out
     trends = trend_signals(cfg)
     out = {
         "today": f"{trends['weekday']} {trends['date']}",
@@ -222,6 +260,8 @@ def validate(raw: dict, allowed: list[str], earlier: list[str], cfg: dict) -> di
                           or (political and approval.get("politics", True)))
     phrases = lambda items, n, chars: [" ".join(str(s).split())[:chars] for s in items or [] if str(s).strip()][:n]  # noqa: E731
     archive_source = raw.get("archive_source") if raw.get("archive_source") in ARCHIVE_SOURCES else "none"
+    if archive_source == "none" and draw.style() == "montage":
+        archive_source = "film"
     archive = phrases(raw.get("archive"), 3, 40) if archive_source != "none" else []
     return {
         "category": category, "topic": topic, "angle": angle, "why_now": why_now,
@@ -268,6 +308,7 @@ def pick(progress=log, avoid: list[str] | None = None, ready_now: bool = False) 
             and sum(1 for v in recent[:FOLLOW_UP_EVERY] if v["plan"]["brief"].get("follow_up_of")) == 0:
         follow_ups = analyst.follow_up_candidates()
     earlier = [v["plan"]["brief"]["topic"] for v in recent] + list(avoid or []) + ([] if request else discarded_topics())
+    what_it_shows = MONTAGE_BRIEF if draw.style() == "montage" else FOOTAGE_BRIEF
 
     system = f"""You are the editor of {ch['name']}, a YouTube Shorts channel of case studies a minute or so long for
 {ch['audience']}. One host, the Professor, tells every case as a mystery.
@@ -277,9 +318,7 @@ Choose the next case: a mystery people worldwide would want solved in a minute. 
 surprising fact or contradiction ('the biggest phone maker on Earth sold its phone business'), which raises one
 question whose answer isn't obvious and is well documented. A good case has real people making decisions, turning
 points and a twist, and plenty of public sources: at least one English Wikipedia article, and recent reporting if
-it's news. The video is real footage: stock video that sets the scene (b-roll: filmable things, never brand names or
-real people, since stock clips can't show the real company), real photos, maps and charts, and archive film of the
-real thing for older history, old products and adverts, and space.
+it's news. {what_it_shows}
 Rules, always:
 - Real companies, people and events are fine, told neutrally as the sources tell them. No accusations of crimes or
   misconduct unless a court ruled or the person admitted it.
@@ -309,6 +348,8 @@ Rules, always:
                   f"Cases that did well (a follow-up is possible): {json.dumps(follow_ups, ensure_ascii=False) if follow_ups else 'none'}\n"
                   f"Recent cases (don't repeat their topics): {json.dumps(earlier[:60], ensure_ascii=False) if earlier else 'none yet'}\n"
                   + (f"Don't use these either (they couldn't be done): {json.dumps(blocked)}\n" if blocked else "")
+                  + (f"Choose a specific case inside one of these, which are rich in free archive material (or one very like them), and never one "
+                     f"you've been told not to repeat: {json.dumps(random.sample(ARCHIVE_RICH, 8))}\n" if draw.style() == "montage" else "")
                   + ("This case goes up without anyone checking it first: choose one that doesn't touch politics.\n"
                      if ready_now and approval.get("politics", True) else "")
                   + f"What has worked so far: {advice(('category', 'why_now', 'hook')) or 'not enough data yet'}\n"

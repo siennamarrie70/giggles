@@ -639,8 +639,17 @@ def _drawing_state() -> dict:
 
 
 def _scenes_json(video_id: int, plan: dict) -> list[dict]:
-    """A faceless case's scenes for the Studio: each one's words, its picture or clip and its callout."""
+    """A faceless case's scenes for the Studio: each one's words, its picture or clip and its callout; a Constructivist Montage case's:
+    each one's words, its format, its first picture and its big words."""
     assets, out = plan.get("assets") or {}, []
+    if (plan.get("script") or {}).get("look") == "montage":
+        lines, names = plan["script"].get("lines") or [], animator._names(plan)
+        for k, scene in enumerate((plan.get("manifest") or {}).get("scenes") or []):
+            first = next((names[i] for i in scene.get("items") or [] if i in names), None)
+            out.append({"id": f"{k + 1:02d}", "text": " ".join(lines[n]["text"] for n in scene.get("lines") or [] if n < len(lines)),
+                        "format": scene.get("format"), "kind": None, "thumb": _still_thumb(video_id, first) if first else None,
+                        "callout": " ".join(x for x in (scene.get("big"), scene.get("unit")) if x) or None})
+        return out
     for scene in (plan.get("manifest") or {}).get("scenes") or []:
         name = "S01" if scene.get("reuse_asset_from") else scene["scene_id"]
         kind = (assets.get(name) or {}).get("kind")
@@ -678,7 +687,7 @@ def _video_json(v: dict) -> dict:
     drawn = script.get("look") == "drawn"
     return {
         **out,
-        "look": script.get("look") if script.get("look") in ("drawn", "faceless") else "footage",
+        "look": script.get("look") if script.get("look") in ("drawn", "faceless", "montage") else "footage",
         "drawings": _drawings_json(v["id"], plan) if drawn else {}, "scenes": _scenes_json(v["id"], plan),
         "switched": plan.get("switched"),
         "category": brief.get("category"), "topic": brief.get("topic"), "angle": brief.get("angle"),
@@ -1529,8 +1538,8 @@ def _validated(s: dict) -> dict:
             hashtags.append(tag)
     look = section("look")
     style = str(look.get("style") or "footage").strip().lower()
-    if style not in ("faceless", "drawn", "footage"):
-        raise ValueError("The look: faceless, drawn or footage.")
+    if style not in ("montage", "faceless", "drawn", "footage"):
+        raise ValueError("The look: montage, faceless, drawn or footage.")
     art = " ".join(str(look.get("art") or "").split())
     if style == "drawn" and not 40 <= len(art) <= 600:
         raise ValueError("The art: describe his style in 40 to 600 characters (every drawing starts with it).")

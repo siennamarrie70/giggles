@@ -49,6 +49,9 @@ failed slot.
 | Thumbnail | Agent 4 | `.venv/Scripts/python tools/thumbnail.py --image photo.jpg --text "One phone *sank* Nokia" --category business --out t.jpg` |
 | Review | Agent 5 | `.venv/Scripts/python -m agents.reviewer --id <case> [--fix]` (`--fix`: the whole make-review-fix loop) |
 | Render a case file | | `.venv/Scripts/python tools/doc_render.py --case case.json --out .tmp/out/doc.mp4` |
+| Free material for a topic | Agent 2 | `.venv/Scripts/python tools/archive_find.py --topic "..." --quick "search" "search"` |
+| Render a montage | Agent 4 | `.venv/Scripts/python tools/montage_render.py --case case.json --out .tmp/out/m.mp4 [--still 3.5]` |
+| Cut-out | Agent 4 | `.venv/Scripts/python tools/cutout.py --image photo.jpg --out person.png` |
 | His drawings | | `.venv/Scripts/python tools/host_prep.py` (only if the sheet changes; check `.tmp/out/host_check.png`) |
 | Upload | Agent 6 | `.venv/Scripts/python tools/jobs.py publish` (the oldest ready case into the next open slot) |
 | Reels | Agent 6 | `.venv/Scripts/python tools/jobs.py instagram` (the Reels whose slot has come); `tools/instagram.py --status` |
@@ -209,7 +212,34 @@ failed slot.
   real photos with depth (near parts slide more than far ones), NASA's Blue Marble with the countries lit, charts and
   quote cards high in the frame. Numbers count up and land in gold, with an impact, the moment they're said. A
   person's photo gets their name top left (after the title fades). One grade, vignette and grain for all of it.
-- **The faceless look (`look.style: faceless`, the user's choice on 2026-11-03):** the user's own prompts for Agents 3 and 4 run the
+- **The Constructivist Montage look (`look.style: montage`, the user's choice on 2026-11-04; every new Short):** real archive film, photos and documents printed in ink
+  on paper with one red, cut to a 120 BPM machine beat, from the Lemo-Opuscar toolbox's kino-montage style (MIT; the toolbox itself isn't used by the cloud). 24 fps.
+  - **Path:** Editor (told to stay between about 1860 and 1975, or NASA; `editor.MONTAGE_BRIEF`, `ARCHIVE_RICH`) -> `archive_find.quick_check` (free searches, no Gemini: too
+    little means another topic) -> Researcher, with `archive_find.gather` -> the Agent 3 prompt, word for word -> `montage.direct` (Agent 4's prompt can't direct this look, so
+    `montage.DIRECTOR` does; code makes it exact: every line in one scene, numbers on screen only from what he says or his facts, the question on screen in his own words) ->
+    one reading -> `montage_render.render` -> the Reviewer (its own instructions: `reviewer.MONTAGE_SWAPS`) -> the Publisher (credits every film and photo; no AI label).
+  - **No fallback and no quota (the user's decisions):** three topics without material raise `jobs.NoTopic`: the Short waits, the slot stays open, and that isn't a failure. Two
+    empty slots in a row end the run quietly with a message saying how many it made; the 13:00 and 19:00 catch-ups try again. Measured on 2026-11-04: a topic without
+    material took about 4 minutes and 2 Gemini calls when it got as far as `gather` (the 1518 dancing plague: 0 pictures passed).
+  - **Material:** Commons photos and videos (public domain, CC0, CC BY only), the Internet Archive's trusted collections with a public-domain mark (`footage.ARCHIVE_BASE`), NASA.
+    Stock only for gaps, labelled STOCK on screen, never in the title or the result, never more than half of what's shown (`montage.stock_share`). Gemini sees everything
+    twice: a contact sheet to choose moments, then the very seconds chosen and every cut-out. Maps are left out on purpose.
+  - **Wikimedia's limits (found 2026-11-04):** thumbnails now come from `thumb.wikimedia.org`, which `research_fetch.IMAGE_HOSTS` had to be told about, or every photo over
+    1280 px silently failed to download. Reading a video's original from a script gets 429 for ten minutes after one or two tries, with or without a proper User-Agent, so
+    `commons_videos` uses its converted copies (`viprop=derivatives`) and `archive_find` reads each one whole, once, then cuts it locally. Whether the cloud's shared
+    addresses get the same treatment is unknown until a cloud run shows it.
+  - **Layout (1080x1920):** key type stays above y 1400 (captions below it) and left of x 960 below y 1100 (YouTube's buttons). A dark wedge along the axis grounds every light frame,
+    because YouTube's title text and buttons are white. Old film stays at or under about 2.5x its pixels (windows, not full frame). Flashes: the ground changes at most every
+    quarter second and the eighth-second cuts come in runs of four, to stay within the usual limit of three flashes a second.
+  - **Sound:** six original scores in `assets/music/montage` (`tools/montage_scores.py`, made once on the laptop from the toolbox's CC0 samples, 667 MB, which can be deleted). Measured
+    on a real reading of his with every score: he sits about 17 dB above the score and about 14 dB above the score and effects together (`montage_render.MUSIC_DB`, `EFFECTS_DB`, `DUCK`).
+    The levels were set by the user's ear on their first real Short: at 9 dB above the score (6 dB above both) the music was too loud; at 24 dB above it, in an earlier trial, the beat was lost.
+    The six scores are equally loud (-14.4 dB), and whisper hears his words just as well at any of these levels, so a line the Reviewer calls unclear isn't the music's doing. Sampled
+    notes rise slowly, so the score starts `SCORE_LEAD` in. Sound effects from `assets/sfx`, 35% lower under his voice.
+  - **The way back:** `look.style: faceless` in `config/channel.yaml` and push, or tag `v5-before-montage`. Cases already made keep their look.
+  - **Cut-outs** come from `tools/cutout.py` (u2net_human_seg, 176 MB, pinned by checksum, cached with the other models in the cloud as `models-v2`). A shape that's too small, too big, a
+    group or running off the top of the picture is refused in code, and Gemini then checks what's left. Expect few: a case can have none, and the tower then shows floors only.
+- **The faceless look (`look.style: faceless`, the user's choice on 2026-11-03; the way back):** the user's own prompts for Agents 3 and 4 run the
   writing and the scene design, word for word, encrypted in `prompts/*.enc` because the repository is public (key `PROMPTS_KEY`, in `.env`
   and GitHub's secrets; after changing a prompt: `.venv/Scripts/python tools/prompts.py --seal agent3 file.txt`, and the same for
   `agent4`).
