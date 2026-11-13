@@ -162,14 +162,14 @@ def repeats(topic: str, earlier: list[str]) -> str | None:
 
 
 def recent_cases(days: int = RECENT_DAYS) -> list[dict]:
-    return [v for v in db.recent_videos(days=days) if v["format"] == db.FORMAT and v["plan"].get("brief")
+    return [v for v in db.recent_videos(days=days, parts=("brief",)) if v["format"] == db.FORMAT and v["plan"].get("brief")
             and v["status"] not in ("discarded", "skipped")]
 
 
 def discarded_topics(days: int = RECENT_DAYS) -> list[str]:
     """The topics of the cases you discarded lately: not chosen again unless you ask for them (Nokia came back a
     third time after two discards, 2026-10-26)."""
-    return [(v["plan"].get("brief") or {}).get("topic") for v in db.recent_videos(days=days)
+    return [(v["plan"].get("brief") or {}).get("topic") for v in db.recent_videos(days=days, parts=("brief.topic",))
             if v["status"] == "discarded" and (v["plan"].get("brief") or {}).get("topic")]
 
 

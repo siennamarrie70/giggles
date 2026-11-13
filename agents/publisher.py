@@ -359,7 +359,7 @@ def reels_due() -> list[dict]:
     if not instagram.is_configured():
         return []
     now = db.now_iso()
-    return [v for v in db.published_videos(days=REEL_DAYS)
+    return [v for v in db.published_videos(days=REEL_DAYS, parts=("instagram",))
             if (v["plan"].get("instagram") or {}).get("status") == "pending"
             and ((v["plan"].get("instagram") or {}).get("retry_at") or "") <= now and _turn(v) <= now]
 
@@ -368,9 +368,14 @@ def reels_coming(until: str) -> list[dict]:
     """Shorts whose Reel is still to post and comes due by `until` (its slot, or its next try)."""
     if not instagram.is_configured():
         return []
-    return [v for v in db.scheduled_videos(days=REEL_DAYS)
-            if (v["plan"].get("instagram") or {}).get("status") == "pending"
-            and max(_turn(v) or "", v["plan"]["instagram"].get("retry_at") or "") <= until]
+    return [v for v in db.scheduled_videos(days=REEL_DAYS, parts=("instagram",))
+            if (v["plan"].get("instagram") or {}).get("status") == "pending" and reel_due_at(v) <= until]
+
+
+def reel_due_at(row: dict) -> str:
+    """When a Reel still to post comes due: its slot (or a late upload's time), or its next try ("" if neither)."""
+    turn = max(row.get("slot") or "", row.get("publish_at") or "")  # (as _turn, without raising on a partial row)
+    return max(turn, ((row.get("plan") or {}).get("instagram") or {}).get("retry_at") or "")
 
 
 def _made_here() -> bool:
@@ -384,15 +389,18 @@ def expire_reels(progress=log) -> list[int]:
     waiting then (this computer was off) is given up; one that failed or that you took off can't be posted any more."""
     cutoff = db.now_iso(-timedelta(days=REEL_DAYS))
     expired = []
-    for v in db.published_videos(days=30):
+    for v in db.published_videos(days=30, parts=("instagram",)):
         reel = v["plan"].get("instagram") or {}
         if (not reel or reel.get("status") in ("posted", "deleted", "expired") or _posting(reel) or _remaking(reel)
                 or _turn(v) >= cutoff):
             continue
         if reel.get("status") in ("pending", "posting"):
-            db.update_video(v["id"], plan={**v["plan"], "instagram": {**reel, "status": "expired"}})
-            expired.append(v["id"])
-            progress(f"The Reel for Short #{v['id']} waited more than {REEL_DAYS} days and was given up")
+            whole = db.get_video(v["id"])  # (the whole case, as it is now)
+            reel = ((whole or {}).get("plan") or {}).get("instagram") or {}
+            if whole and reel.get("status") in ("pending", "posting") and not _posting(reel):
+                db.update_video(v["id"], plan={**whole["plan"], "instagram": {**reel, "status": "expired"}})
+                expired.append(v["id"])
+                progress(f"The Reel for Short #{v['id']} waited more than {REEL_DAYS} days and was given up")
         animator.remove(animator.preview_path(v["id"]))
     return expired
 
@@ -418,7 +426,7 @@ def _hold_reels(until: str | None) -> list[int]:
     """Every Reel still to post waits until `until` (None: it's due now) with its tries back to none, and one given up
     only because Meta refused the connection comes back: a refused connection isn't its video's fault."""
     held = []
-    for v in db.scheduled_videos(days=REEL_DAYS):
+    for v in db.scheduled_videos(days=REEL_DAYS, parts=("instagram",)):
         if (v["plan"].get("instagram") or {}).get("status") not in ("pending", "failed"):
             continue
         v = db.get_video(v["id"])  # (as it is now: another run may have just claimed it)

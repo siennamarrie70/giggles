@@ -522,9 +522,13 @@ def _run_json(r: dict | None) -> dict | None:
     return {"at": r["started_at"], "finished": r["finished_at"], "ok": r["ok"], "detail": detail}
 
 
+# What the dashboard's status (read every 30 seconds) needs of each case in the queue (db.LIGHT).
+QUEUE_PARTS = ("approval", "review", "render.id", "research.facts")
+
+
 def _agents(planned: list[dict]) -> list[dict]:
     """Each agent's card: its last run and the size of its part of the pipeline."""
-    videos = db.list_videos(300)
+    videos = db.list_videos(300, parts=())
     now = datetime.now(timezone.utc)
     cases = [v for v in videos if v["format"] == db.FORMAT and v["status"] != "skipped"]
     scheduled = [v for v in videos if v["status"] == "scheduled" and v["publish_at"] and slots.parse(v["publish_at"]) > now]
@@ -559,7 +563,7 @@ def _youtube_limit() -> dict | None:
 @router.get("/api/state")
 def state():
     cfg = load_config()
-    planned = db.planned_videos()
+    planned = db.planned_videos(parts=QUEUE_PARTS)
     return {
         "channel": cfg["channel"]["name"],
         "local": not ON_VERCEL,
@@ -941,7 +945,7 @@ def schedule_page():
     day = slots.day_slots(slots.shown_day(now, sched), sched)
     board = jobs.slot_board(day[0], day[-1], sched, now)
     shown = {s["video"]["id"] for s in board if s["video"]}
-    later = sorted((v for v in db.list_videos(100) if v["status"] == "scheduled" and v["id"] not in shown
+    later = sorted((v for v in db.list_videos(100, parts=jobs.SLOT_PARTS) if v["status"] == "scheduled" and v["id"] not in shown
                     and v["publish_at"] and slots.parse(v["publish_at"]) > now), key=lambda v: v["publish_at"])
     live = _youtube_now([s["video"]["youtube_id"] for s in board if s["video"]] + [v["youtube_id"] for v in later])
     return {"slots": [{"at": slots.iso(s["slot"]), "state": s["state"], "video": _slot_video(s["video"], live)}
@@ -1102,7 +1106,7 @@ def clip_thumb(video_id: int, clip_id: str):
 def topics():
     cfg = load_config()
     briefs = []
-    for v in db.list_videos(80):
+    for v in db.list_videos(80, parts=("brief", "approval", "metadata.title")):
         brief = v["plan"].get("brief")
         if v["format"] == db.FORMAT and brief:
             briefs.append({"id": v["id"], "created_at": v["created_at"], "status": v["status"],

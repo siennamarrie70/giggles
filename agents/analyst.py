@@ -124,11 +124,15 @@ def traits(video: dict, sched: dict) -> dict[str, list[str]]:
     }
 
 
-def rows(min_age: timedelta = MIN_AGE) -> list[dict]:
-    """Published Shorts old enough to judge, with their latest numbers and traits."""
+# The parts of a case its traits are read from (db.LIGHT: not the research or the render's shots).
+TRAIT_PARTS = ("brief", "metadata", "script.lines", "script.music_mood", "voice", "render.seconds", "review")
+
+
+def rows(min_age: timedelta = MIN_AGE, with_traits: bool = True) -> list[dict]:
+    """Published Shorts old enough to judge, with their latest numbers and (with_traits) their traits."""
     sched = slots.plan()
     cutoff = datetime.now(timezone.utc) - min_age
-    published = [v for v in db.published_videos(days=90)
+    published = [v for v in db.published_videos(days=90, parts=TRAIT_PARTS if with_traits else ("metadata.title",))
                  if v["format"] == db.FORMAT and slots.parse(v["publish_at"]) <= cutoff]  # cases only
     numbers = db.latest_stats([v["youtube_id"] for v in published])
     out = []
@@ -139,7 +143,8 @@ def rows(min_age: timedelta = MIN_AGE) -> list[dict]:
         out.append({"id": v["id"], "title": v["plan"].get("metadata", {}).get("title") or v["theme"],
                     "publish_at": v["publish_at"], "youtube_id": v["youtube_id"],
                     "views": n["views"] or 0, "likes": n["likes"] or 0, "comments": n["comments"] or 0,
-                    "avg_view_pct": n["avg_view_pct"], "subs_gained": n["subs_gained"], "traits": traits(v, sched)})
+                    "avg_view_pct": n["avg_view_pct"], "subs_gained": n["subs_gained"],
+                    "traits": traits(v, sched) if with_traits else {}})
     return out
 
 
@@ -183,7 +188,7 @@ def comments(videos: list[dict], progress=log) -> dict:
 
 def pull(progress=log) -> dict:
     """Today's numbers for every Short published in the last 60 days, and recent cases' comments."""
-    published = db.published_videos(days=60)
+    published = db.published_videos(days=60, parts=())
     if not published:
         return {"skipped": "no published Shorts yet"}
     progress(f"Fetching numbers for {len(published)} published Shorts")
@@ -203,11 +208,11 @@ def pull(progress=log) -> dict:
 
 def follow_up_candidates() -> list[dict]:
     """Cases that did clearly better than usual and have no follow-up yet, best first."""
-    table = rows(FOLLOW_UP_AGE)
+    table = rows(FOLLOW_UP_AGE, with_traits=False)
     if len(table) < MIN_SAMPLES:
         return []
     median = statistics.median(r["views"] for r in table) or 1
-    followed = {v["plan"]["brief"].get("follow_up_of") for v in db.recent_videos(days=120)
+    followed = {v["plan"]["brief"].get("follow_up_of") for v in db.recent_videos(days=120, parts=("brief.follow_up_of",))
                 if v["format"] == db.FORMAT and v["plan"].get("brief")}
     best = sorted((r for r in table if r["views"] >= FOLLOW_UP_LIFT * median and r["id"] not in followed),
                   key=lambda r: -r["views"])

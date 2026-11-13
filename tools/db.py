@@ -22,6 +22,7 @@ Usage:
 import argparse
 import contextvars
 import json
+import re
 import sqlite3
 import sys
 from contextlib import contextmanager
@@ -105,6 +106,12 @@ SLOT_INDEX = ("CREATE UNIQUE INDEX IF NOT EXISTS one_short_per_slot ON videos (s
               "WHERE status IN ('making', 'scheduled')")
 VIDEO_FIELDS = {"status", "youtube_id", "publish_at", "attempts", "error", "plan", "slot", "claimed_at", "theme",
                 "trend", "format"}
+# Lists read many times a day (the dashboard every 30 seconds, the Editor and the Writer for every topic, the Reels every
+# minute of a run) take only the parts of each case's plan they use (`parts`): a whole plan is 20-50 KB, and reading
+# every recent case whole sent out Neon's free 5 GB a month in under two weeks (it locked the database on 2026-11-10
+# until its month renewed). A plan read in part carries LIGHT, and update_video won't save it over the whole case.
+LIGHT = "_light"
+LIGHT_COLUMNS = "id, created_at, status, format, theme, trend, youtube_id, publish_at, attempts, error, slot, claimed_at"
 
 _schema_ready = False
 _held: contextvars.ContextVar[dict | None] = contextvars.ContextVar("held_connection", default=None)
@@ -201,11 +208,62 @@ def _slot_taken(error: Exception) -> bool:
     return isinstance(error, sqlite3.IntegrityError) or type(error).__name__ == "UniqueViolation"
 
 
+def _plan_part(sqlite: bool, path: str) -> str:
+    """SQL for one part of a case's plan ("brief", "render.id"), as JSON text: the database sends only that part."""
+    keys = path.split(".")
+    if not all(re.fullmatch(r"[a-z_]+", key) for key in keys):  # (the code's own names, never outside text)
+        raise ValueError(f"not a part of a plan: {path!r}")
+    if sqlite:
+        return "(plan -> '$." + ".".join(keys) + "')"
+    return "((plan::jsonb #> '{" + ",".join(keys) + "}')::text)"
+
+
+def _select(db, parts: tuple[str, ...] | None) -> str:
+    """The columns a list reads: everything, or with `parts` a case's own columns and only those parts of its plan."""
+    if parts is None:
+        return "*"
+    return ", ".join([LIGHT_COLUMNS] + [f"{_plan_part(db.sqlite, path)} AS part{k}" for k, path in enumerate(parts)])
+
+
+def _read(db, rest: str, params: tuple, parts: tuple[str, ...] | None) -> list[dict]:
+    """The cases of "SELECT ... FROM videos <rest>", whole or (with `parts`) in part. If the database refuses the SQL
+    for the parts (a syntax or data error, SQLSTATE class 42 or 22), they're read whole, as before, rather than stop the
+    run; a lost connection or a refusal of the database itself still raises."""
+    if parts is not None:
+        try:
+            return [_case(r, parts) for r in db.query(f"SELECT {_select(db, parts)} FROM videos {rest}", params)]
+        except Exception as e:
+            if str(getattr(e, "sqlstate", "") or "")[:2] not in ("42", "22"):
+                raise
+            print(f"Reading cases in part was refused ({type(e).__name__}: {str(e)[:160]}); reading them whole")
+    return [_video(r) for r in db.query(f"SELECT * FROM videos {rest}", params)]
+
+
+def _case(row: dict, parts: tuple[str, ...] | None) -> dict:
+    """A row as a case: its whole plan, or (with `parts`) only those parts of it, marked LIGHT."""
+    if parts is None:
+        return _video(row)
+    plan = {LIGHT: True}
+    for k, path in enumerate(parts):
+        raw = row.pop(f"part{k}", None)
+        if raw is None:  # (not in this plan)
+            continue
+        *above, last = path.split(".")
+        node = plan
+        for key in above:
+            node = node.setdefault(key, {})
+        node[last] = json.loads(raw)
+    row["plan"] = plan
+    return row
+
+
 # --- videos ---------------------------------------------------------------
 
 def insert_video(status: str, fmt: str, theme: str | None, trend: str | None, plan: dict,
                  slot: str | None = None) -> int | None:
     """New row; with a slot it also claims that slot, and returns None if another run has it."""
+    if plan.get(LIGHT):
+        raise ValueError("a case read in part (as a list reads it) can't be saved as a case")
     try:
         with connect() as db:
             return db.query("INSERT INTO videos (created_at, status, format, theme, trend, plan, slot, claimed_at) "
@@ -223,6 +281,9 @@ def update_video(video_id: int, **fields) -> None:
     if unknown:
         raise ValueError(f"unknown video fields: {unknown}")
     if "plan" in fields:  # (secrets never go into the database: an error kept on a case can quote a web address)
+        if (fields["plan"] or {}).get(LIGHT):
+            raise ValueError("a case read in part (as a list reads it) can't be saved over the whole case: read it "
+                             "whole with get_video first")
         fields["plan"] = redact(json.dumps(fields["plan"]), addresses=False)
     if fields.get("error"):
         fields["error"] = redact(fields["error"])
@@ -257,23 +318,20 @@ def release_stale(before: str) -> list[dict]:
                         "WHERE status = 'making' AND claimed_at < %s RETURNING id, status", (before,))
 
 
-def slot_holders(start: str, end: str) -> list[dict]:
+def slot_holders(start: str, end: str, parts: tuple[str, ...] | None = None) -> list[dict]:
     """Shorts being made or scheduled whose slot (or, for older rows without one, publish
-    time) falls between start and end."""
+    time) falls between start and end (`parts`: only those parts of their plans, LIGHT)."""
     with connect() as db:
-        rows = db.query("SELECT * FROM videos WHERE status IN ('making', 'scheduled') AND "
-                        "(slot BETWEEN %s AND %s OR (slot IS NULL AND publish_at BETWEEN %s AND %s)) ORDER BY id",
-                        (start, end, start, end))
-    return [_video(r) for r in rows]
+        return _read(db, "WHERE status IN ('making', 'scheduled') AND "
+                         "(slot BETWEEN %s AND %s OR (slot IS NULL AND publish_at BETWEEN %s AND %s)) ORDER BY id",
+                     (start, end, start, end), parts)
 
 
-def planned_videos(limit: int = 50) -> list[dict]:
+def planned_videos(limit: int = 50, parts: tuple[str, ...] | None = None) -> list[dict]:
     """The queue: cases written and waiting for a slot, oldest first (including those waiting for your
-    OK). Shorts planned by earlier versions (other formats) are left to the dashboard."""
+    OK). Shorts planned by earlier versions (other formats) are left to the dashboard. `parts`: as in slot_holders."""
     with connect() as db:
-        rows = db.query("SELECT * FROM videos WHERE status = 'planned' AND format = %s ORDER BY id LIMIT %s",
-                        (FORMAT, limit))
-    return [_video(r) for r in rows]
+        return _read(db, "WHERE status = 'planned' AND format = %s ORDER BY id LIMIT %s", (FORMAT, limit), parts)
 
 
 def ready(video: dict) -> bool:
@@ -294,10 +352,9 @@ def get_video(video_id: int) -> dict | None:
     return _video(rows[0] if rows else None)
 
 
-def list_videos(limit: int = 30) -> list[dict]:
+def list_videos(limit: int = 30, parts: tuple[str, ...] | None = None) -> list[dict]:
     with connect() as db:
-        rows = db.query("SELECT * FROM videos ORDER BY id DESC LIMIT %s", (limit,))
-    return [_video(r) for r in rows]
+        return _read(db, "ORDER BY id DESC LIMIT %s", (limit,), parts)
 
 
 def status_counts() -> dict[str, int]:
@@ -326,27 +383,23 @@ def count_videos(status: str | None = None) -> int:
         return db.query("SELECT COUNT(*) AS n FROM videos WHERE status <> 'skipped'")[0]["n"]
 
 
-def recent_videos(days: int = 21) -> list[dict]:
+def recent_videos(days: int = 21, parts: tuple[str, ...] | None = None) -> list[dict]:
     with connect() as db:
-        rows = db.query("SELECT * FROM videos WHERE created_at >= %s ORDER BY id DESC", (now_iso(-timedelta(days=days)),))
-    return [_video(r) for r in rows]
+        return _read(db, "WHERE created_at >= %s ORDER BY id DESC", (now_iso(-timedelta(days=days)),), parts)
 
 
-def published_videos(days: int = 60) -> list[dict]:
+def published_videos(days: int = 60, parts: tuple[str, ...] | None = None) -> list[dict]:
     """Shorts whose publish time has passed (they're public unless you vetoed them)."""
     with connect() as db:
-        rows = db.query("SELECT * FROM videos WHERE status = 'scheduled' AND youtube_id IS NOT NULL "
-                        "AND publish_at <= %s AND publish_at >= %s ORDER BY publish_at",
-                        (now_iso(), now_iso(-timedelta(days=days))))
-    return [_video(r) for r in rows]
+        return _read(db, "WHERE status = 'scheduled' AND youtube_id IS NOT NULL AND publish_at <= %s AND publish_at >= %s "
+                         "ORDER BY publish_at", (now_iso(), now_iso(-timedelta(days=days))), parts)
 
 
-def scheduled_videos(days: int = 3) -> list[dict]:
+def scheduled_videos(days: int = 3, parts: tuple[str, ...] | None = None) -> list[dict]:
     """Shorts on YouTube whose publish time is still to come, or passed at most `days` ago."""
     with connect() as db:
-        rows = db.query("SELECT * FROM videos WHERE status = 'scheduled' AND youtube_id IS NOT NULL "
-                        "AND publish_at >= %s ORDER BY publish_at", (now_iso(-timedelta(days=days)),))
-    return [_video(r) for r in rows]
+        return _read(db, "WHERE status = 'scheduled' AND youtube_id IS NOT NULL AND publish_at >= %s ORDER BY publish_at",
+                     (now_iso(-timedelta(days=days)),), parts)
 
 
 # --- clips, stats, notes, runs --------------------------------------------

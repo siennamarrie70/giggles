@@ -128,6 +128,9 @@ EMPTY_IN_A_ROW = 2                     # slots in a row with no topic that can b
 MAX_TRIES = 25                         # Shorts tried in one run before it stops (something's wrong every time)
 RUN_LIMIT = timedelta(hours=5, minutes=40)  # a run stops before GitHub's 6-hour job limit
 REELS_EVERY = 60                       # seconds: how often the cloud's morning run looks for Reels due (_reels_beside)
+SLOT_PARTS = ("metadata.title", "brief.category", "instagram")  # what the schedule board shows of a case (db.LIGHT)
+PAUSE_CHECK = timedelta(minutes=10)    # while a run waits, the dashboard's pause switch (in the database) is read this
+                                       # often: every read wakes the database, whose hours awake Neon's free plan counts
 REELS_FINISH = timedelta(minutes=10)   # ...and how long it waits, at its end, for a Reel being posted
 clock = slots.clock
 
@@ -156,7 +159,7 @@ def slot_board(start: datetime, end: datetime, sched: dict, now: datetime | None
     """Each slot from start to end, with the Short holding it and where it stands: posted, scheduled, making,
     late (its time has come), due (its day's run has started), open (made in a later run) or missed."""
     now = now or _now()
-    holders = db.slot_holders(slots.iso(start - sched["every"]), slots.iso(end + sched["every"]))
+    holders = db.slot_holders(slots.iso(start - sched["every"]), slots.iso(end + sched["every"]), parts=SLOT_PARTS)
     board = []
     for slot in slots.between(start, end, sched):
         key = slots.iso(slot)
@@ -245,7 +248,7 @@ def stats_due() -> bool:
     """Is it time for the Analyst to read the numbers: STATS_EVERY since it last did, not within STATS_RETRY of a
     failed or unfinished try, and something published to read. (It's asked beside everything else, not only when the
     rest is done: a morning run that never finished cleanly kept it from reading anything from 2026-10-26 to 28.)"""
-    if not db.published_videos(days=60):
+    if not db.published_videos(days=60, parts=()):
         return False
     tried = db.last_run("analyst", ok=None)
     if tried and not tried["ok"] and _now() - slots.parse(tried["started_at"]) < STATS_RETRY:
@@ -526,8 +529,8 @@ def _reels_beside(stop: threading.Event, progress) -> None:
             for row in publisher.reels_due():
                 if stop.is_set():
                     break
-                if animator.preview_path(row["id"]).exists():
-                    publisher.run_instagram(row, progress=progress)
+                if animator.preview_path(row["id"]).exists() and (whole := _whole(row)):
+                    publisher.run_instagram(whole, progress=progress)
         except Exception as e:  # (a Reel's own failure is handled where it's posted: this is the database or YouTube)
             progress(f"Reels: {str(e)[:200]}")
 
@@ -568,6 +571,9 @@ def _morning(progress) -> dict:
             tries -= 1
             rest = animator.resting()
             wait = max(60.0, (slots.parse(rest["until"]) - _now()).total_seconds()) if rest else 60.0
+            if _now() + timedelta(seconds=wait) >= started + RUN_LIMIT:  # (waiting would only keep the database awake)
+                stopped = f"{str(e)[:200]}, which is after this run must end; a later run carries on"
+                break
             progress(f"{str(e)[:200]}. The {clock(slot, sched)} Short waits ({wait / 60:.0f} minutes)")
             _wait(wait)
             continue
@@ -646,9 +652,15 @@ def _morning(progress) -> dict:
 
 
 def _wait(seconds: float) -> None:
-    """Sleeps, a minute at a time, and stops early when the pause switch goes on."""
+    """Sleeps, and stops early when the pause switch goes on: PAUSED every minute, the dashboard's switch (in the
+    database) at once and then every PAUSE_CHECK, so that a long wait lets the database sleep."""
     end = _now() + timedelta(seconds=seconds)
-    while (left := (end - _now()).total_seconds()) > 0 and not paused():
+    asked = None
+    while (left := (end - _now()).total_seconds()) > 0 and not is_true("PAUSED"):
+        if asked is None or _now() - asked >= PAUSE_CHECK:
+            if db.paused():
+                break
+            asked = _now()
         time.sleep(min(60.0, left))
 
 
@@ -707,6 +719,11 @@ def publish(dry_run: bool = False, video_id: int | None = None, progress=_log, n
     return publisher.run(db.get_video(row["id"]), slot, sched, progress=progress)
 
 
+def _whole(row: dict) -> dict | None:
+    """The case to post a Reel from: one a list read in part (db.LIGHT) is read again whole (None if it's gone)."""
+    return db.get_video(row["id"]) if (row.get("plan") or {}).get(db.LIGHT) else row
+
+
 def reels(progress=_log, stay: float = 0) -> dict:
     """Agent 6 posts to Instagram every Short whose slot has come and whose Reel is still to post. With `stay`
     minutes (the cloud's Reels workflow), it looks again every minute for Reels coming due meanwhile (a try again,
@@ -717,15 +734,17 @@ def reels(progress=_log, stay: float = 0) -> dict:
     posted, left = [], set()
     while True:
         for row in publisher.reels_due():
-            if row["id"] not in left:
-                result = publisher.run_instagram(row, progress=progress)
+            if row["id"] not in left and (whole := _whole(row)):
+                result = publisher.run_instagram(whole, progress=progress)
                 posted.append(result)
                 if result.get("waits_for_run") or result.get("waits_for_instagram"):
                     left.add(row["id"])
         coming = [v for v in publisher.reels_coming(slots.iso(until)) if v["id"] not in left]
         if not coming or _now() >= until or paused() or publisher.instagram_down():
             break
-        time.sleep(60)
+        soonest = min(publisher.reel_due_at(v) for v in coming)  # (asleep until then, the database can sleep too)
+        due_in = (slots.parse(soonest) - _now()).total_seconds() if soonest else 0.0
+        time.sleep(max(1.0, min(max(60.0, due_in), (until - _now()).total_seconds())))
     if down := publisher.tell_down():
         raise RuntimeError(publisher.down_message(down))
     return {"reels": posted} if posted else {"skipped": "no Reel is due"}
@@ -738,7 +757,7 @@ def keep_videos(progress=_log) -> dict:
     run = kept.this_run()
     if not run:
         return {"skipped": "not a run in the cloud: the videos stay on this computer"}
-    waiting = [v for v in db.scheduled_videos(days=publisher.REEL_DAYS)
+    waiting = [v for v in db.scheduled_videos(days=publisher.REEL_DAYS, parts=("instagram",))
                if (v["plan"].get("instagram") or {}).get("status") == "pending"
                and v["plan"]["instagram"].get("kept_in") == run]
     files = kept.keep([(v["id"], animator.preview_path(v["id"])) for v in waiting])

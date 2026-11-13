@@ -165,6 +165,17 @@ failed slot.
   posts; without it, the dashboard here runs the same morning run (it keeps the laptop awake while working: it
   sleeps after 5 idle minutes otherwise). Vercel can show the dashboard, but can't make the videos: one Short needs
   10-15 minutes and about 1.6 GB of models and packages; a Vercel function gets 5 minutes and 250 MB.
+- **Neon's free plan has two monthly limits, and running out of either locks the database until the month renews**
+  (every run and the dashboard fail with "Your account or project has exceeded the quota"): **5 GB of data sent out**
+  and **100 hours of computer time** (counted while the database is awake; it sleeps after 5 idle minutes). It
+  happened on 2026-11-10: the dashboard read every recent case whole (20-50 KB each) every 30 seconds, and the Editor,
+  the Writer, the Analyst and the Reels did the same many times a day. The user chose to wait for the month to renew.
+  - **Rules since then:** a list read often asks only for the parts of the plan it uses (`db.list_videos(..., parts=...)`
+    and the like, `db.LIGHT`: 97% less sent in the sandbox). A case read in part can't be saved (`update_video` refuses);
+    read it whole with `db.get_video` before changing it. A run's wait reads the database at most every 10 minutes
+    (`jobs.PAUSE_CHECK`). A wait longer than the run ends it at once instead of keeping the database awake for hours.
+    The Reels run sleeps until the next Reel is due.
+  - **What's used:** Neon's console, the project's Overview page (usage since the start of the billing period).
 - **Settings live in the repository:** the cloud reads `config/channel.yaml` (and the music) from GitHub, so a change
   made in the dashboard on this computer reaches the cloud once it's committed and pushed.
 - **One Short per slot:** a Short being made or scheduled holds its slot (a unique index in the database), so a

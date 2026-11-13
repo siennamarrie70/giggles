@@ -705,7 +705,7 @@ def _titles(brief: dict, script: dict, pack: dict, cfg: dict, progress=log) -> t
     """The case's title on screen and YouTube's title, description and hashtags, from the finished script (the Agent 3
     prompt's output has none of them, and your prompt stays as it is). They get a second try if the fact-checker
     can't support them; what still isn't supported falls back to plain words."""
-    recent = [v["plan"]["metadata"]["title"] for v in db.recent_videos(days=30)
+    recent = [v["plan"]["metadata"]["title"] for v in db.recent_videos(days=30, parts=("metadata.title",))
               if v["format"] == db.FORMAT and v["plan"].get("metadata")][:30]
     system = f"""You write the titles for {cfg['channel']['name']}, a YouTube Shorts channel, for {cfg['channel']['audience']}.
 From the finished script, write:
@@ -818,7 +818,7 @@ def write(brief: dict, pack: dict, progress=log, look: str | None = None) -> dic
         if earlier:
             follow = (f"This is a follow-up (part 2) to an earlier case: "
                       f"{earlier['plan'].get('metadata', {}).get('title') or earlier['theme']}. Mention it briefly.\n")
-    recent = [v["plan"]["metadata"]["title"] for v in db.recent_videos(days=30)
+    recent = [v["plan"]["metadata"]["title"] for v in db.recent_videos(days=30, parts=("metadata.title",))
               if v["format"] == db.FORMAT and v["plan"].get("metadata")][:30]
     base_prompt = (f"Case type: {brief['category']}\nTopic: {brief['topic']}\n"
                    + (f"The paradox (the Editor's guess; open on what the facts support): {brief['paradox']}\n"
