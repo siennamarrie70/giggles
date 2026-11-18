@@ -46,63 +46,57 @@
     <h2>What the app accesses</h2>
     <p>Only with the channel owner’s permission, given through Google sign-in:</p>
     <ul>
-      <li><b>Upload videos</b> (<code>youtube.upload</code>): to upload Shorts to the owner’s channel and set their title,
-        description, tags and publish time.</li>
-      <li><b>View the YouTube account</b> (<code>youtube.readonly</code>): to read the channel’s name, its videos’ view,
-        like and comment counts, the text of public comments on its own Shorts (to find topics viewers ask for; who wrote
-        them isn’t kept), and the public list of popular Education videos.</li>
+      <li><b>Upload videos</b> (<code>youtube.upload</code>): to upload the channel’s stories (each film and its short
+        version, a Short) to the owner’s channel and set their title, description, tags, thumbnail and publish time.</li>
+      <li><b>View the YouTube account</b> (<code>youtube.readonly</code>): to read the channel’s name and its own videos’
+        view, like and comment counts.</li>
       <li><b>View YouTube Analytics reports</b> (<code>yt-analytics.readonly</code>): to read aggregate statistics for the
         channel’s own videos, such as the average percentage watched and subscribers gained.</li>
       <li><b>Manage the channel’s videos</b> (<code>youtube.force-ssl</code>): only when the owner presses a button in the
-        app’s control room, to publish one of the channel’s own Shorts early, keep it private, or delete it.</li>
+        app’s control room, to publish one of the channel’s own videos early, keep it private, or delete it.</li>
     </ul>
-    <p>The app doesn’t access email, contacts, files or any other Google data. It collects nothing about the channel’s
-      viewers beyond the aggregate numbers YouTube reports to every channel owner.</p>
+    <p>The app doesn’t access email, contacts, files or any other Google data. It doesn’t read comments, and it collects
+      nothing about the channel’s viewers beyond the aggregate numbers YouTube reports to every channel owner.</p>
 
     <h2>How the data is used</h2>
-    <p>Only to run the channel: to upload and schedule its Shorts, and to show the owner how they perform so future
-      Shorts can improve. It is not sold, not used for advertising and not used to profile anyone. The app’s use and
+    <p>Only to run the channel: to upload and schedule its videos, and to show the owner how they perform so future
+      stories can improve. It is not sold, not used for advertising and not used to profile anyone. The app’s use and
       transfer of information received from Google APIs adheres to the
       <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
       including the Limited Use requirements.</p>
 
     <h2>Where it is stored</h2>
     <ul>
-      <li>The sign-in token is kept as an encrypted environment variable at the app’s host (Vercel) and in a settings
-        file on the owner’s computer.</li>
-      <li>Video titles, upload and publish times, the statistics above and the text and like counts of public comments
-        on the channel’s Shorts (without their authors) are kept in the app’s database (Neon Postgres) or, when it runs on
-        the owner’s computer, in a local database file.</li>
+      <li>The sign-in token is kept as an encrypted secret at the app’s hosts (Vercel, and GitHub, which runs the daily
+        job) and in a settings file on the owner’s computer.</li>
+      <li>Video titles, upload and publish times and the statistics above are kept in the app’s database (a hosted
+        PostgreSQL database at Aiven) or, when it runs on the owner’s computer, in a local database file.</li>
     </ul>
 
     <h2>Sharing</h2>
-    <p>Google user data isn’t shared or sold. The companies that host the app (Vercel) and its database (Neon) store it
-      on the app’s behalf. The cases, their research and weekly performance notes are prepared with Google’s Gemini API,
-      which receives the channel’s settings, trend topics, text from public sources (Wikipedia, news articles, IMF and
-      World Bank data), candidate photos from Wikimedia Commons, the scripts, the public view, like and comment counts of
-      the channel’s Shorts and the text of public comments on them (never who wrote them); it never receives private
-      analytics or anything else from the owner’s Google account. The host’s voice is made by Gemini’s text-to-speech
-      from each finished script (only the script’s text and how to read it are sent); his lip movements, the word
-      timings and the video itself are made on the owner’s computer by open-source software (faster-whisper and Rhubarb Lip
-      Sync). The scenes of the drawn look are drawn by Cloudflare’s Workers AI from a written description of each scene
-      and of the host’s art style (nothing else is sent). Candidate stock clips’ preview frames and archive films’ frames are shown to
-      Gemini to check they suit the video, and so are a few frames of each finished video, to check it before it’s
-      posted. Photos are downloaded from Wikimedia Commons, stock video from Pexels and
-      Pixabay, archive film from the Internet Archive and NASA, data from the IMF and the World Bank, news articles from
-      their publishers’ sites and music from incompetech.com; none of them receive data about the channel or its
+    <p>Google user data isn’t shared or sold. The companies that host the app (Vercel, GitHub) and its database (Aiven)
+      store it on the app’s behalf. The stories are written with Google’s Gemini API, which receives the channel’s
+      settings (its themes and the owner’s description of the look) and, once a week, the public view, like and comment
+      counts of the channel’s videos with their titles, to write notes on what works; it never receives private analytics
+      or anything else from the owner’s Google account. The narrator’s voice is made by Gemini’s text-to-speech from each
+      finished script (only the script’s text and how to read it are sent), and a few frames of each finished film are
+      shown to Gemini to check it before it’s posted. The word timings and the film itself are made by open-source software
+      (faster-whisper, FFmpeg) on the owner’s computer or in the owner’s GitHub account. Sound recordings were downloaded
+      once from Freesound through Openverse, and music from incompetech.com; neither receives data about the channel or its
       viewers. The app shows no ads and lets no third party collect information through it.</p>
 
     <h2>Instagram (only if the owner connects it)</h2>
-    <p>The owner can connect their own Instagram professional account so each Short is also posted there as a Reel. The
-      app then uses Meta’s Instagram API, through an app the owner created for themselves, with these permissions:
-      <code>instagram_basic</code> and <code>pages_show_list</code> (to find the owner’s Instagram account and the
-      Facebook Page it’s linked to), <code>pages_read_engagement</code> (which Instagram requires for posting),
+    <p>The owner can connect their own Instagram professional account so each story’s short version is also posted there
+      as a Reel. The app then uses Meta’s Instagram API, through an app the owner created for themselves, with these
+      permissions: <code>instagram_basic</code> and <code>pages_show_list</code> (to find the owner’s Instagram account
+      and the Facebook Page it’s linked to), <code>pages_read_engagement</code> (which Instagram requires for posting),
       <code>business_management</code> (to find that Page when it belongs to the owner’s Business portfolio),
-      <code>instagram_content_publish</code> (to post the channel’s own Shorts as Reels, with their caption) and
+      <code>instagram_content_publish</code> (to post the channel’s own short versions as Reels, with their caption) and
       <code>instagram_manage_contents</code> (to delete one of those Reels when the owner presses Delete). It reads the
       account’s name, its number of posts and how many posts the API has made that day; nothing about its followers or
-      anyone else. The access token and the account’s name and ID are kept only in a settings file on the owner’s
-      computer. Meta’s handling of data is described in the
+      anyone else. The video is handed to Instagram through a temporary link to that one file, open for a minute or two
+      (Cloudflare’s free quick tunnel). The access token and the account’s name and ID are kept only in a settings file on
+      the owner’s computer and as an encrypted secret at GitHub. Meta’s handling of data is described in the
       <a href="https://privacycenter.instagram.com/policy">Instagram Privacy Policy</a>.</p>
 
     <h2>Keeping and deleting data</h2>

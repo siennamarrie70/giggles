@@ -1,40 +1,40 @@
 """
-The Professor's voice for a documentary case. One Gemini text-to-speech call (free tier) reads the
-whole script in the voice chosen on the dashboard's Host page, in his persona (STYLE: a wise
-American professor with a deep, calm voice), each line with its own direction ("low and tense",
-"faster, building"). faster-whisper then hears it back on this computer and gives every word's
-time, so the captions, cuts, numbers and his mouth follow the voice exactly, and a read that
-doesn't match the script is caught (and read again). Pauses longer than MAX_GAP are tightened to
-KEEP_GAP: Gemini's narrators leave about a second between dramatic sentences (measured 2026-10-26),
-too slow for Shorts. Only quiet audio is ever cut, measured from the sound itself: whisper's times only say
-where to look (on 2026-11-04 the sound ran up to 0.44 s past a word's end and began up to 0.21 s before the next
-word's start, and trusting them cut the ends and starts of words). "deeper" lowers the voice 1 or 2
-semitones without changing its timing (ffmpeg's rubberband filter, formants kept, so it still
-sounds like him).
+The narrator's voice engine: Gemini's text-to-speech (free tier) reads the story's lines in the narrator's voice and
+persona (series.narrator: Algieba, a calm, warm mentor; chosen on the dashboard's Narrator page), each line with its own
+direction ("softly, a little sad"). tools/narrator.py reads a story through it part by part. faster-whisper then hears
+each reading back on this computer and gives every word's time, so a reading that doesn't match the script is caught
+(and read again), and long pauses are tightened to keep_gap. Only quiet audio is ever cut, measured from the sound
+itself: whisper's times only say where to look (on 2026-11-04 the sound ran up to 0.44 s past a word's end and began up
+to 0.21 s before the next word's start, and trusting them cut the ends and starts of words). "deeper" lowers the voice 1
+or 2 semitones without changing its timing (ffmpeg's rubberband filter, formants kept).
 
-He keeps one voice, his own: only the models that take his persona and each line's direction read
-him (TTS_MODELS), the next one when one fails (each has its own free quota), and one that failed for
-another reason (network, busy) is asked last for FAILED_FOR. gemini-3.1-flash-tts-preview, which can't
-take them, read the plain words in a lighter, younger voice 4-5 semitones higher, slowed to his pace
-by software: you discarded those Shorts, and it was dropped on 2026-10-27. There's no other voice
-either (the Kokoro backup was removed the same day: it didn't sound like him).
+He keeps one voice, his own: only the models that take his persona and each line's direction read him (TTS_MODELS),
+the next one when one fails (each has its own free quota), and one that failed for another reason (network, busy) is
+asked last for FAILED_FOR. There's no other voice: a story waits rather than go out in another one.
 
-Each of his models gives DAILY readings a day on the free tier, on Google's day (it renews at
-midnight Pacific time, RENEW_TZ): every reading is counted (note voice:used), a model whose readings
-are used up isn't asked again that day, and when both are, narrate() raises VoiceUnavailable with
-the time they renew and the case waits for it. A used-up model doesn't say so through the
-Interactions API: it never answers (both models, a one-line read, 2026-10-27), so one that hangs is
+Each of his models gives DAILY readings a day on the free tier, on Google's day (it renews at midnight Pacific time,
+RENEW_TZ: 13:30 in India): every reading is counted (note voice:used), a model whose readings are used up isn't asked
+again that day, and when both are, narrate() raises VoiceUnavailable with the time they renew and the story waits for
+it. A used-up model doesn't say so through the Interactions API: it never answers (2026-10-27), so one that hangs is
 asked once through generate_content, which says so at once (429, "per day").
 
-Every reading is then measured against the Host page's sample of his voice (tools/voiceprint.py:
-pitch and timbre); one that doesn't sound like him isn't used, and the next model reads the script.
+Every reading is then measured against the Narrator page's sample of his voice (tools/voiceprint.py: pitch and timbre);
+one that doesn't sound like him isn't used, and the next model reads it. The chosen narrator's sample is kept with the
+code (KEPT_SAMPLES, assets/voices: the very reading you chose him by), so the cloud's runs measure him against the same
+voice and spend no reading on a sample of their own (one made fresh each run could come out off his voice itself). A line's direction can push him off his own
+voice (#7's closing line, "resonant, calm", 2026-11-17/18: read 2.4-3.5 semitones too high, or in another timbre, by
+both models, try after try, and the story waited for one line), so before a reading is given up:
+  - one that only came out too high (by at most LOWER_MOST) is lowered to LOWER_TO above his sample, formants kept (as
+    "deeper" does), and measured again, pitch and timbre: no reading spent;
+  - when both his models read a part unlike him, it's read again in STEADY, his own register, in place of its lines'
+    directions (one more reading from each, until one is his); the part is read that way from then on (its .steady
+    mark), so asking again doesn't spend readings on the direction that failed.
 
-Measured 2026-10-26: gemini-3.8-flash-tts read 48 words (25 s, untightened) in 14 s; whisper
-small.en (int8, CPU) heard those 25 s in 3.7 s and matched the script at 0.94; base.en was slower
-there and repeated a sentence that wasn't said. PyAV 19 and faster-whisper 1.2.1 disagree on
-av.open(), so the audio is decoded by our ffmpeg and handed over as samples.
+Measured 2026-10-26: gemini-3.8-flash-tts read 48 words in 14 s; whisper small.en (int8, CPU) heard 25 s of speech in
+3.7 s. PyAV 19 and faster-whisper 1.2.1 disagree on av.open(), so the audio is decoded by our ffmpeg and handed over as
+samples.
 
-  narrate()  the case's narration: the WAV, its length, and each line's start, end and words
+  narrate()  one reading: the WAV, its length, and each line's start, end and words
 
 Usage:
     python tools/narration.py --text "In 2000, one company..." --text "Fourteen years later..." --out .tmp/out/n.wav
@@ -57,9 +57,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import db
+import series
 import spoken
 import voiceprint
-from common import env, load_config, tmp_path
+from common import ASSETS_DIR, env, tmp_path
 
 SAMPLE_RATE = 24_000
 TTS_MODELS = ("gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts")  # his voice: both take his persona and directions
@@ -78,35 +79,40 @@ SHORTEST_QUIET = 0.06           # seconds: a quiet stretch shorter than this may
 CUT_RULES = 2                   # goes up when the way a reading is cut changes, so a kept reading is read again
 MIN_MATCH = 0.85                # how closely what's heard must match the script
 FAILED_FOR = 30 * 60            # seconds a model that failed is asked last (a busy model tends to stay busy)
+LOWER_MOST = 2.5                # semitones a reading that came out too high may be lowered by (one from +2 to +3.5 above
+                                # his sample; higher isn't him: the dropped model read +4 to +5, tools/voiceprint.py)
+LOWER_TO = 1.0                  # semitones above his sample a lowered reading is brought to (his own: -2.4 to +1.2)
+STEADY = "low, calm and unhurried"  # the direction a part read unlike him is read again in (his sample's register)
 # A line the Reviewer found rushed is read again "slowly", but Gemini doesn't always hear it (#52 came back at 3.7
 # words a second, 2026-10-27): one still faster than SLOW_LINE is slowed on its own (pitch kept), gently:
 SLOW_LINE = 3.0                 # words a second (the Reviewer's limit is 3.3)
 PACED_WORDS = 6                 # shorter lines aren't paced (as the Reviewer)
 LEAST_TEMPO = 0.85              # never slowed more than this (a stronger stretch smears his voice)
 TOKEN = re.compile(r"\d[\d,]*(?:\.\d+)?|[a-z]+|%")
-STYLE = ("A wise, highly intelligent American professor in his sixties: a deep, low, resonant voice, calm and "
-         "measured, never rushed; a master storyteller who draws you in.")
-VOICE = "Charon"
-# Gemini's male voices that suit him, the deepest-sounding first (Gemini's own one-word labels). Measured
-# 2026-10-26 with STYLE: Orus 118 Hz, Charon 119, Alnilam 121, Sadaltager 123, Algenib 124, Iapetus 130.
-VOICES = {"Charon": "Informative", "Alnilam": "Firm", "Orus": "Firm", "Sadaltager": "Knowledgeable",
-          "Algenib": "Gravelly", "Iapetus": "Clear", "Rasalgethi": "Informative", "Schedar": "Even",
-          "Algieba": "Smooth", "Enceladus": "Breathy", "Umbriel": "Easy-going"}
-SAMPLE_LINES = [  # what the Host page's samples say
-    {"text": "In the year 2000, one company sold almost every second phone on Earth.", "direction": "low, intrigued"},
-    {"text": "Fourteen years later, it sold its phone business for a fraction of what it had once been worth.",
-     "direction": "slower, heavier"},
-    {"text": "So what went wrong? The answer was hiding in plain sight.", "direction": "quiet, drawing you in"},
+STYLE = series.DEFAULTS["narrator"]["style"]  # his persona (the settings' series.narrator.style)
+VOICE = series.DEFAULTS["narrator"]["name"]
+# Four warm male voices, heard in style test 2 (2026-11-16), with Google's own word for each.
+VOICES = {"Algieba": "smooth (Google's word for it): your pick", "Umbriel": "easy-going", "Achird": "friendly",
+          "Sadaltager": "knowledgeable"}
+SAMPLE_LINES = [  # what his samples say (the Narrator page plays them; every reading is measured against his): style test 2's
+    {"text": "He always told himself there was time.", "direction": "gentle and unhurried"},
+    {"text": "Tomorrow, he'd start. Tomorrow, he'd fix it.", "direction": "softly, a little sad"},
+    {"text": "But tomorrow kept coming. And the rent didn't wait.", "direction": "quiet, matter-of-fact"},
+    {"text": "Neither did the rain.", "direction": "low, a beat of silence before it"},
+    {"text": "Then one night, at his mother's bedside, she whispered, \"I still believe in you.\"",
+     "direction": "tender, slower, her words almost a whisper"},
+    {"text": "And for the first time in years... so did he.", "direction": "warm and hopeful, a long pause at the dots"},
 ]
 
 
 class VoiceUnavailable(RuntimeError):
-    """None of his voice's models could read the script in his voice now: the case waits. `until`: when they're
-    back, if their free readings for today are used up (else None: a failure that passes)."""
+    """None of his voice's models could read the script in his voice now: the story waits. `until`: when they're
+    back, if their free readings for today are used up (else None: a failure that passes). `words`: the part's first
+    words; `unlike`: when its readings came back but didn't sound like him (even read steadier), how, in plain words."""
 
-    def __init__(self, message: str, until: str | None = None):
+    def __init__(self, message: str, until: str | None = None, words: str | None = None, unlike: str | None = None):
         super().__init__(message)
-        self.until = until
+        self.until, self.words, self.unlike = until, words, unlike
 
 
 class _UsedUp(Exception):
@@ -118,8 +124,8 @@ _whisper_lock = threading.RLock()  # re-entrant: hear() holds it while _model() 
 
 
 def tokens(text: str) -> list[str]:
-    """Words for matching what was said against the script: lower case, a number as the words he'd say (the faceless look's
-    scripts spell them out, and whisper mostly hears digits: tools/spoken.py), "%" as "percent"."""
+    """Words for matching what was said against the script: lower case, a number as the words he'd say (whisper mostly
+    hears digits: tools/spoken.py), "%" as "percent"."""
     out = []
     for token in TOKEN.findall(text.lower().replace("’", "'").replace("'", "")):
         if token[0].isdigit():
@@ -293,17 +299,19 @@ def his_models(voice_cfg: dict | None = None) -> list[str]:
     return list(dict.fromkeys(([chosen] if chosen in TTS_MODELS else []) + list(TTS_MODELS)))
 
 
-def his_voice(voice_cfg: dict | None = None, progress=print, make: bool = True) -> dict | None:
-    """His voice's measure (tools/voiceprint.py), from the Host page's sample of it in these settings: the voice you
-    chose, in his persona, as deep as set. Made now if there's none and `make` (one reading); else None."""
-    voice_cfg = voice_cfg or load_config().get("voice") or {}
+def his_voice(voice_cfg: dict | None = None, progress=print, make: bool = True, lines: list[dict] | None = None,
+              keep_gap: float = KEEP_GAP) -> dict | None:
+    """His voice's measure (tools/voiceprint.py), from the Narrator page's sample of it in these settings: the voice you
+    chose, in his persona, as deep as set. Made now if there's none and `make` (one reading); else None. `lines`: the
+    sample's words (SAMPLE_LINES)."""
+    voice_cfg = voice_cfg or series.narrator()
     name, style = voice_cfg.get("name") or VOICE, voice_cfg.get("style") or STYLE
-    path = sample_path(name, int(voice_cfg.get("deeper") or 0), style)
+    path = sample_path(name, int(voice_cfg.get("deeper") or 0), style, lines)
     if not path.exists():
         if not make:
             return None
         try:
-            sample(name, int(voice_cfg.get("deeper") or 0), style, progress)
+            sample(name, int(voice_cfg.get("deeper") or 0), style, progress, lines=lines, keep_gap=keep_gap)
         except Exception:  # (none left today: the reading is checked against it later, by the Reviewer)
             return None
     return voiceprint.measure(path)
@@ -322,9 +330,9 @@ def _pcm(wav_bytes: bytes):
 
 
 def _ffmpeg_pcm(wav_bytes: bytes, rate: int) -> bytes:
-    import short_render
+    import media
 
-    return subprocess.run([short_render.ffmpeg_exe(), "-v", "error", "-i", "-", "-ac", "1", "-ar", str(rate),
+    return subprocess.run([media.ffmpeg_exe(), "-v", "error", "-i", "-", "-ac", "1", "-ar", str(rate),
                            "-f", "s16le", "-"], input=wav_bytes, capture_output=True, check=True, timeout=120).stdout
 
 
@@ -507,57 +515,123 @@ def tighten(pcm, heard: list[tuple[float, float, str]], keep_gap: float = KEEP_G
 # --- the whole narration ---------------------------------------------------------
 
 def narrate(lines: list[dict], out: Path, voice_cfg: dict | None = None, progress=print,
-            keep_gap: float = KEEP_GAP) -> dict:
-    """The narration of a case's lines ([{text, direction}]) into `out` (WAV, 24 kHz mono), its long pauses cut
+            keep_gap: float = KEEP_GAP, sample_lines: list[dict] | None = None) -> dict:
+    """The narration of a story's lines ([{text, direction}]) into `out` (WAV, 24 kHz mono), its long pauses cut
     to keep_gap, in his voice: read by one of his models and measured like his sample. Returns {"wav", "seconds",
-    "engine", "voice", "match", "deeper", "likeness", "lines": [{start, end, words}]}. Raises VoiceUnavailable when
-    none of his models can read it now (with `until` when their free readings for today are used up)."""
-    voice_cfg = voice_cfg or load_config().get("voice") or {}
+    "engine", "voice", "match", "deeper", "likeness", "lines": [{start, end, words}]} (+ "lowered": semitones, + "steady":
+    True when read in STEADY). Raises VoiceUnavailable when none of his models can read it in his voice now (with `until`
+    when their free readings for today are used up)."""
+    voice_cfg = voice_cfg or series.narrator()
     name, style = voice_cfg.get("name") or VOICE, voice_cfg.get("style") or STYLE
     deeper = int(voice_cfg.get("deeper") or 0)
     models = his_models(voice_cfg)
-    his = his_voice(voice_cfg, progress, make=any(left_today().values()))
-    attempts, used_up = [], set()
-    for model in ordered(models):  # each has its own free quota
-        try:
-            if not left_today().get(model):
-                raise _UsedUp(model)
-            progress(f"Reading the script in {name}'s voice (Gemini)")
-            started = time.monotonic()
-            audio = _ask(lines, name, style, model)
-            heard = hear(audio)
-            timed, match = align(lines, heard)
-            attempts.append(f"{model}: match {match:.2f} ({time.monotonic() - started:.0f} s)")
-            if match < MIN_MATCH:
-                progress(f"The read didn't match the script ({match:.2f}); trying again")
-                continue
-            spoken = _finish(audio, heard, lines, out, "gemini", f"{name} ({model})", match, deeper, keep_gap)
-            if his:
-                spoken["likeness"] = voiceprint.compare(voiceprint.measure(out), his)
-                if not spoken["likeness"]["his"]:
-                    attempts.append(f"{model}: not his voice ({spoken['likeness']['why']})")
-                    progress(f"That reading doesn't sound like him ({spoken['likeness']['why']}); trying again")
-                    continue
+    his = his_voice(voice_cfg, progress, make=any(left_today().values()), lines=sample_lines, keep_gap=keep_gap)
+    attempts, used_up, unlike = [], set(), []
+    steady_mark = out.with_suffix(".steady")  # (this part was read unlike him before: it's read the steady way at once)
+
+    def read_by(model: str, said: list[dict], how: str) -> dict | None:
+        """One reading of `said` by `model`, finished into `out`: returned if it's his voice (brought down into his
+        range when it only came out too high), else None (why: in attempts)."""
+        if not left_today().get(model):
+            raise _UsedUp(model)
+        progress(f"Reading the script in {name}'s voice (Gemini{how})")
+        started = time.monotonic()
+        audio = _ask(said, name, style, model)
+        heard = hear(audio)
+        timed, match = align(said, heard)
+        attempts.append(f"{model}{how}: match {match:.2f} ({time.monotonic() - started:.0f} s)")
+        if match < MIN_MATCH:
+            progress(f"The read didn't match the script ({match:.2f}); trying again")
+            return None
+        spoken = _finish(audio, heard, said, out, "gemini", f"{name} ({model})", match, deeper, keep_gap)
+        if not his:
             return spoken
-        except _UsedUp:
-            used_up.add(model)
-            attempts.append(f"{model}: today's {DAILY} free readings are used")
-            progress(f"{model}'s free readings for today are used up")
-        except Exception as e:  # network, a busy model, one that's gone: the next one
-            attempts.append(f"{model}: {type(e).__name__}: {str(e)[:160]}")
-            progress(f"Gemini's voice failed ({type(e).__name__}); trying the next way")
-    raise VoiceUnavailable("; ".join(attempts), renews_at() if used_up >= set(models) else None)
+        like = spoken["likeness"] = voiceprint.compare(voiceprint.measure(out), his)
+        why = like["why"]
+        shift = _lowering(like)
+        if shift:  # (only too high: brought into his range, then measured again, pitch and timbre)
+            spoken = _finish(audio, heard, said, out, "gemini", f"{name} ({model})", match, deeper, keep_gap, shift)
+            spoken["likeness"] = voiceprint.compare(voiceprint.measure(out), his)
+            if spoken["likeness"]["his"]:
+                progress(f"That reading came out {like['pitch']:.1f} semitones higher than his voice: brought down "
+                         f"{shift:.1f}")
+                return spoken
+            why = f"{why}; brought down {shift:.1f}: {spoken['likeness']['why']}"
+        elif like["his"]:
+            return spoken
+        unlike.append(_plain(like))
+        attempts.append(f"{model}{how}: not his voice ({why})")
+        progress(f"That reading doesn't sound like him ({why}); trying again")
+        return None
+
+    def each(said: list[dict], how: str = "") -> dict | None:
+        for model in ordered(models):  # each has its own free quota
+            try:
+                spoken = read_by(model, said, how)
+                if spoken:
+                    return spoken
+            except _UsedUp:
+                used_up.add(model)
+                attempts.append(f"{model}: today's {DAILY} free readings are used")
+                progress(f"{model}'s free readings for today are used up")
+            except Exception as e:  # network, a busy model, one that's gone: the next one
+                attempts.append(f"{model}{how}: {type(e).__name__}: {str(e)[:160]}")
+                progress(f"Gemini's voice failed ({type(e).__name__}); trying the next way")
+        return None
+
+    if not steady_mark.exists():
+        spoken = each(lines)
+        if spoken:
+            return spoken
+    if unlike or steady_mark.exists():  # read, but not like him: in his own steady register, in place of the directions
+        steady_mark.touch()
+        progress("Reading it again in a steadier voice")
+        spoken = each([{**line, "direction": STEADY} for line in lines], ", steadier")
+        if spoken:
+            return {**spoken, "steady": True}
+    raise VoiceUnavailable("; ".join(attempts), renews_at() if used_up >= set(models) else None,
+                           words=_opening(lines), unlike=unlike[-1] if unlike else None)
 
 
-def lower(pcm, semitones: int):
+def _lowering(like: dict) -> float:
+    """How far to lower a reading that came out too high for his voice (its timbre may be off with the height alone: it's
+    measured again), to LOWER_TO above his sample; 0 when it isn't too high, or too high for that (another voice)."""
+    pitch = like.get("pitch")
+    if pitch is None or pitch <= voiceprint.PITCH[1]:
+        return 0.0
+    shift = round(pitch - LOWER_TO, 2)
+    return shift if shift <= LOWER_MOST else 0.0
+
+
+def _plain(like: dict) -> str:
+    """How a reading came out unlike him, in plain words ("too high"; the dashboard says it)."""
+    pitch, how = like.get("pitch"), []
+    if pitch is None:
+        return "silent"
+    if pitch > voiceprint.PITCH[1]:
+        how.append("too high")
+    elif pitch < voiceprint.PITCH[0]:
+        how.append("too low")
+    if (like.get("timbre") or 0) > voiceprint.TIMBRE:
+        how.append("in a different tone of voice")
+    return " and ".join(how) or "different"
+
+
+def _opening(lines: list[dict], most: int = 7) -> str:
+    """A part's first words (the dashboard names it by them)."""
+    words = " ".join(line["text"] for line in lines).split()
+    return " ".join(words[:most]).rstrip(",.;:!?") if words else ""
+
+
+def lower(pcm, semitones: float):
     """The voice `semitones` lower, same length and timing (rubberband, formants kept)."""
     import numpy as np
 
-    import short_render
+    import media
 
     if not semitones:
         return pcm
-    raw = subprocess.run([short_render.ffmpeg_exe(), "-v", "error", "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1",
+    raw = subprocess.run([media.ffmpeg_exe(), "-v", "error", "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1",
                           "-i", "-", "-af", f"rubberband=pitch={2 ** (-semitones / 12):.5f}:formant=preserved",
                           "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1", "-"],
                          input=pcm.astype(np.int16).tobytes(), capture_output=True, check=True, timeout=120).stdout
@@ -570,11 +644,11 @@ def stretch(pcm, tempo: float):
     default "crisp" lowered a steady 150 Hz tone to 146, and whisper heard the smooth one best: 0.94, 2026-10-26)."""
     import numpy as np
 
-    import short_render
+    import media
 
     if tempo >= 0.995:
         return pcm
-    raw = subprocess.run([short_render.ffmpeg_exe(), "-v", "error", "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1",
+    raw = subprocess.run([media.ffmpeg_exe(), "-v", "error", "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1",
                           "-i", "-", "-af", f"rubberband=tempo={tempo:.4f}:transients=smooth",
                           "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1", "-"],
                          input=pcm.astype(np.int16).tobytes(), capture_output=True, check=True, timeout=180).stdout
@@ -641,9 +715,10 @@ def voice_end(pcm) -> float:
 
 
 def _finish(audio: bytes, heard: list, lines: list[dict], out: Path, engine: str, voice: str, match: float,
-            deeper: int = 0, keep_gap: float = KEEP_GAP) -> dict:
+            deeper: int = 0, keep_gap: float = KEEP_GAP, lowered: float = 0.0) -> dict:
     """The reading's pauses tightened, a line the Reviewer found rushed slowed on its own if it still is, the pauses a
-    line asks for put in, made deeper, and saved; every word's time follows."""
+    line asks for put in, made deeper (and `lowered` more: one that came out too high), and saved; every word's time
+    follows."""
     pcm, moved = tighten(_pcm(audio), heard, keep_gap)
     heard = [(moved(a), moved(b), w) for a, b, w in heard]
     timed, match = align(lines, heard)
@@ -654,31 +729,41 @@ def _finish(audio: bytes, heard: list, lines: list[dict], out: Path, engine: str
         pcm, heard = set_pauses(pcm, heard, lines, timed)
         timed, match = align(lines, heard)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(_wav_bytes(lower(pcm, deeper)))
+    out.write_bytes(_wav_bytes(lower(pcm, deeper + lowered)))
     return {"wav": str(out), "seconds": round(len(pcm) / SAMPLE_RATE, 3), "engine": engine, "voice": voice,
-            "match": round(match, 3), "deeper": deeper, "lines": timed, "voice_end": round(voice_end(pcm), 3)}
+            "match": round(match, 3), "deeper": deeper, "lines": timed, "voice_end": round(voice_end(pcm), 3),
+            **({"lowered": round(lowered, 2)} if lowered else {})}
 
 
-# --- samples for the Host page -----------------------------------------------------
+# --- samples for the Narrator page --------------------------------------------------
 
-def sample_path(voice: str, deeper: int = 0, style: str = STYLE) -> Path:
-    """Where a voice's sample is kept, for these settings (a new style or depth makes a new sample)."""
+KEPT_SAMPLES = ASSETS_DIR / "voices"  # samples kept with the code (the chosen narrator's): the cloud has them too
+
+
+def sample_path(voice: str, deeper: int = 0, style: str = STYLE, lines: list[dict] | None = None) -> Path:
+    """Where a voice's sample is kept, for these settings: its persona, depth and words (a new one of any makes a new
+    sample). One kept with the code (KEPT_SAMPLES) first; else this computer's own."""
     import hashlib
 
     tag = hashlib.sha1((style or STYLE).encode("utf-8")).hexdigest()[:8]
-    return tmp_path("voices", "samples", f"{voice}_d{int(deeper)}_{tag}.wav")
+    tag += "_" + hashlib.sha1(json.dumps(lines or SAMPLE_LINES, sort_keys=True).encode("utf-8")).hexdigest()[:6]
+    name = f"{voice}_d{int(deeper)}_{tag}.wav"
+    kept = KEPT_SAMPLES / name
+    return kept if kept.exists() else tmp_path("voices", "samples", name)
 
 
-def sample(voice: str, deeper: int = 0, style: str = STYLE, progress=print) -> dict:
+def sample(voice: str, deeper: int = 0, style: str = STYLE, progress=print, lines: list[dict] | None = None,
+           keep_gap: float = KEEP_GAP) -> dict:
     """A short sample of a voice in his persona (one free Gemini reading, kept for next time): what you choose his
-    voice by on the Host page, and what every reading is measured against (his_voice)."""
-    path = sample_path(voice, deeper, style)
+    voice by on the Narrator page, and what every reading is measured against (his_voice). `lines`: its words
+    (SAMPLE_LINES), its pauses kept up to `keep_gap`."""
+    path = sample_path(voice, deeper, style, lines)
     if not path.exists():
         progress(f"Recording a sample of {voice}'s voice")
         last = None
         for model in ordered(TTS_MODELS):
             try:
-                audio = _ask(SAMPLE_LINES, voice, style or STYLE, model)
+                audio = _ask(lines or SAMPLE_LINES, voice, style or STYLE, model)
                 break
             except Exception as e:  # used up for today, or a busy service: the next model
                 last = e
@@ -688,7 +773,7 @@ def sample(voice: str, deeper: int = 0, style: str = STYLE, progress=print) -> d
                                    f"{renews_at()[11:16]} UTC")
             raise RuntimeError(f"Gemini's voice is unavailable right now ({type(last).__name__}); try again later")
         heard = hear(audio)
-        pcm, _ = tighten(_pcm(audio), heard)
+        pcm, _ = tighten(_pcm(audio), heard, keep_gap)
         path.write_bytes(_wav_bytes(lower(pcm, int(deeper))))
     with wave.open(str(path), "rb") as w:
         return {"voice": voice, "deeper": int(deeper), "path": str(path), "seconds": round(w.getnframes() / w.getframerate(), 1)}

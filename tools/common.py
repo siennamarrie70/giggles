@@ -6,7 +6,7 @@ where the project folder is read-only) and reads (and edits, comments kept) the 
 
 redact() hides secrets in text before it's shown, saved, printed or sent: a failed web request's
 error names its whole address, and some services take their key in it (Instagram's access_token,
-Pixabay's key, Telegram's bot token), so one network error put a token into the dashboard, the
+a key in a web address, Telegram's bot token), so one network error put a token into the dashboard, the
 database, a Telegram message and the morning run's log, which is public on GitHub (found 2026-10-27).
 """
 
@@ -78,6 +78,24 @@ def redact(text, addresses: bool = True) -> str:
     return BOT_PATH.sub("/bot[hidden]", SECRET_PARAMS.sub(r"\1[hidden]", text)) if addresses else text
 
 
+def hide_secrets_in_crashes() -> None:
+    """A crash's report (Python's own, for the program or one of its threads) goes out through redact() too: the cloud
+    run's log is public for a public repository, and an error's text can carry a web address with a token in it."""
+    import threading
+    import traceback
+
+    def report(kind, error, tb):
+        sys.stderr.write(redact("".join(traceback.format_exception(kind, error, tb))))
+        sys.stderr.flush()
+
+    def thread_report(args):
+        if args.exc_type is not SystemExit:
+            report(args.exc_type, args.exc_value, args.exc_traceback)
+
+    sys.excepthook = report
+    threading.excepthook = thread_report
+
+
 def load_config(name: str = "channel") -> dict:
     with open(CONFIG_DIR / f"{name}.yaml", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
@@ -98,7 +116,7 @@ def update_config(change, name: str = "channel") -> None:
 
 
 def background_priority() -> None:
-    """This process, and the programs it starts (ffmpeg, Rhubarb), at below-normal priority: the channel's work gives
+    """This process, and the programs it starts (ffmpeg), at below-normal priority: the channel's work gives
     way to whatever you're doing on this computer and only takes a little longer (see tools/jobs.py)."""
     if sys.platform == "win32":
         import ctypes

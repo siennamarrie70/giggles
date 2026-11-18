@@ -1,98 +1,40 @@
 # Channel settings read by the agents. Edit here or in the dashboard's Settings page.
 
 channel:
-  name: "Paws & Giggles"     # kept for now; the videos show no channel name until show_name is true
-  show_name: false           # true: the end card says "Follow <name> for a new case every day"
-  audience: "curious adults worldwide who like quick, well-researched stories about business, the economy, history and myths"
-  voice: >-
-    One host tells each case: the Professor, a wise, calm storyteller with a deep voice who sounds like he has read everything. Every
-    case is a mystery: a surprising fact, the question it raises, the people and decisions behind it, and the answer at the end. Facts
-    first. Neutral on politics (both sides, attributed), respectful to every faith and culture, never mocking real people. No advice
-    on money, health or law. Clean enough for any advertiser. Never aimed at children.
+  name: "Paws & Giggles"     # shown on the dashboard and the public /about and /privacy pages (never in the videos)
   contact_email: ""          # shown on the public /about and /privacy pages; optional
 
 schedule:
-  # The autopilot posts posts_per_day Shorts: the first at first_post, then one every every_hours, on this
-  # time zone's clock (08:00, 10:00 ... 02:00 here). The morning run starts at make_at and makes the whole
-  # day's Shorts one after another; YouTube publishes each on the minute. `python tools/slots.py` lists them.
-  timezone: "Asia/Kolkata"
-  first_post: "08:00"
-  every_hours: 2
-  posts_per_day: 10
-  make_at: "07:00"           # the morning run (at least 30 minutes before the first post)
+  timezone: "Asia/Kolkata"   # the clock the posting time and the morning run are on
+  make_at: "07:00"           # the morning run that makes the day's story (at least an hour before it goes public)
 
-cases:
-  # Agent 1 picks each case's type from these: the number is how often (0 = never). Agent 3 aims for
-  # target_seconds and never goes over max_seconds. The morning run makes each day's cases.
-  categories:
-    dark_history: 2          # forgotten empires, betrayals, lost civilizations, rulers who lost everything
-    mysteries: 2             # disappearances, unsolved mysteries, puzzling discoveries
-    business: 1              # how companies rose and fell, founders' decisions, scandals
-    technology: 1            # AI, inventions, technology rivalries
-    trending: 0              # this week's news, explained (off, your choice, 2026-11-03: photorealistic AI pictures of real
-                             # events this week could pass as real footage)
-    psychology: 2            # why people decide and believe what they do
-    mythology: 2             # epics, legends, ancient civilizations
-    people: 2                # famous people's rise, fall and comeback
-    science: 1               # space, discoveries, strange phenomena
-    crime: 2                 # historical frauds, heists, investigations (settled cases only)
-    history: 2               # turning points
-    economy: 1               # what-ifs and explainers with real data
-  approval:                  # false: the Publisher approves every case itself (your choice, 2026-10-26)
-    trending: false          # true: cases about this week's events wait for your OK in the Studio
-    politics: false          # true: so do cases that touch politics, whatever their type
-  approval_expires_days: 2   # news goes stale: a case still waiting this long is discarded
-  target_seconds: 75
-  max_seconds: 90
-  follow_ups: true           # a case that did well can get a part 2
-  comment_requests: true     # viewers' comments can suggest the next case
+series:                      # the channel (your idea since 2026-11-15): one 3-4 minute motivation story a day, drawn in code
+                             # in your silhouette look, told by a calm, warm narrator, and its short version: the whole
+                             # story in under a minute for YouTube Shorts and Reels (workflows/produce_long.md)
+  post_at: "17:30"           # when the day's story goes public (the schedule's time zone)
+  short_after_hours: 3       # its short version goes public as a Short this long after it (also its Reel, when Instagram is on)
+  minutes: [3, 4]            # how long a story runs (the Story writer aims inside this)
+  repeat_after_days: 30      # a theme isn't used again within this many days
+  themes:                    # the topics Agent 1 briefs your script writer with: a weakness and a virtue in turn
+    vices: ["lust", "laziness", "ego", "envy", "comfort", "procrastination", "anger", "self-pity", "the phone", "fear",
+            "greed", "jealousy", "arrogance"]
+    virtues: ["discipline", "obsession", "patience", "silence", "consistency", "sacrifice", "solitude", "focus", "courage",
+              "self-respect"]
+  category_id: "1"           # Film & Animation
+  language: "en"
+  hashtags: ["#motivation", "#animation", "#shortfilm"]
+  narrator:                  # the voice that tells every story: Gemini's text-to-speech (free tier), chosen on the Narrator page
+    name: "Algieba"          # Algieba, Umbriel, Achird or Sadaltager (your pick, 2026-11-16: Algieba, from style test 2)
+    model: "gemini-3.8-flash-lite-tts"  # the model you heard him on (the other one reads him when its readings are used up)
+    style: >-
+      A calm, warm man in his fifties, like a kind mentor telling a story late at night: unhurried, gentle and hopeful,
+      with soft natural pauses. Never dramatic, never theatrical, never cheerful.
+    deeper: 0                # 0, 1 or 2 semitones lower
 
-research:
-  share_alike_images: false  # also use CC BY-SA photos (they arguably make the whole video share-alike)
+# The music: every full-length track in assets/music/full/ (the dashboard's Music page), one a story, silent until the
+# spark, then rising; credited in the description (assets/music/tracks.yaml).
 
-look:                        # how the Shorts look; a change applies to the cases written after it
-  style: "montage"           # montage: Constructivist Montage, real archive film and photos in ink on paper with one red, your Agent 3
-                             # prompt, and a Short waits rather than go without real material (your choice, 2026-11-04); faceless: your
-                             # own Agent 3 and Agent 4 prompts (prompts/), AI pictures, stock video and no face (your choice,
-                             # 2026-11-03; set it back here to return to it); drawn: every line over a scene drawn in the Professor's art by Cloudflare (free;
-                             # tools/draw.py), real photos framed inside; footage: stock video, archive film and real photos
-  art: >-
-    anime-style 2D illustration in the look of a hand-painted animated film: clean dark ink outlines, soft painted cel shading, warm
-    amber lamplight against deep navy shadows, a muted palette of rust, brown, cream and dark blue, a richly painted detailed background,
-    cinematic composition
-  model: "@cf/black-forest-labs/flux-1-schnell"   # Cloudflare's model (FLUX.2 klein follows the words better but
-  steps: 4                                         # costs ~3x the free allocation: too much for 10 Shorts a day)
-  when_out: "footage"        # when Cloudflare can't draw (its free drawing used up for the day, or it's out): footage =
-                             # make the Shorts with real footage meanwhile, so the day's ten still go up (your choice,
-                             # 2026-10-27); wait = they wait for Cloudflare (until 05:30 in India when it's used up)
-
-host:                        # the Professor, who hosts every case (drawn from your character sheet: assets/host/)
-  name: "The Professor"      # for the dashboard only: he never says it and it's never shown
-  size: "M"                  # S, M or L: how big he floats in the lower-left corner
-  enabled: false             # false: no face in the videos or thumbnails, only his voice (your choice, 2026-11-03)
-
-voice:                       # his voice: Gemini's text-to-speech (free tier), chosen on the dashboard's Host page
-  name: "Alnilam"            # one of Gemini's voices (deep ones: Charon, Alnilam, Orus, Sadaltager, Algenib)
-  model: "gemini-3.8-flash-tts"
-  style: >-
-    A wise, highly intelligent American professor in his sixties: a deep, low, resonant voice, calm and measured, never rushed; a master
-    storyteller who draws you in.
-  deeper: 2                  # 0, 1 or 2 semitones lower (Gemini's voices are ~120 Hz; 2 makes his ~110 Hz)
-
-instagram:                   # Reels: the same Shorts on your Instagram (connect it on the dashboard's Channels page)
-  enabled: true              # true: each Short also goes up as a Reel when its slot comes
+instagram:                   # Reels: each story's short version on your Instagram (connect it on the dashboard's Channels page)
+  enabled: true              # true: each short version also goes up as a Reel at its time
   send: "link"               # upload: this computer sends the video (Instagram drops some, tried again over hours);
                              # link: Instagram fetches it from a temporary link (Cloudflare's quick tunnel, tools/tunnel.py)
-
-trends:
-  region: "ALL"              # ALL = every country, the most widespread trends first; or one code like US
-  calendar_days_ahead: 3     # holidays and world days this many days ahead count as "now"
-  youtube_category: "27"     # the popular-videos chart the Editor reads (27 = Education)
-
-metadata:
-  category_id: '27'          # Education
-  base_hashtags: ["#shorts", "#casestudy"]
-  language: en
-
-music:
-  volume: 1.0                # the music under the voice (0 = none; 1 is your Agent 4 prompt's -20 dB); it dips while he speaks

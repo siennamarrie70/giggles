@@ -1,27 +1,20 @@
 """
-Agent 7, Analyst: reads the numbers and writes the playbook the other agents follow, and what each
-of them should learn from it.
+Agent 6, Analyst: reads the numbers and writes the playbook the other agents follow, and what each of them should learn
+from it.
 
-Every day it pulls YouTube's numbers for each published Short (views, likes and comments, plus the
-average % viewed and subscribers gained from YouTube Analytics, which lags about two days), marks
-Shorts deleted in YouTube Studio as vetoed, and saves the newest top-level comments on recent cases
-(their text and likes, never who wrote them) for the Editor to find topic requests in. Once a week
-(or when asked), with at least MIN_SAMPLES cases that are two days old or more, it works out what does
-better than usual: each case's views against the channel's median, grouped by case type, why now
-(trend, anniversary, evergreen, request...), the kind of hook, the visuals used, length, number of
-lines, the Professor's pace, the music's mood, hashtags, whether the Reviewer passed it at first look,
-follow-up or not, and posting hour. A group needs MIN_SAMPLES cases before it counts. Gemini then
-writes a few plain lessons from the same table, and lessons for each agent (lessons_for: the
-Editor's choice of cases, the Researcher's sources and footage, the Writer's scripts, the Animator's
-pace and look, the Reviewer's eye and the Publisher's posting), with the Reviewer's recurring
-problems beside them; it sees public counts only, never the private analytics (the privacy page
+Every day it pulls YouTube's numbers for each published film (views, likes and comments, plus the average % viewed and
+subscribers gained from YouTube Analytics, which lags about two days) and marks films deleted in YouTube Studio as vetoed.
+Once a week (or when asked), with at least MIN_SAMPLES films that are two days old or more, it works out what does better
+than usual. Long films live by watch time, so each film's score is its views times the share watched (watch time), set
+against the channel's median, grouped by theme, vice or virtue, the title's shape, the story's motif, length, the
+narrator's voice, whether the Reviewer passed it at first look, and posting hour. A group needs MIN_SAMPLES films before
+it counts. Gemini then writes a few plain lessons from the same table, and lessons for each agent (LEARNERS), with the
+Reviewer's recurring problems beside them; it sees public counts only, never the private analytics (the privacy page
 promises that).
 
-The Editor reads the type/why-now/hook weights, the Writer the hook/length/visuals/lines/hashtag ones,
-each leaving them out a quarter of the time (agents/base.py) so early noise doesn't lock the channel
-in; every agent reads its own lessons every time (agents/base.py lessons_for), and the Publisher drops
-hashtags that clearly do worse. Cases that did well (FOLLOW_UP_LIFT times the median or more) become
-follow-up candidates.
+Agent 1 reads the theme and title weights, Agent 2 the theme, opening and motif ones, each leaving them out a quarter of
+the time (agents/base.py) so early noise doesn't lock the channel in; every agent reads its own lessons every time
+(agents/base.py lessons_for), and the Publisher drops hashtags that clearly do worse.
 
 Usage:
     python -m agents.analyst [--learn]      # pull today's numbers; --learn also rewrites the playbook
@@ -39,23 +32,18 @@ import llm
 import notify
 import slots
 import stats_pull
-import youtube_auth
 from agents.base import act, log, playbook
 from common import load_config
 
 MIN_SAMPLES = 5
 MIN_AGE = timedelta(days=2)
 LEARN_EVERY = timedelta(days=7)
-COMMENT_DAYS, COMMENTS_PER_SHORT = 14, 20
-FOLLOW_UP_LIFT, FOLLOW_UP_AGE = 1.5, timedelta(days=3)
-
 LEARNERS = {  # each agent, and what its lessons may be about
-    "editor": "which case types, topics and reasons to post now to choose",
-    "researcher": "which sources, photos, archive film and stock footage to look for",
-    "writer": "hooks, length, pace of the story, wording, titles and hashtags",
-    "animator": "the Professor's pace and pauses, the shots and the music",
-    "reviewer": "what to be stricter or more relaxed about when checking a video",
-    "publisher": "posting: hours, titles and descriptions as they appear, hashtags",
+    "theme": "which themes (vices or virtues) and which kinds of title to choose",
+    "story": "how the stories open, their parts and pace, the narrator's lines, the places and lights, the closing line",
+    "animator": "the film's look, the camera, the narrator's delivery and the sound under him",
+    "reviewer": "what to be stricter or more relaxed about when checking a film",
+    "publisher": "posting: the hour, titles and descriptions as they appear, hashtags, the short version",
 }
 LESSONS_SCHEMA = {
     "type": "object",
@@ -70,70 +58,53 @@ LESSONS_SCHEMA = {
 }
 
 
-def _length(seconds: float | None) -> str:
+def _minutes(seconds: float | None) -> str:
     if not seconds:
         return "unknown"
-    return "under 45 s" if seconds < 45 else "45-60 s" if seconds < 60 else "60-75 s" if seconds < 75 else "75 s+"
+    return "under 3 min" if seconds < 180 else "3-3.5 min" if seconds < 210 else "3.5-4 min" if seconds < 240 else "4 min+"
 
 
-CONTRAST = re.compile(r"\b(but|yet|until|then|still|instead)\b|;", re.IGNORECASE)  # a paradox
-
-
-def hook_kind(text: str) -> str:
-    """question, contrast (a paradox: 'X, yet Y'), number or claim."""
-    if text.rstrip().endswith("?"):
-        return "question"
-    if CONTRAST.search(text):
-        return "contrast"
-    return "number" if re.search(r"\d", text) else "claim"
-
-
-def _pace(words_per_second: float | None) -> str:
-    if not words_per_second:
-        return "unknown"
-    return "under 2.0 words/s" if words_per_second < 2.0 else "2.0-2.3 words/s" if words_per_second < 2.3 else "2.3+ words/s"
+def title_pattern(title: str) -> str:
+    """The shape of a story's title: "X is Y.", "X Built Him.", "The Price of X." and so on."""
+    words = re.sub(r"[^a-z ]", "", str(title).lower()).split()
+    if len(words) >= 3 and words[1] in ("is", "was", "are"):
+        return "X is Y"
+    if words[:1] == ["the"]:
+        return "The ... of X" if "of" in words else "The X"
+    if any(w in ("him", "his", "he") for w in words):
+        return "X did it to him"
+    return f"{min(len(words), 6)} words"
 
 
 def traits(video: dict, sched: dict) -> dict[str, list[str]]:
-    """What a case was made of, in groups the playbook compares."""
+    """What a story was made of, in groups the playbook compares."""
     plan = video["plan"]
     brief = plan.get("brief") or {}
-    lines = (plan.get("script") or {}).get("lines") or []
     at = video["slot"] or video["publish_at"]
-    count = len(lines)
     review = plan.get("review") or {}
-    base = set(load_config()["metadata"]["base_hashtags"])
     return {
-        "category": [brief.get("category") or "unknown"],
-        "why_now": [brief.get("why_now") or "unknown"],
-        "hook": [hook_kind(lines[0]["text"])] if lines else [],
-        "visuals": sorted({v.split(":", 1)[0] for line in lines for v in line.get("visuals") or [line.get("visual") or ""]
-                           if v}),
-        "archive": ["archive film" if any(v.startswith("archive:") for line in lines for v in line.get("visuals") or [])
-                    else "no archive film"],
-        "voice": [(plan.get("voice") or {}).get("voice", "unknown").split(" (")[0]
-                  + (" (backup)" if (plan.get("voice") or {}).get("backup") else "")],
-        "length": [_length((plan.get("render") or {}).get("seconds"))],
-        "lines": ["up to 11 lines" if count <= 11 else "12-14 lines" if count <= 14 else "15+ lines"],
-        "pace": [_pace((plan.get("voice") or {}).get("words_per_second"))],
-        "music": [(plan.get("script") or {}).get("music_mood") or "unknown"],
-        "hashtag": sorted({t.lower() for t in (plan.get("metadata") or {}).get("hashtags") or [] if t not in base}),
+        "theme": [brief.get("theme") or "unknown"], "kind": [brief.get("kind") or "unknown"],
+        "title_pattern": [title_pattern((plan.get("metadata") or {}).get("title") or "")],
+        "motif": [(plan.get("story") or {}).get("motif") or "none"],
+        "length": [_minutes((plan.get("render") or {}).get("seconds"))],
+        "voice": [(plan.get("voice") or {}).get("voice", "unknown").split(" (")[0]],
+        "hashtag": sorted({t.lower() for t in (plan.get("metadata") or {}).get("hashtags") or []}),
         "review": ["passed at first look" if not review.get("history") else "fixed by the Animator"] if review else [],
-        "follow_up": ["follow-up" if brief.get("follow_up_of") else "first case"],
         "hour": [slots.clock(slots.parse(at), sched)] if at else [],
     }
 
 
-# The parts of a case its traits are read from (db.LIGHT: not the research or the render's shots).
-TRAIT_PARTS = ("brief", "metadata", "script.lines", "script.music_mood", "voice", "render.seconds", "review")
+# The parts of a story its traits are read from (db.LIGHT: not the screenplay or the render's shots).
+TRAIT_PARTS = ("brief", "metadata", "voice", "render.seconds", "review", "story.motif")
 
 
 def rows(min_age: timedelta = MIN_AGE, with_traits: bool = True) -> list[dict]:
-    """Published Shorts old enough to judge, with their latest numbers and (with_traits) their traits."""
+    """Published films old enough to judge, with their latest numbers, their watch-time score and (with_traits) their
+    traits."""
     sched = slots.plan()
     cutoff = datetime.now(timezone.utc) - min_age
     published = [v for v in db.published_videos(days=90, parts=TRAIT_PARTS if with_traits else ("metadata.title",))
-                 if v["format"] == db.FORMAT and slots.parse(v["publish_at"]) <= cutoff]  # cases only
+                 if v["format"] == db.fmt() and slots.parse(v["publish_at"]) <= cutoff]
     numbers = db.latest_stats([v["youtube_id"] for v in published])
     out = []
     for v in published:
@@ -145,104 +116,71 @@ def rows(min_age: timedelta = MIN_AGE, with_traits: bool = True) -> list[dict]:
                     "views": n["views"] or 0, "likes": n["likes"] or 0, "comments": n["comments"] or 0,
                     "avg_view_pct": n["avg_view_pct"], "subs_gained": n["subs_gained"],
                     "traits": traits(v, sched) if with_traits else {}})
+    pcts = [r["avg_view_pct"] for r in out if r["avg_view_pct"]]
+    usual = statistics.median(pcts) if pcts else 50.0
+    for r in out:  # long films are judged by how much is watched: views times the share watched (watch time)
+        r["score"] = round(r["views"] * float(r["avg_view_pct"] or usual) / 100, 1)
     return out
 
 
 def lifts(table: list[dict]) -> dict[str, dict[str, float]]:
-    """For each group with enough Shorts: its median views over the channel's median."""
+    """For each group with enough films: its median watch-time score over the channel's median."""
     if len(table) < MIN_SAMPLES:
         return {}
-    overall = statistics.median(r["views"] for r in table) or 1
-    groups: dict[str, dict[str, list[int]]] = {}
+    overall = statistics.median(r["score"] for r in table) or 1
+    groups: dict[str, dict[str, list[float]]] = {}
     for r in table:
         for kind, values in r["traits"].items():
             for value in values:
-                groups.setdefault(kind, {}).setdefault(value, []).append(r["views"])
-    return {kind: {value: round(statistics.median(views) / overall, 2)
-                   for value, views in by_value.items() if len(views) >= MIN_SAMPLES}
+                groups.setdefault(kind, {}).setdefault(value, []).append(r["score"])
+    return {kind: {value: round(statistics.median(scores) / overall, 2)
+                   for value, scores in by_value.items() if len(scores) >= MIN_SAMPLES}
             for kind, by_value in groups.items()}
 
 
-def comments(videos: list[dict], progress=log) -> dict:
-    """The newest top-level comments on these Shorts: text and likes only, no names."""
-    rows, errors = [], []
-    for v in videos:
-        try:
-            items = youtube_auth.yt_get("commentThreads", {"part": "snippet", "videoId": v["youtube_id"],
-                                                           "maxResults": COMMENTS_PER_SHORT, "order": "relevance",
-                                                           "textFormat": "plainText"}).get("items", [])
-        except Exception as e:  # comments switched off, or the sign-in lacks the permission
-            errors.append(str(e)[:200])
-            continue
-        for item in items:
-            top = item["snippet"]["topLevelComment"]["snippet"]
-            text = " ".join(str(top.get("textOriginal") or top.get("textDisplay") or "").split())[:300]
-            if text:
-                rows.append({"comment_id": item["id"], "youtube_id": v["youtube_id"], "text": text,
-                             "likes": int(top.get("likeCount") or 0), "published_at": top.get("publishedAt") or db.now_iso()})
-    added = db.save_comments(rows)
-    if added:
-        progress(f"{added} new comments saved for the Editor")
-    return {"comments": added, "comments_error": errors[0] if errors else None}
-
-
 def pull(progress=log) -> dict:
-    """Today's numbers for every Short published in the last 60 days, and recent cases' comments."""
+    """Today's numbers for every film published in the last 60 days (their short versions aren't counted)."""
     published = db.published_videos(days=60, parts=())
     if not published:
-        return {"skipped": "no published Shorts yet"}
-    progress(f"Fetching numbers for {len(published)} published Shorts")
+        return {"skipped": "no published films yet"}
+    progress(f"Fetching numbers for {len(published)} published films")
     result = stats_pull.run([v["youtube_id"] for v in published])
     found = {s["youtube_id"] for s in result["videos"]}
     vetoed = [v for v in published if v["youtube_id"] not in found]  # deleted in YouTube Studio
     for v in vetoed:
         db.update_video(v["id"], status="vetoed")
     db.save_stats(result["videos"], datetime.now(timezone.utc).date().isoformat())
-    out = {"updated": len(result["videos"]), "vetoed": len(vetoed), "analytics_error": result["analytics_error"]}
-    if load_config()["cases"].get("comment_requests", True):
-        recent = [v for v in published if v["format"] == db.FORMAT and v["youtube_id"] in found
-                  and datetime.now(timezone.utc) - slots.parse(v["publish_at"]) <= timedelta(days=COMMENT_DAYS)]
-        out.update(comments(recent, progress))
-    return out
-
-
-def follow_up_candidates() -> list[dict]:
-    """Cases that did clearly better than usual and have no follow-up yet, best first."""
-    table = rows(FOLLOW_UP_AGE, with_traits=False)
-    if len(table) < MIN_SAMPLES:
-        return []
-    median = statistics.median(r["views"] for r in table) or 1
-    followed = {v["plan"]["brief"].get("follow_up_of") for v in db.recent_videos(days=120, parts=("brief.follow_up_of",))
-                if v["format"] == db.FORMAT and v["plan"].get("brief")}
-    best = sorted((r for r in table if r["views"] >= FOLLOW_UP_LIFT * median and r["id"] not in followed),
-                  key=lambda r: -r["views"])
-    return [{"id": r["id"], "title": r["title"], "views_vs_usual": round(r["views"] / median, 1)} for r in best[:3]]
+    return {"updated": len(result["videos"]), "vetoed": len(vetoed), "analytics_error": result["analytics_error"]}
 
 
 def learn(progress=log) -> dict:
-    """Rewrites the playbook from the Shorts old enough to judge."""
+    """Rewrites the playbook from the films old enough to judge."""
     table = rows()
     if len(table) < MIN_SAMPLES:
-        return {"skipped": f"the playbook needs {MIN_SAMPLES} Shorts that are 2 days old; there are {len(table)}"}
+        return {"skipped": f"the playbook needs {MIN_SAMPLES} films that are 2 days old; there are {len(table)}"}
     weights = lifts(table)
-    cfg = load_config()
+    name = load_config()["channel"]["name"]
     # Only public counts go to Gemini (free-tier prompts may be used by Google): private analytics such
     # as average % viewed stay in the database and the dashboard (see /privacy).
     public = [{"title": r["title"], **{k: v for k, v in r["traits"].items()},
                "views": r["views"], "likes": r["likes"], "comments": r["comments"]} for r in table]
-    system = f"""You analyse results for {cfg['channel']['name']}, a YouTube Shorts channel of case studies told as
-mysteries by one host, the Professor (a drawn old professor with a deep voice) over real footage. Seven agents make
-each video: an Editor picks the case, a Researcher gathers sources, photos and footage, a Writer scripts it, an
-Animator makes the video, a Reviewer checks it, a Publisher posts it, and you read the results.
-Give 3-6 concrete, testable lessons about which case types, topics, hooks, visuals, lengths, pace and posting times do
-better or worse. Then, for each agent, 0-3 short lessons it can act on next time, only about its own work:
+    system = f"""You analyse results for {name}, a YouTube channel of 3-4 minute motivational short films, one a day,
+each with a short version of under a minute (a YouTube Short and an Instagram Reel). Each film is an animated story
+drawn in one look (black silhouettes with a thin red rim of
+light and two white eyes, film light, letterbox bars) about an ordinary man whose habit ruins his life, until something
+wakes him, he works on himself, reaches the life he wanted and calmly turns down what once turned him down. A calm, warm
+narrator tells it. Six agents make each film: Theme picks the day's vice or virtue and names it, Story writes the
+screenplay and the narrator's script, an Animator draws the film, a Reviewer checks it, a Publisher posts it, and you
+read the results. Long films live by watch time, so lessons about holding viewers matter most.
+Give 3-6 concrete, testable lessons about which themes, titles, openings, motifs, lengths and posting times do better or
+worse. Then, for each agent, 0-3 short lessons it can act on next time, only about its own work:
 """ + "\n".join(f"- {k}: {v}" for k, v in LEARNERS.items()) + """
-Each lesson one sentence, specific ('Hooks that name a person beat hooks that state a number: early signal'), never
+Each lesson one sentence, specific ('Titles that name the habit beat titles that name the man: early signal'), never
 vague advice. Small samples are noisy: say 'early signal' when the evidence is thin, and give none rather than guess.
 Summary: 2-3 plain sentences for the channel owner."""
     reviews = (db.latest_note("review:lessons") or {}).get("counts") or {}
     progress("Writing this week's lessons")
-    written = llm.generate_json(["Recent Shorts with their public numbers:\n" + json.dumps(public, ensure_ascii=False, indent=1)
+    written = llm.generate_json(["Recent films with their public numbers:\n" + json.dumps(public, ensure_ascii=False, indent=1)
                                  + "\n\nProblems the Reviewer found most often at first look (kind: count): "
                                  + (json.dumps(reviews) if reviews else "none yet")],
                                 LESSONS_SCHEMA, system)

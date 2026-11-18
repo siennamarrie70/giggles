@@ -1,6 +1,7 @@
 """
-The dashboard: serves the page (index.html, app.css, app.js in this folder) and the
-JSON API it calls.
+The dashboard: serves the page (index.html, app.css, app.js in this folder) and the JSON API it calls: the six agents'
+pages for the daily motivation story (Themes, Stories, the Studio, Review, Schedule, Results), the Music and Narrator
+pages, the channels, the settings and the activity.
 
 Locally it's at http://localhost:8000 and answers only on this computer (asked by its own name, from its own
 address: started on every address by mistake, it still refuses the rest of the network). On Vercel it's
@@ -8,10 +9,14 @@ switched off unless DASHBOARD_USERNAME and DASHBOARD_PASSWORD are set, the passw
 With both set (on Vercel, or in .env here too) it opens only after the sign-in page (/login): a browser stays
 signed in for 30 days through a signed cookie, a new username or password signs every browser out, and ten
 wrong tries from one address and that address is refused for ten minutes.
-Making cases, animating and uploading run in a background thread; the page polls progress.
-While the database is on this computer, a loop here also runs the channel every minute: a due
-slot first, then keeping cases ready to post, their previews rendered, and the day's numbers
-(jobs.next_chore).
+Writing stories, making films and uploading run in a background thread; the page polls progress.
+While the database is on this computer, a loop here also runs the channel every minute: the day's story when its run
+starts, then keeping waiting stories' films made and reviewed, and the day's numbers (jobs.next_chore).
+
+The code it runs is the code it started with: when the software on this computer changes while it runs (code_changed),
+it starts no more work (its old code would mix with the new: on 2026-11-16 a dashboard started before an update crashed
+making a story, then uploaded a story of the dropped look), and, started with `python app.py`, it restarts itself with
+the new code as soon as nothing is running (RESTART).
 """
 
 import functools
@@ -21,7 +26,6 @@ import ipaddress
 import json
 import os
 import re
-import subprocess
 import sys
 import threading
 import time
@@ -37,23 +41,23 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 
 import cloud_secrets
 import db
-import draw
-import host
+import film_sound
 import instagram
 import jobs
-import lipsync
+import media
 import narration
+import narrator
 import notify
-import research_fetch
-import short_render
+import series
 import slots
-import trends_fetch
+import story_film
 import voiceprint
 import youtube_auth
 import youtube_upload
-from agents import AGENTS, analyst, animator, editor, publisher, researcher, reviewer, writer
+from agents import AGENTS, analyst, animator, publisher, reviewer
+from agents import story as story_agent
 from agents.base import lessons_for, playbook
-from common import ON_VERCEL, ROOT, TMP_DIR, background_priority, env, load_config, redact, tmp_path, update_config
+from common import ON_VERCEL, ROOT, TMP_DIR, background_priority, env, load_config, redact, update_config
 
 UI_DIR = Path(__file__).resolve().parent
 UI_FILES = {
@@ -63,7 +67,8 @@ UI_FILES = {
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
 CLIENT_FILE = ROOT / "credentials.json"
 MAX_MUSIC_BYTES = 30 * 1024 * 1024
-PREVIEW_PIECE = 2 * 1024 * 1024  # bytes of a case's video served a request
+MAX_CLIENT_FILE = 64 * 1024     # bytes: a Google OAuth client file is well under 1 KB
+PREVIEW_PIECE = 2 * 1024 * 1024  # bytes of a story's film served a request
 MIN_PASSWORD = 12                # characters, at least, in the dashboard's password
 MIN_STRENGTH = 4                 # zxcvbn's score (0-4) the password needs: 4 = 10^10 guesses or more
 SESSION_COOKIE, SESSION_DAYS = "dashboard_session", 30  # a browser stays signed in this long (or until it signs out)
@@ -73,8 +78,10 @@ MAX_FORM = 8192                   # bytes, at most, in a sign-in form
 _wrong: dict[str, list[float]] = {}  # (per server instance: Vercel may run a few, so it's a brake, not a wall;
 _wrong_lock = threading.Lock()       # Vercel's firewall rate limit is the wall: workflows/setup_accounts.md step 7)
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9 ._()-]+")
-LEGACY = {"case": "Cartoon-host version", "sketch": "Cartoon version"}  # other earlier formats: the cute-animal version
-HOST_FILES = {"base": "base.png", "sheet": "sheet.png"}  # the Professor's drawings the page may show
+LEGACY = {"case": "Cartoon-host version", "sketch": "Cartoon version",  # rows earlier versions of the channel made
+          "doc": "Documentary Shorts"}                                   # (anything else: the cute-animal version)
+RESTART = 3          # the exit code that has app.py's launcher start the dashboard again (with the new code)
+CODE_CHECK = 15      # seconds between looks at whether the software on this computer changed
 SIGN_IN_SAYS = {"wrong": ("bad", "Wrong username or password."),
                 "wait": ("bad", f"Too many wrong tries from here. Try again in {WRONG_FOR // 60} minutes."),
                 "busy": ("bad", f"Sign-in is resting after many wrong tries from around the internet. Try again in "
@@ -122,7 +129,7 @@ def _too_easy(user: str, password: str) -> str | None:
 
     channel = load_config().get("channel") or {}
     known = [user, channel.get("name"), env("INSTAGRAM_USERNAME"), env("VERCEL_GIT_REPO_SLUG"),
-             env("VERCEL_GIT_REPO_OWNER"), "professor", "dashboard", "control room"]
+             env("VERCEL_GIT_REPO_OWNER"), "narrator", "dashboard", "control room"]
     result = zxcvbn(password[:100], user_inputs=[str(w) for w in known if w])
     if result["score"] >= MIN_STRENGTH:
         return None
@@ -215,7 +222,7 @@ def guard(request: Request) -> None:
     add for another website (so other sites can't press buttons here)."""
     login = _open_here(request)
     if login and not _signed_in(request, login):
-        if request.method == "GET" and request.url.path == "/":
+        if request.method == "GET" and request.url.path in ("/", "/style-test"):
             raise HTTPException(303, headers={"Location": "/login"})
         raise HTTPException(401, {"message": "You're signed out: sign in again.", "signin": True})
     if request.method not in ("GET", "HEAD") and request.headers.get("x-dashboard") != "1":
@@ -284,6 +291,17 @@ def sign_out(request: Request, response: Response):
     return {"signed_out": True}
 
 
+async def _body_upto(request: Request, most: int, too_big: str) -> bytes:
+    """The request's body, read piece by piece and refused (422) as soon as it passes `most` bytes: never the whole of
+    an oversized one in memory (a body sent in chunks has no length to check first)."""
+    body = b""
+    async for piece in request.stream():
+        body += piece
+        if len(body) > most:
+            raise HTTPException(422, too_big)
+    return body
+
+
 async def _json(request: Request) -> dict:
     """The request's JSON object (422 if it isn't one, instead of an error)."""
     try:
@@ -321,14 +339,46 @@ def _awake(on: bool) -> None:
         ctypes.windll.kernel32.SetThreadExecutionState(continuous | (system_required if on else 0))
 
 
-SIDE_TASKS = ("connect", "reel", "remake", "stats")  # Google's page waiting for you, Reels going out, a video made for
-# its Reel, and the Analyst reading the numbers (a minute at most: it never waits for a morning run to end)
+SIDE_TASKS = ("connect", "reel", "remake", "stats")  # Google's page waiting for you, Reels going out, a short version
+# made again for its Reel, and the Analyst reading the numbers (a minute at most: it never waits for a morning run to end)
+
+
+def _code_stamp() -> str:
+    """The software this server runs: every module of the agents, the tools and the dashboard, and app.py, by name,
+    size and time."""
+    parts = []
+    for path in [ROOT / "app.py", *sorted((ROOT / "agents").glob("*.py")), *sorted((ROOT / "tools").glob("*.py")),
+                 *sorted(UI_DIR.glob("*.py"))]:
+        stat = path.stat()
+        parts.append(f"{path.relative_to(ROOT).as_posix()}:{stat.st_size}:{stat.st_mtime_ns}")
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+
+CODE_AT_START = _code_stamp()
+
+
+def code_changed() -> bool:
+    """Has the software on this computer changed since this server started? (On Vercel each version is a fresh start.)"""
+    if ON_VERCEL:
+        return False
+    try:
+        return _code_stamp() != CODE_AT_START
+    except OSError:  # (a file being replaced right now)
+        return True
+
+
+STALE_CODE = ("The software on this computer was updated after this dashboard started, so it would run old code. "
+              + ("It restarts by itself in a few seconds: reload the page, then press it again."
+                 if os.environ.get("DASHBOARD_RESTARTS") else
+                 "Restart the dashboard (start it with `python app.py` and it restarts by itself), then press it again."))
 
 
 def _start_task(kind: str, label: str, work, video_id: int | None = None) -> dict:
     """One task at a time; `work(progress)` runs in a thread and reports steps through progress(). Connecting YouTube
     only waits for you on Google's page, and Post now on Instagram only sends a finished video, so each runs beside the
-    rest (a morning run takes hours), one of each at a time."""
+    rest (a morning run takes a while), one of each at a time. Nothing starts on old code (code_changed)."""
+    if code_changed():
+        raise HTTPException(409, STALE_CODE)
     side = kind in SIDE_TASKS
     with _tasks_lock:
         busy = next((t for t in _tasks.values() if t["status"] == "running"
@@ -360,7 +410,13 @@ def _start_task(kind: str, label: str, work, video_id: int | None = None) -> dic
     return _public(task)
 
 
+def _running() -> bool:
+    return any(t["status"] == "running" for t in _tasks.values())
+
+
 def _make_next_now(progress) -> dict:
+    """"Make the 17:30 video now": the next open slot gets the oldest story ready to go up, or a new one written now;
+    it's made, reviewed and uploaded for that slot (jobs.autopilot)."""
     jobs.check(progress)
     return jobs.run_job("autopilot", force=True, progress=progress)
 
@@ -392,35 +448,35 @@ def autopilot_here() -> bool:
 
 def _chore_label(name: str, kwargs: dict) -> str:
     if name == "morning":
-        return "Today's run: making the day's Shorts"
+        return "Today's run: making the day's story"
     if name == "autopilot":
         slot = jobs.due_slot()
-        return f"Autopilot: making the {jobs.clock(slot, slots.plan())} Short" if slot else "Autopilot"
+        return f"Autopilot: making the {jobs.clock(slot, slots.plan())} story" if slot else "Autopilot"
     if name == "prepare":
-        return "Agents 1-3: making the next case"
+        return "Agents 1-2: writing the next story"
     if name == "publish":
         turned_down = (((db.get_video(kwargs["video_id"]) or {}).get("plan") or {}).get("review") or {}).get("held")
-        return (f"Agents 4-5: making case #{kwargs['video_id']} again (the Reviewer turned it down)" if turned_down
-                else f"Agents 4-5: making and reviewing case #{kwargs['video_id']}")
-    return "Agent 7: reading the numbers"
+        return (f"Agents 3-4: making story #{kwargs['video_id']} again (the Reviewer turned it down)" if turned_down
+                else f"Agents 3-4: making and reviewing story #{kwargs['video_id']}")
+    return "Agent 6: reading the numbers"
 
 
 def _post_due_reels() -> None:
-    """Reels whose slot has come go out beside whatever else is going (a morning run takes hours, or waits hours for
-    Cloudflare), as a task of their own."""
+    """Reels whose time has come go out beside whatever else is going (a morning run takes a while), as a task of their
+    own."""
     if publisher.reels_due():
         try:
-            _start_task("reel", "Agent 6: posting to Instagram", lambda p: jobs.run_job("instagram", progress=p))
+            _start_task("reel", "Agent 5: posting to Instagram", lambda p: jobs.run_job("instagram", progress=p))
         except HTTPException:
             pass  # a Reel is going out already; the next minute looks again
 
 
 def _read_due_numbers() -> None:
     """The Analyst reads the day's numbers beside whatever else is going (left for when nothing else was, it read
-    nothing from 2026-10-26 to 28: there was always a morning run or a case to make)."""
+    nothing from 2026-10-26 to 28: there was always something to make)."""
     if jobs.stats_due():
         try:
-            _start_task("stats", "Agent 7: reading the numbers", lambda p: jobs.run_job("stats", progress=p))
+            _start_task("stats", "Agent 6: reading the numbers", lambda p: jobs.run_job("stats", progress=p))
         except HTTPException:
             pass  # reading them already
 
@@ -430,7 +486,7 @@ def _autopilot_loop() -> None:
     while True:
         time.sleep(LOOP_SECONDS)
         try:
-            if not autopilot_here() or jobs.paused():
+            if not autopilot_here() or jobs.paused() or code_changed():  # (on old code nothing starts: it restarts first)
                 continue
             _post_due_reels()
             _read_due_numbers()
@@ -449,15 +505,27 @@ def _autopilot_loop() -> None:
             print(f"autopilot loop: {e}", file=sys.stderr, flush=True)
 
 
+def _restart_when_changed() -> None:
+    """Started by app.py's launcher: once the software on this computer has changed and nothing is running, the
+    dashboard leaves with RESTART and the launcher starts it again with the new code."""
+    while True:
+        time.sleep(CODE_CHECK)
+        if code_changed() and not _running():
+            print("The software on this computer changed: restarting the dashboard with it", file=sys.stderr, flush=True)
+            os._exit(RESTART)
+
+
 def start_autopilot_loop() -> None:
     global _loop_started
     if not _loop_started:
         _loop_started = True
         background_priority()  # the morning run's renders give way to whatever you're doing on this computer
-        if autopilot_here():  # the runs left open by the last time this program stopped, and the Shorts they were
-            db.abandon_runs()  # making: picked up again at once, not 15 minutes later (nothing else makes them here)
+        if autopilot_here():  # the runs left open by the last time this program stopped, and the stories they were
+            db.abandon_runs()  # making: picked up again at once, not later (nothing else makes them here)
             db.release_stale(db.now_iso(timedelta(seconds=1)))
         threading.Thread(target=_autopilot_loop, name="autopilot", daemon=True).start()
+        if os.environ.get("DASHBOARD_RESTARTS"):
+            threading.Thread(target=_restart_when_changed, name="restart", daemon=True).start()
 
 
 # --- page -----------------------------------------------------------------
@@ -483,7 +551,7 @@ def _slot_video(v: dict | None, live: dict | None = None) -> dict | None:
         return None
     meta = v["plan"].get("metadata", {})
     return {"id": v["id"], "status": v["status"], "title": meta.get("title") or v["theme"],
-            "category": (v["plan"].get("brief") or {}).get("category"), "youtube_id": v["youtube_id"],
+            "theme": (v["plan"].get("brief") or {}).get("theme") or v["theme"], "youtube_id": v["youtube_id"],
             "publish_at": v["publish_at"], "slot": v["slot"], "platforms": publisher.platforms(v, live)}
 
 
@@ -501,7 +569,7 @@ def _autopilot_state(cfg: dict) -> dict:
         next_open = None
     return {
         "here": autopilot_here(),
-        "schedule": {k: sched[k] for k in ("timezone", "first_post", "every_hours", "posts_per_day", "make_at")},
+        "schedule": {k: sched[k] for k in ("timezone", "post_at", "make_at")},
         "run": {"starts": slots.iso(slots.run_starts(shown, sched)), "slots": len(board),
                 "scheduled": sum(1 for s in board if s["state"] in ("scheduled", "posted")),
                 "running": bool(last and not last["finished_at"]), "last": _run_json(last)},
@@ -522,34 +590,26 @@ def _run_json(r: dict | None) -> dict | None:
     return {"at": r["started_at"], "finished": r["finished_at"], "ok": r["ok"], "detail": detail}
 
 
-# What the dashboard's status (read every 30 seconds) needs of each case in the queue (db.LIGHT).
-QUEUE_PARTS = ("approval", "review", "render.id", "research.facts")
+# What the dashboard's status (read every 30 seconds) needs of each story waiting (db.LIGHT).
+QUEUE_PARTS = ("review", "render.id", "short_render.id")
 
 
 def _agents(planned: list[dict]) -> list[dict]:
     """Each agent's card: its last run and the size of its part of the pipeline."""
     videos = db.list_videos(300, parts=())
     now = datetime.now(timezone.utc)
-    cases = [v for v in videos if v["format"] == db.FORMAT and v["status"] != "skipped"]
+    stories = [v for v in videos if v["format"] == db.fmt() and v["status"] != "skipped"]
     scheduled = [v for v in videos if v["status"] == "scheduled" and v["publish_at"] and slots.parse(v["publish_at"]) > now]
-    previews = [v for v in planned if animator.preview_path(v["id"]).exists()]
+    films = [v for v in planned if animator.preview_path(v["id"]).exists()]
     passed = [v for v in planned if reviewer.passed(v["plan"])]
-    facts = sum(len((v["plan"].get("research") or {}).get("facts") or []) for v in planned)
     book = playbook()
-    metric = {
-        "editor": (len(cases), "cases chosen"),
-        "researcher": (facts, "facts checked for the queue"),
-        "writer": (len(planned), "scripts waiting"),
-        "animator": (len(previews), "videos made for the queue"),
-        "reviewer": (len(passed), "videos passed, ready to post"),
-        "publisher": (len(scheduled), "Shorts scheduled ahead"),
-        "analyst": (book.get("samples") or 0, "cases in the playbook"),
-    }
-    out = []
-    for agent in AGENTS:
-        count, what = metric[agent["key"]]
-        out.append({**agent, "last": _run_json(db.last_run(agent["key"], ok=None)), "count": count, "what": what})
-    return out
+    metric = {"theme": (len(stories), "themes chosen"), "story": (len(planned), "stories waiting"),
+              "animator": (len(films), "films made for the queue"),
+              "reviewer": (len(passed), "films passed, ready to post"),
+              "publisher": (len(scheduled), "films scheduled ahead"),
+              "analyst": (book.get("samples") or 0, "films in the playbook")}
+    return [{**agent, "last": _run_json(db.last_run(agent["key"], ok=None)), "count": metric[agent["key"]][0],
+             "what": metric[agent["key"]][1]} for agent in AGENTS]
 
 
 def _youtube_limit() -> dict | None:
@@ -569,33 +629,38 @@ def state():
         "local": not ON_VERCEL,
         "login": _login() is not None,  # (the page then offers Sign out)
         "paused": jobs.paused(),
+        "stale": {"restarts": bool(os.environ.get("DASHBOARD_RESTARTS"))} if code_changed() else None,
         "services": {
             "gemini": bool(env("GEMINI_API_KEY")),
             "youtube": youtube_auth.is_configured(),
             "youtube_manage": _can_manage(),
             "telegram": notify.is_configured(),
             "database": "cloud" if env("DATABASE_URL") or env("POSTGRES_URL") else "local",
-            "music": len(short_render.music_tracks()),
-            "lipsync": lipsync.ready(),
+            "music": len(media.music_tracks()),
             "instagram": {"connected": instagram.is_configured(), "on": publisher.reels_on(),
                           "username": env("INSTAGRAM_USERNAME"), "down": publisher.instagram_down()},
         },
         "autopilot": _autopilot_state(cfg),
-        "events": trends_fetch.calendar_signals(datetime.now(timezone.utc).date(), 10)["events"],
         "counts": db.status_counts(),
         "agents": _agents(planned),
-        "approvals": sum(1 for v in planned if v["plan"].get("approval") == "waiting"),
         "held": sum(1 for v in planned if (v["plan"].get("review") or {}).get("held")),
         "ready": sum(1 for v in planned if db.ready(v)),
         "requests": len(db.list_topics("waiting")),
-        "host": {"ready": (host.HOST_DIR / "rig.json").exists(), "name": (cfg.get("host") or {}).get("name", "The Professor"),
-                 "voice": (cfg.get("voice") or {}).get("name") or narration.VOICE, **_voice_state()},
-        "drawing": _drawing_state(),
+        "narrator": {"name": series.narrator()["name"], **_voice_state()},
+        "series": _series_state(),
         "youtube_limit": _youtube_limit(),
         # Google's page waiting for you comes first, then a Reel you're posting: the dashboard follows it, then the run
         "task": next((_public(t) for t in sorted(_tasks.values(), key=lambda t: (t["kind"] != "connect", t["kind"] != "reel"))
                       if t["status"] == "running"), None),
     }
+
+
+def _series_state() -> dict:
+    """The stories' settings, for every page (the Overview, the Studio, the Narrator page)."""
+    cfg = series.settings()
+    return {"post_at": cfg.get("post_at"), "short_after_hours": series.short_after_hours(),
+            "short_seconds": list(story_film.SHORT_SECONDS), "minutes": list(series.minutes()),
+            "narrator": cfg["narrator"].get("name"), "themes": series.themes()}
 
 
 @router.post("/api/pause")
@@ -609,64 +674,10 @@ async def set_pause(request: Request):
     return {"paused": jobs.paused()}
 
 
-# --- cases ------------------------------------------------------------------
+# --- stories ------------------------------------------------------------------
 
 def _stamp(path: Path) -> str:
     return f"?v={int(path.stat().st_mtime)}"
-
-
-def _research_json(video_id: int, pack: dict) -> dict:
-    clips = lambda key: [{**{k: c.get(k) for k in ("id", "shows", "query", "title", "year", "source", "credit", "page_url",  # noqa: E731
-                                                     "duration")},
-                          "thumb": f"/media/clip/{video_id}/{c['id']}.jpg"} for c in pack.get(key) or []]
-    return {
-        "sources": pack.get("sources") or [], "timeline": pack.get("timeline") or [], "stats": pack.get("stats") or [],
-        "facts": [{k: f.get(k) for k in ("id", "claim", "source", "quote", "kind", "calculated")} for f in pack.get("facts") or []],
-        "series": [{k: s.get(k) for k in ("id", "title", "country", "unit", "points", "forecast_from", "source", "url")}
-                   for s in pack.get("series") or []],
-        "images": [{**{k: i.get(k) for k in ("id", "shows", "title", "author", "licence", "page")},
-                    "url": f"/media/research/{video_id}/{i['id']}.jpg"} for i in pack.get("images") or []],
-        "footage": clips("footage"), "archive": clips("archive"), "story": pack.get("story") or {},
-        "dropped": pack.get("dropped", 0), "notes": pack.get("notes") or [], "answer": pack.get("answer", ""),
-    }
-
-
-def _drawing_state() -> dict:
-    """The drawn look's state: is it on, is Cloudflare connected, is it resting (and why), today's free drawing, and
-    whether Shorts are made with real footage meanwhile (fallback) or wait."""
-    rest = animator.drawing_resting()
-    today = draw.spent_today()
-    return {"look": draw.style(), "look_now": draw.style_now(), "fallback": draw.fallback(),
-            "configured": draw.is_configured(), "resting": animator.drawing_rest_until(),
-            "why": (rest or {}).get("why"), "pictures": today["pictures"], "neurons": round(today["neurons"]),
-            "budget": draw.BUDGET}
-
-
-def _scenes_json(video_id: int, plan: dict) -> list[dict]:
-    """A faceless case's scenes for the Studio: each one's words, its picture or clip and its callout; a Constructivist Montage case's:
-    each one's words, its format, its first picture and its big words."""
-    assets, out = plan.get("assets") or {}, []
-    if (plan.get("script") or {}).get("look") == "montage":
-        lines, names = plan["script"].get("lines") or [], animator._names(plan)
-        for k, scene in enumerate((plan.get("manifest") or {}).get("scenes") or []):
-            first = next((names[i] for i in scene.get("items") or [] if i in names), None)
-            out.append({"id": f"{k + 1:02d}", "text": " ".join(lines[n]["text"] for n in scene.get("lines") or [] if n < len(lines)),
-                        "format": scene.get("format"), "kind": None, "thumb": _still_thumb(video_id, first) if first else None,
-                        "callout": " ".join(x for x in (scene.get("big"), scene.get("unit")) if x) or None})
-        return out
-    for scene in (plan.get("manifest") or {}).get("scenes") or []:
-        name = "S01" if scene.get("reuse_asset_from") else scene["scene_id"]
-        kind = (assets.get(name) or {}).get("kind")
-        thumb = f"/media/scene/{video_id}/{name}.jpg" if kind == "picture" else f"/media/clip/{video_id}/{name}.jpg" if kind else None
-        out.append({"id": scene["scene_id"], "text": scene["narration_text"], "kind": kind, "thumb": thumb,
-                    "callout": (scene.get("on_screen_text") or {}).get("text")})
-    return out
-
-
-def _drawings_json(video_id: int, plan: dict) -> dict:
-    """A drawn case's drawings, by the number of the line each starts on: their pictures' addresses."""
-    return {n: f"/media/scene/{video_id}/{n}.jpg{_stamp(Path(path))}" for n, path in (plan.get("drawings") or {}).items()
-            if Path(path).exists()}
 
 
 def _video_json(v: dict) -> dict:
@@ -677,39 +688,116 @@ def _video_json(v: dict) -> dict:
         "id": v["id"], "status": v["status"], "created_at": v["created_at"], "publish_at": v["publish_at"],
         "slot": v["slot"], "error": v["error"], "youtube_id": v["youtube_id"],
         "studio_url": f"https://studio.youtube.com/video/{v['youtube_id']}/edit" if v["youtube_id"] else None,
-        "legacy": None if v["format"] == db.FORMAT else LEGACY.get(v["format"], "Cute-animal version"),
+        "legacy": None if series.is_story(v) else LEGACY.get(v["format"], "Cute-animal version"),
         "title": meta.get("title") or v["theme"], "description": meta.get("description"),
         "hashtags": meta.get("hashtags") or [], "duration": (plan.get("render") or {}).get("seconds"),
-        "music": plan.get("music"), "music_credit": short_render.music_credit(plan.get("music")),
+        "music": (plan.get("render") or {}).get("music"),
         "preview": f"/media/preview/{v['id']}.mp4{_stamp(preview)}" if preview.exists() else None,
         "cover": f"/media/cover/{v['id']}.jpg{_stamp(cover)}" if cover.exists() else None,
         "platforms": publisher.platforms(v) if v["status"] in ("making", "scheduled") else None,
     }
-    if out["legacy"] or not plan.get("script"):
+    if out["legacy"] or not plan.get("story"):
         return out
-    brief, script, pack = plan.get("brief") or {}, plan["script"], plan.get("research") or {}
-    drawn = script.get("look") == "drawn"
+    return {**out, **_story_json(v)}
+
+
+def _short_json(v: dict) -> dict | None:
+    """A story's short version as the Studio shows it: its video (when it's made from the film as it is), its length,
+    and its script (each line with the film's scene it's over and the second it starts in the short version)."""
+    plan = v["plan"]
+    story = plan["story"]
+    if not story.get("short"):
+        return None
+    made = plan.get("short_render") or {}
+    path = animator.short_path(v["id"])
+    ready = animator.short_made(v)
+    times = iter(made.get("lines") or []) if ready else iter(())
+    lines = []
+    for s in story_film.short_story(story)["shots"]:
+        if s.get("line"):
+            t = next(times, None)
+            lines.append({"text": s["line"], "direction": s.get("direction") or "", "shot": s["film_shot"],
+                          "act": s.get("act"), "at": t["start"] if t else None})
+    return {"video": f"/media/short/{v['id']}.mp4{_stamp(path)}" if ready else None,
+            "seconds": made.get("seconds") if ready else None, "estimate": story["short"].get("estimate"),
+            "scenes": len(story["short"].get("shots") or []), "words": story["short"].get("words"), "lines": lines,
+            "voice": (made.get("voice") or {}).get("voice") if ready else None}
+
+
+def _story_json(v: dict) -> dict:
+    """A story as the Studio shows it: its film and its short version, the narrator's lines (with the shot and the
+    second each starts), its scenes, its chapters and the Reviewer's verdict."""
+    plan = v["plan"]
+    story, brief, meta = plan["story"], plan.get("brief") or {}, plan.get("metadata") or {}
+    made = plan.get("render") or {}
+    times = iter(made.get("lines") or [])
+    lines = []
+    for k, shot in enumerate(story["shots"]):
+        if shot.get("line"):
+            t = next(times, None)
+            lines.append({"text": shot["line"], "direction": shot.get("direction") or "", "shot": k + 1,
+                          "act": shot.get("act"), "plate": shot.get("plate"), "at": t["start"] if t else None})
+    drawn = plan.get("plates") or {}
+    plates = [{"id": pl["id"], "scene": pl["scene"], "him": pl.get("him"), "light": pl.get("light"),
+               "redraws": int(pl.get("redraws") or 0),
+               "thumb": f"/media/plate/{v['id']}/{pl['id']}.jpg" if pl["id"] in drawn else None}
+              for pl in story["plates"]]
+    chapters = made.get("chapters") or [{"act": a, "name": n, "at": None} for a, n in (story.get("chapters") or {}).items()]
+    first_shot = {}
+    for shot in story["shots"]:
+        first_shot.setdefault(shot.get("place"), shot.get("plate"))
+    places = [{"id": p["id"], "name": p.get("name"), "light": p.get("light"), "weather": p.get("weather"),
+               "set": p.get("set"), "words": _place_words(p),
+               "thumb": f"/media/plate/{v['id']}/{first_shot[p['id']]}.jpg" if first_shot.get(p["id"]) in drawn else None}
+              for p in story.get("places") or []]
+    cast = [{"id": c["id"], "role": c.get("role"), "words": _person_words(c)} for c in story.get("cast") or []]
     return {
-        **out,
-        "look": script.get("look") if script.get("look") in ("drawn", "faceless", "montage") else "footage",
-        "drawings": _drawings_json(v["id"], plan) if drawn else {}, "scenes": _scenes_json(v["id"], plan),
-        "switched": plan.get("switched"),
-        "category": brief.get("category"), "topic": brief.get("topic"), "angle": brief.get("angle"),
-        "paradox": brief.get("paradox"),
-        "why_now": brief.get("why_now"), "trend": brief.get("trend"), "follow_up_of": brief.get("follow_up_of"),
-        "from_request": bool(brief.get("request_id")), "from_comment": bool(brief.get("comment_id")),
-        "approval": plan.get("approval"), "approved_at": plan.get("approved_at"), "approved_by": plan.get("approved_by"),
-        "case_title": script.get("case_title"), "lines": script.get("lines") or [],
-        "music_mood": script.get("music_mood"), "estimate": script.get("seconds"), "cut": script.get("cut", 0),
-        "retention": script.get("retention") or {}, "habits": script.get("habits") or [],
+        "story": True, "theme": brief.get("theme"), "kind": brief.get("kind"), "why_now": brief.get("why_now"),
+        "brief": brief.get("instruction"), "core_message": story.get("core_message"),
+        "places": places, "cast": cast, "missing": story.get("missing") or [],
+        "board_notes": story.get("board_notes") or [],
+        "realization": (story["realization"] + 1) if story.get("realization") is not None else None,
+        "stage_names": story.get("chapters") if isinstance(story.get("chapters"), dict) else {},
+        "logline": story.get("logline") or story.get("core_message"), "closing_line": story.get("closing_line"),
+        "chapters": chapters,
+        "lines": lines, "plates": plates, "shot_count": len(story["shots"]), "words": story.get("words"),
+        "estimate": story.get("estimate"), "notes": story.get("notes") or [],
+        "current": series.current(v),
+        "short": _short_json(v), "short_upload": plan.get("short_upload"),
+        "watch_url": f"https://www.youtube.com/watch?v={v['youtube_id']}" if v["youtube_id"] else None,
         "voice": plan.get("voice"), "preview_failed_at": plan.get("preview_failed_at"),
         "review": _review_json(plan), "thumbnail": _thumbnail_json(v["id"], plan),
         "instagram": plan.get("instagram"), "youtube_thumbnail": plan.get("youtube_thumbnail"),
-        "held_upload": plan.get("held_upload"),
-        "research": _research_json(v["id"], pack),
-        "visuals": writer.visual_menu(pack, brief, drawn),
-        "full_description": publisher.description(meta, plan),
+        "remakes": int(plan.get("remakes") or 0), "full_description": publisher.description(meta, plan),
     }
+
+
+def _place_words(place: dict) -> str:
+    """A storyboard's place in a few words (the Studio): its kind and look, its things, its effects."""
+    if place.get("set"):
+        return f"the ready-made set “{place['set'].replace('_', ' ')}”"
+    s = place.get("spec") or {}
+    kind = s.get("nature") if s.get("kind") == "nature" else s.get("kind")
+    bits = [kind or "room"]
+    if s.get("kind") in ("room", "hall", "corridor"):
+        bits.append(f"{s.get('wall')} walls")
+    things = [t.replace("_", " ") for t in (s.get("things") or []) + (s.get("wall_things") or []) + (s.get("small") or [])]
+    if things:
+        bits.append(", ".join(things))
+    if s.get("effects"):
+        bits.append(", ".join(s["effects"]))
+    return " · ".join(bits)
+
+
+def _person_words(person: dict) -> str:
+    """Someone of the storyboard's cast in a few words (the Studio): their hair, their clothes, their extras."""
+    w = person.get("words") or {}
+    bits = []
+    if w.get("hair") and w["hair"] != "none":
+        bits.append(f"{w.get('hair_color', '')} {w['hair']} hair".strip())
+    if w.get("cloth"):
+        bits.append(f"{w['cloth']} clothes")
+    return ", ".join(bits + list(w.get("extras") or []))
 
 
 def _clock(iso: str | None) -> str | None:
@@ -721,7 +809,7 @@ def _clock(iso: str | None) -> str | None:
 
 
 def _review_json(plan: dict) -> dict | None:
-    """The Reviewer's verdict on the video as it is now (current: false when it's of an earlier version)."""
+    """The Reviewer's verdict on the film as it is now (current: false when it's of an earlier version)."""
     verdict = plan.get("review")
     if not verdict:
         return None
@@ -733,38 +821,26 @@ def _review_json(plan: dict) -> dict | None:
             "remake_at": _clock(verdict.get("remake_at")) if verdict.get("held") else None}
 
 
-def _still_thumb(video_id: int, name: str) -> str | None:
-    kind, _, ref = name.partition(":")
-    if kind == "scene":
-        return f"/media/scene/{video_id}/{ref}.jpg"
-    if kind == "photo":
-        return f"/media/research/{video_id}/{ref}.jpg"
-    if kind in ("footage", "archive"):
-        return f"/media/clip/{video_id}/{ref}.jpg"
-    return None
-
-
 def _thumbnail_json(video_id: int, plan: dict) -> dict:
-    """The thumbnail as made, and the stills it can be made from (for the Studio's thumbnail editor)."""
-    cover, wide = animator.thumb_paths(video_id)
+    """The thumbnail as made, and the scenes it can be made from (for the Studio's thumbnail editor)."""
+    _, wide = animator.thumb_paths(video_id)
     made = plan.get("thumbnail") or {}
-    drawn = (plan.get("script") or {}).get("look") == "drawn"
-    menu = {**writer.visual_menu(plan.get("research") or {}, plan.get("brief") or {}, drawn),
-            **{f"scene:{n}": f"the drawing of line {n}" for n in plan.get("drawings") or {}}}
-    return {"cover": f"/media/thumb/{video_id}.jpg{_stamp(cover)}" if cover.exists() else None,
-            "wide": f"/media/thumb/{video_id}/wide.jpg{_stamp(wide)}" if wide.exists() else None,
-            "text": made.get("text") or (plan.get("metadata") or {}).get("thumbnail_text") or "",
+    chosen = plan["story"].get("thumbnail") or {}
+    return {"wide": f"/media/thumb/{video_id}/wide.jpg{_stamp(wide)}" if wide.exists() else None,
+            "text": made.get("text") or chosen.get("words") or "",
+            "lead": made["lead"] if "lead" in made else chosen.get("lead", ""),
+            "punch": made["punch"] if "punch" in made else (chosen.get("punch") or made.get("text") or ""),
             "background": made.get("background"),
-            "choices": [{"name": n, "label": menu.get(n, n), "thumb": _still_thumb(video_id, n)}
-                        for n in animator.stills(plan)]}
+            "choices": [{"name": n, "label": f"scene {n.partition(':')[2].lstrip('s')}",
+                         "thumb": f"/media/plate/{video_id}/{n.partition(':')[2]}.jpg"} for n in animator.stills(plan)]}
 
 
 def _planned_or_409(video_id) -> dict:
     video = db.get_video(int(video_id)) if video_id is not None else None
     if not video:
-        raise HTTPException(404, "No such Short.")
+        raise HTTPException(404, "No such story.")
     if video["status"] != "planned":
-        raise HTTPException(409, f"Short #{video['id']} is {video['status']}; only queued cases can be changed.")
+        raise HTTPException(409, f"Story #{video['id']} is {video['status']}; only waiting stories can be changed.")
     return video
 
 
@@ -775,27 +851,22 @@ def videos(limit: int = 60):
 
 @router.patch("/api/videos/{video_id}")
 async def edit_video(video_id: int, request: Request):
+    """Your changes to a waiting story's words (its title, the narrator's lines and their directions, the closing line):
+    its film is made again, and only the changed parts are read again."""
     video = _planned_or_409(video_id)
-    if video["format"] != db.FORMAT:
-        raise HTTPException(409, "Shorts from earlier versions can't be edited here.")
+    if not series.current(video):
+        raise HTTPException(409, "This was made by an earlier version of the channel: it can't be edited here.")
     try:
-        plan = writer.apply_edits(video["plan"], await _json(request))
+        plan = story_agent.apply_edits(video["plan"], await _json(request))
     except (ValueError, IndexError, KeyError) as e:
         raise HTTPException(422, str(e))
-    plan.pop("review", None)  # the script changed: a new video, reviewed afresh, without the old version's fixes
+    animator.remove(animator.short_path(video_id))
+    plan.pop("review", None)  # the words changed: a new film, reviewed afresh, without the old version's fixes
     plan.pop("fixes", None)
-    plan.pop("render", None)  # the old render no longer matches the script
+    plan.pop("render", None)  # the old film no longer matches the words
+    plan.pop("short_render", None)  # (its short version keeps its own script; it's drawn again after the film)
     db.update_video(video_id, plan=plan)
     animator.remove(animator.preview_path(video_id))
-    return _video_json(db.get_video(video_id))
-
-
-@router.post("/api/videos/{video_id}/approve")
-def approve_video(video_id: int):
-    try:
-        publisher.approve(video_id)
-    except ValueError as e:
-        raise HTTPException(409, str(e))
     return _video_json(db.get_video(video_id))
 
 
@@ -804,23 +875,21 @@ def discard_video(video_id: int):
     _planned_or_409(video_id)
     db.update_video(video_id, status="discarded")
     animator.remove(animator.preview_path(video_id))
+    animator.remove(animator.short_path(video_id))
     animator.forget(video_id)
     return {"ok": True}
 
 
 @router.post("/api/videos/{video_id}/review")
 async def review_action(video_id: int, request: Request):
-    """Your answer to the Reviewer: "post" a video it held (it goes out as it is), or "remake" it (made and reviewed
+    """Your answer to the Reviewer: "post" a film it held (it goes out as it is), or "remake" it (made and reviewed
     again from scratch, the earlier fixes forgotten)."""
     video = _planned_or_409(video_id)
     action = (await _json(request)).get("action")
     plan = video["plan"]
     if action == "post":
-        if plan.get("held_upload"):
-            raise HTTPException(409, "It's on YouTube as private already: publish or schedule it in YouTube Studio "
-                                     f"({plan['held_upload']['studio_url']}), then discard it here.")
         if not plan.get("review") or not animator.preview_path(video_id).exists():
-            raise HTTPException(409, "There's no reviewed video to post yet.")
+            raise HTTPException(409, "There's no reviewed film to post yet.")
         plan["review"] = {**plan["review"], "held": False, "override": "you", "override_at": db.now_iso()}
     elif action == "remake":
         if (plan.get("review") or {}).get("held"):  # (made again by itself anyway: this only doesn't wait for its time)
@@ -829,7 +898,9 @@ async def review_action(video_id: int, request: Request):
         plan.pop("review", None)
         plan.pop("fixes", None)
         plan.pop("render", None)
+        plan.pop("short_render", None)
         animator.remove(animator.preview_path(video_id))
+        animator.remove(animator.short_path(video_id))
     else:
         raise HTTPException(422, "Unknown answer.")
     db.update_video(video_id, plan=plan)
@@ -847,24 +918,30 @@ def _can_manage() -> bool:
 @router.post("/api/videos/{video_id}/youtube")
 @router.post("/api/videos/{video_id}/scheduled")  # (its name before 2026-10-27, for a page opened before)
 async def youtube_action(video_id: int, request: Request):
-    """Your YouTube buttons beside a Short on the Schedule page. Until it's public: "now" makes it public at once (its
-    slot stays its own, so no other Short is made for it, and its Reel still waits for the slot); "stop" keeps it on
-    YouTube as private (only you can see it; you can still publish it from YouTube Studio). "delete" removes it from
-    YouTube, public or not. Stop and Delete free its slot, so the morning run gives it a new Short while the autopilot
-    is on (a slot more than an hour gone stays empty), and its Reel goes too unless it's posted already."""
+    """Your YouTube buttons beside a story on the Schedule page. Until it's public: "now" makes the film public at once
+    (its slot stays its own, so no other story is made for it; its short version still goes at its time); "stop" keeps
+    the film and its short version on YouTube as private (only you can see them; you can still publish them from YouTube
+    Studio).
+    "delete" removes both from YouTube, public or not. Stop and Delete free its slot, so the morning run gives it a new
+    story while the autopilot is on (a slot more than an hour gone stays empty), and its Reel goes too unless it's posted
+    already (publisher.take_off)."""
     video = db.get_video(video_id)
     if not video or video["status"] != "scheduled" or not video["youtube_id"]:
-        raise HTTPException(409, "Only a Short on the schedule can be changed here.")
+        raise HTTPException(409, "Only a story on the schedule can be changed here.")
     action = (await _json(request)).get("action")
     if action not in ("now", "stop", "delete"):
         raise HTTPException(422, "Unknown action.")
     if action != "delete" and video["publish_at"] and slots.parse(video["publish_at"]) <= datetime.now(timezone.utc):
         raise HTTPException(409, "It's public already: delete it here, or make it private in YouTube Studio.")
-    actions = {"now": youtube_upload.publish_now, "stop": youtube_upload.unschedule, "delete": youtube_upload.delete}
     try:
-        done = actions[action](video["youtube_id"])
+        if action == "now":
+            done = youtube_upload.publish_now(video["youtube_id"])
+        else:
+            publisher.take_off(video_id, action)
     except youtube_upload.NotAllowed as e:  # the dashboard offers Google's page for it, then tries again
         raise HTTPException(403, {"message": str(e), "reconnect": True})
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     except Exception as e:
         raise HTTPException(502, f"YouTube didn't do it: {e}")
     finally:
@@ -872,31 +949,26 @@ async def youtube_action(video_id: int, request: Request):
     if action == "now" and not done.get("gone"):
         db.update_video(video_id, publish_at=db.now_iso(),
                         plan={**video["plan"], "posted_now": {"at": db.now_iso(), "publish_at": video["publish_at"]}})
-        return _video_json(db.get_video(video_id))
-    was = {"at": db.now_iso(), "slot": video["slot"], "publish_at": video["publish_at"]}
-    status = "deleted" if action == "delete" or done.get("gone") else "stopped"
-    db.update_video(video_id, status=status, slot=None, publish_at=None, plan={**video["plan"], status: was})
-    publisher.cancel_reel(video_id, because=f"{status} on YouTube", keep_video=False)
     return _video_json(db.get_video(video_id))
 
 
 @router.post("/api/videos/{video_id}/instagram")
 async def instagram_action(video_id: int, request: Request):
-    """Your Instagram buttons beside a Short on the Schedule page: "now" posts its Reel at once (even before it's public
-    on YouTube), as a task beside the rest, since the upload and Instagram's processing take a few minutes; "delete"
-    deletes a posted Reel from Instagram, or takes one that isn't posted yet off (it isn't posted then); "schedule"
-    makes the video of a Short that went up while Reels were off again (a few minutes), and its Reel then waits for
-    its slot."""
+    """Your Instagram buttons beside a story on the Schedule page: "now" posts its Reel (its short version) at once (even
+    before it's public on YouTube), as a task beside the rest, since the upload and Instagram's processing take a few
+    minutes; "delete" deletes a posted Reel from Instagram, or takes one that isn't posted yet off (it isn't posted then);
+    "schedule" makes the short version of a story that went up while Reels were off again, and its Reel then waits for
+    its time."""
     video = db.get_video(video_id)
     if not video:
-        raise HTTPException(404, "No such Short.")
+        raise HTTPException(404, "No such story.")
     action = (await _json(request)).get("action")
     reel = publisher.platforms(video)["instagram"]
     if action == "schedule":
-        _local_only("Making a video for Instagram")
+        _local_only("Making a short version for Instagram")
         if not reel["can"]["schedule"]:
             raise HTTPException(409, f"{reel['why'] or 'Its Reel is waiting or posted already'}.")
-        return _start_task("remake", f"Agent 4: making case #{video_id} again for Instagram",
+        return _start_task("remake", f"Agent 3: making story #{video_id}'s short version again for Instagram",
                            lambda p: publisher.run_remake(video, progress=p), video_id)
     if action == "now":
         _local_only("Posting to Instagram")
@@ -956,31 +1028,26 @@ def schedule_page():
 
 @router.post("/api/videos/{video_id}/thumbnail")
 async def edit_thumbnail(video_id: int, request: Request):
-    """New words or another still for the thumbnail: made again at once (a second or two)."""
+    """New words or another scene for the thumbnail: made again at once (a few seconds)."""
     video = _planned_or_409(video_id)
-    if video["format"] != db.FORMAT or not video["plan"].get("script"):
-        raise HTTPException(409, "Shorts from earlier versions have no thumbnail here.")
+    if not series.current(video):
+        raise HTTPException(409, "This was made by an earlier version of the channel: it has no thumbnail here.")
     body = await _json(request)
-    text = " ".join(str(body.get("text") or "").split())
-    if not 1 <= len(text.replace("*", " ").split()) <= 6 or len(text) > 60:
-        raise HTTPException(422, "Use 1 to 6 words, 60 characters at most (mark the coloured one with *asterisks*).")
+    if "punch" not in body:   # (one line of words: a page from before the two)
+        body = {**body, "lead": "", "punch": body.get("text")}
+    lead = " ".join(str(body.get("lead") or "").replace("*", "").split())[:40]
+    punch = " ".join(str(body.get("punch") or "").replace("*", "").split())[:40]
+    if not 1 <= len(punch.split()) <= 4 or len(lead.split()) > 4:
+        raise HTTPException(422, "The yellow words: 1 to 4; the white words above them: up to 4 (40 characters each).")
     background = body.get("background")
     if background and background not in animator.stills(video["plan"]):
-        raise HTTPException(422, "Pick a still from this case's shots.")
+        raise HTTPException(422, "Pick one of this story's scenes.")
     try:
-        made = animator.make_thumbnail(video_id, video["plan"], text=text, background=background)
+        made = animator.make_thumbnail(video_id, video["plan"], lead=lead, punch=punch, background=background)
     except Exception as e:
         raise HTTPException(409, f"Couldn't make the thumbnail: {e}")
     db.update_video(video_id, plan={**db.get_video(video_id)["plan"], "thumbnail": made})
     return _video_json(db.get_video(video_id))
-
-
-@router.get("/media/thumb/{video_id}.jpg", include_in_schema=False)
-def thumb_cover(video_id: int):
-    path = animator.thumb_paths(video_id)[0]
-    if not path.exists():
-        raise HTTPException(404)
-    return FileResponse(path, media_type="image/jpeg")
 
 
 @router.get("/media/thumb/{video_id}/wide.jpg", include_in_schema=False)
@@ -993,7 +1060,7 @@ def thumb_wide(video_id: int):
 
 @router.get("/api/review")
 def review_page():
-    """Agent 5's page: what it checks, the cases it turned down (being made again by themselves), its recent reviews
+    """Agent 4's page: what it checks, the stories it turned down (being made again by themselves), its recent reviews
     and the lessons it has taught."""
     history = list(db.latest_note("review:history") or [])[::-1]
     titles = {}
@@ -1007,20 +1074,132 @@ def review_page():
              "remake_at": _clock((v["plan"].get("review") or {}).get("remake_at"))}
             for v in planned if (v["plan"].get("review") or {}).get("held")]
     learned = db.latest_note("review:lessons") or {}
+    low, high = series.minutes()
     return {"history": [{**h, "title": titles.get(h["video_id"])} for h in history], "held": held,
             "lessons": learned, "max_rounds": reviewer.MAX_ROUNDS,
-            "checks": {"min_match": reviewer.MIN_MATCH, "his_pitch": voiceprint.PITCH, "line_pace": reviewer.LINE_PACE,
-                       "pace": reviewer.PACE,
-                       "loudness": reviewer.LOUDNESS, "frames": reviewer.FRAMES, "recurring": reviewer.RECURRING,
+            "checks": {"min_match": reviewer.MIN_MATCH, "his_pitch": voiceprint.PITCH, "loudness": film_sound.LUFS_VOICE,
+                       "minutes": [low, high], "short_seconds": list(story_film.SHORT_SECONDS),
+                       "short_least": reviewer.SHORT_LEAST, "short_most": story_film.SHORT_MOST,
+                       "frames": reviewer.MAX_STORY_FRAMES, "recurring": reviewer.RECURRING,
                        "lookback": reviewer.LOOKBACK}}
+
+
+@router.get("/media/short/{video_id}.mp4", include_in_schema=False)
+def short_version(video_id: int, request: Request):
+    """A story's short version (its Short and its Reel), served like a preview (in pieces)."""
+    return _pieces(animator.short_path(video_id), request)
+
+
+@router.get("/media/plate/{video_id}/{plate}.jpg", include_in_schema=False)
+def plate_image(video_id: int, plate: str):
+    """One of a story's scenes (a still of a shot), 640 px wide (made once, kept beside it)."""
+    if not re.fullmatch(r"[a-z0-9_-]{1,12}", plate):
+        raise HTTPException(404)
+    video = db.get_video(video_id)
+    painted = animator.plate_files(video_id, (video or {}).get("plan") or {})
+    if plate not in painted:
+        raise HTTPException(404)
+    source = _in_tmp(painted[plate])
+    small = _in_tmp(animator.scenes_dir(video_id) / "small" / f"{Path(source).stem}.jpg")
+    if not small.exists():
+        from PIL import Image
+
+        small.parent.mkdir(parents=True, exist_ok=True)
+        image = Image.open(source).convert("RGB")
+        image.thumbnail((640, 640))
+        image.save(small, "JPEG", quality=84)
+    return FileResponse(small, media_type="image/jpeg")
+
+
+STYLE_TEST_DIR = ROOT / ".tmp" / "silhouette_test"
+STYLE_TEST_NOTES = {  # what each style-test video is (the silhouette look's tests, 2026-11-15/16)
+    "story_algieba": ("Algieba", "Google calls this voice smooth."),
+    "story_umbriel": ("Umbriel", "Google calls this voice easy-going."),
+    "story_achird": ("Achird", "Google calls this voice friendly."),
+    "story_sadaltager": ("Sadaltager", "Google calls this voice knowledgeable."),
+    "compare_side_by_side": ("Your GIF beside the code", "Left: your reference GIF. Right: the same scene drawn in code "
+                             "(9:16). It plays twice."),
+    "deadline_wide": ("The film's shape (16:9, 1920x1080)", "How the 3-4 minute videos will look: more of the room is "
+                      "shown (a pinboard, a shelf, a mug)."),
+    "deadline_tall": ("The short version's shape (9:16, 1080x1920)", "How the short versions (the Shorts and Reels) will "
+                      "look: drawn again upright, not cropped."),
+}
+STYLE_TEST_GROUPS = [  # (heading, what it shows, its videos, with sound)
+    ("Style test 2: a 34-second mini story, in four voices",
+     "The desk at dusk, a rainy street at night, a hospital room at night. Music comes in at his mother's words and rises. "
+     "The picture, sounds and music are the same in all four; only the narrator changes. Pick the voice you like best.",
+     ["story_algieba", "story_umbriel", "story_achird", "story_sadaltager"], True),
+    ("Style test 1: your GIF's scene", "The scene from your GIF, drawn in code.",
+     ["compare_side_by_side", "deadline_wide", "deadline_tall"], False),
+]
+
+
+@router.get("/style-test", include_in_schema=False)
+def style_test_page():
+    """The silhouette look's test videos (.tmp/silhouette_test), to watch before the look is built into the agents."""
+    from html import escape
+
+    there = {p.stem for p in STYLE_TEST_DIR.glob("*.mp4") if re.fullmatch(r"[a-z0-9_]{1,60}", p.stem)}
+    listed = {n for _, _, names, _ in STYLE_TEST_GROUPS for n in names}
+    groups = STYLE_TEST_GROUPS + [("Other test videos", "", sorted(there - listed), False)]
+    sections = []
+    for heading, lede, names, sound in groups:
+        cards = []
+        for name in (n for n in names if n in there):
+            title, note = STYLE_TEST_NOTES.get(name, (name.replace("_", " ").capitalize(), ""))
+            shape = "tall" if "tall" in name else ("pair" if sound else "wide")
+            play = "controls" if sound else "controls loop muted"
+            poster = f' poster="/media/style-test/{name}.jpg"' if (STYLE_TEST_DIR / f"{name}.jpg").is_file() else ""
+            cards.append(f'<figure class="{shape}"><video src="/media/style-test/{name}.mp4#t=0.1" {play} playsinline '
+                         f'preload="{"metadata" if sound else "auto"}"{poster}></video><figcaption><b>{escape(title)}</b>'
+                         f'<span>{escape(note)}</span></figcaption></figure>')
+        if cards:
+            sections.append(f'<section><h2>{escape(heading)}</h2>' + (f'<p class="lede">{escape(lede)}</p>' if lede else "")
+                            + f'<div class="grid">{"".join(cards)}</div></section>')
+    body = "".join(sections) or "<p>No test videos yet.</p>"
+    page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,
+initial-scale=1"><title>Style test</title><style>
+:root {{ color-scheme: dark; }} body {{ margin: 0; background: #120d16; color: #efe8ee; font: 15px/1.5 system-ui, sans-serif; }}
+main {{ max-width: 1240px; margin: 0 auto; padding: 28px 16px 60px; }} h1 {{ font-size: 22px; margin: 0 0 4px; }}
+h2 {{ font-size: 18px; margin: 34px 0 4px; }} .lede {{ color: #b9aab8; margin: 0 0 18px; max-width: 820px; }}
+a {{ color: #ff8a73; }}
+.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; align-items: start; }}
+figure {{ margin: 0; background: #1c1520; border: 1px solid #2e2433; border-radius: 10px; overflow: hidden; }}
+figure.wide {{ grid-column: 1 / -1; }} video {{ display: block; width: 100%; background: #000; }}
+@media (min-width: 760px) {{ .grid:has(figure.pair) {{ grid-template-columns: 1fr 1fr; }} }}
+figure.tall video {{ max-height: 78vh; object-fit: contain; }}
+figcaption {{ padding: 10px 14px 12px; display: grid; gap: 2px; }} figcaption span {{ color: #b9aab8; font-size: 14px; }}
+</style></head><body><main><h1>Style test: the silhouette look</h1>
+<p class="lede">Drawn entirely in code from your description and your GIF: no AI pictures, nothing uploaded.
+<a href="/">Back to the dashboard</a></p>{body}</main></body></html>"""
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/media/style-test/{name}.jpg", include_in_schema=False)
+def style_test_poster(name: str):
+    path = STYLE_TEST_DIR / f"{name}.jpg"
+    if not re.fullmatch(r"[a-z0-9_]{1,60}", name) or not path.is_file():
+        raise HTTPException(404)
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@router.get("/media/style-test/{name}.mp4", include_in_schema=False)
+def style_test_video(name: str, request: Request):
+    if not re.fullmatch(r"[a-z0-9_]{1,60}", name):
+        raise HTTPException(404)
+    return _pieces(STYLE_TEST_DIR / f"{name}.mp4", request)
 
 
 @router.get("/media/preview/{video_id}.mp4", include_in_schema=False)
 def preview(video_id: int, request: Request):
-    """The case's video, in pieces of at most PREVIEW_PIECE, each read and closed at once: served whole, the player
-    kept the file open while the page showed it, and Windows then refused to delete or render it again (discarding
-    #62 and #66 failed so, 2026-10-27). The player asks for the next piece itself."""
-    path = animator.preview_path(video_id)
+    """The story's film, in pieces of at most PREVIEW_PIECE, each read and closed at once: served whole, the player
+    kept the file open while the page showed it, and Windows then refused to delete or make it again (2026-10-27). The
+    player asks for the next piece itself."""
+    return _pieces(animator.preview_path(video_id), request)
+
+
+def _pieces(path: Path, request: Request):
+    """A video served in pieces of at most PREVIEW_PIECE (see preview)."""
     asked = re.fullmatch(r"bytes=(\d+)-(\d*)", (request.headers.get("range") or "").strip())
     if not asked:
         if not path.exists():
@@ -1031,7 +1210,7 @@ def preview(video_id: int, request: Request):
             size = os.fstat(f.fileno()).st_size
             start = int(asked[1])
             end = min(int(asked[2]) if asked[2] else size - 1, start + PREVIEW_PIECE - 1, size - 1)
-            if start >= size:
+            if start >= size or end < start:   # (a range ending before it starts would read the whole rest at once)
                 return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
             f.seek(start)
             body = f.read(end - start + 1)
@@ -1042,7 +1221,7 @@ def preview(video_id: int, request: Request):
 
 
 def _in_tmp(path: Path | str) -> Path:
-    """A file named in a case's plan, if it's one of the channel's own in .tmp (never another file on this computer,
+    """A file named in a story's plan, if it's one of the channel's own in .tmp (never another file on this computer,
     whatever a plan says). 404 otherwise."""
     path = Path(path).resolve()
     if not path.is_relative_to(TMP_DIR.resolve()):
@@ -1058,74 +1237,44 @@ def cover(video_id: int):
     return FileResponse(path, media_type="image/jpeg")
 
 
-@router.get("/media/scene/{video_id}/{number}.jpg", include_in_schema=False)
-def scene_image(video_id: int, number: str):
-    """One of a drawn case's drawings (by the number of the line it starts on)."""
-    video = db.get_video(video_id)
-    path = ((video or {}).get("plan", {}).get("drawings") or {}).get(number)
-    if not path or not _in_tmp(path).exists():
-        raise HTTPException(404)
-    return FileResponse(_in_tmp(path), media_type="image/jpeg")
-
-
-@router.get("/media/research/{video_id}/{image_id}.jpg", include_in_schema=False)
-def research_image(video_id: int, image_id: str):
-    video = db.get_video(video_id)
-    image = next((i for i in ((video or {}).get("plan", {}).get("research") or {}).get("images") or []
-                  if i["id"] == image_id), None)
-    if not image or not image.get("file"):
-        raise HTTPException(404)
-    _in_tmp(TMP_DIR / image["file"])
-    path = researcher.image_path(image)
-    if not path.exists():
-        raise HTTPException(404)
-    return FileResponse(path, media_type="image/jpeg")
-
-
-@router.get("/media/clip/{video_id}/{clip_id}.jpg", include_in_schema=False)
-def clip_thumb(video_id: int, clip_id: str):
-    """A frame of one of the case's clips (made once, kept next to the clip)."""
-    video = db.get_video(video_id)
-    pack = (video or {}).get("plan", {}).get("research") or {}
-    clip = next((c for key in ("footage", "archive") for c in pack.get(key) or [] if c["id"] == clip_id), None)
-    if not clip:
-        raise HTTPException(404)
-    path = _in_tmp(TMP_DIR / clip["file"])
-    thumb = path.with_suffix(".jpg")
-    if not thumb.exists() and path.exists():
-        subprocess.run([short_render.ffmpeg_exe(), "-y", "-v", "error", "-ss", "1", "-i", str(path), "-frames:v", "1",
-                        "-vf", "scale=360:-2", str(thumb)], capture_output=True, timeout=60)
-    if not thumb.exists():
-        raise HTTPException(404)
-    return FileResponse(thumb, media_type="image/jpeg")
-
-
-# --- topics: your requests, viewers' comments, the Editor's choices -----------
+# --- themes: your requests and Agent 1's choices ------------------------------
 
 @router.get("/api/topics")
 def topics():
-    cfg = load_config()
+    """Agent 1's page: your requests (one that names a theme is taken first) and the stories named so far."""
     briefs = []
-    for v in db.list_videos(80, parts=("brief", "approval", "metadata.title")):
+    for v in db.list_videos(80, parts=("brief", "metadata.title")):
         brief = v["plan"].get("brief")
-        if v["format"] == db.FORMAT and brief:
+        if series.is_story(v) and brief:
             briefs.append({"id": v["id"], "created_at": v["created_at"], "status": v["status"],
-                           "approval": v["plan"].get("approval"), "title": v["plan"].get("metadata", {}).get("title"),
-                           **{k: brief.get(k) for k in ("category", "topic", "angle", "why_now", "trend", "follow_up_of",
-                                                        "needs_approval")},
-                           "from_request": bool(brief.get("request_id")), "from_comment": bool(brief.get("comment_id"))})
-    return {"requests": db.list_topics(limit=60), "comments": db.recent_comments(days=60, limit=60, unused=False),
-            "briefs": briefs, "categories": editor.CATEGORIES, "weights": cfg["cases"].get("categories") or {},
-            "follow_ups": cfg["cases"].get("follow_ups", True), "comment_requests": cfg["cases"].get("comment_requests", True)}
+                           "title": v["plan"].get("metadata", {}).get("title"),
+                           **{k: brief.get(k) for k in ("theme", "kind", "angle", "why_now", "instruction", "mode")},
+                           "from_request": bool(brief.get("request_id"))})
+    return {"requests": db.list_topics(limit=60), "briefs": briefs}
 
 
 @router.post("/api/topics")
 async def add_topic(request: Request):
     text = " ".join(str((await _json(request)).get("text", "")).split())
-    if not 3 <= len(text) <= 200:
-        raise HTTPException(422, "Describe the case in 3 to 200 characters, e.g. “Why Nokia failed”.")
+    if not 3 <= len(text) <= 800:
+        raise HTTPException(422, "Write your brief in 3 to 800 characters, e.g. “Write a story about GREED. Let the "
+                                 "incident cost him his oldest friend.”")
     topic_id = db.add_topic(text)
     return {"id": topic_id, "text": text}
+
+
+@router.get("/api/missing")
+def missing():
+    """What the recent stories' scripts asked for that the library doesn't have yet (Agent 3's storyboards): each piece
+    and the stories that wanted it, most wanted first. It's what's added to the library next."""
+    wanted: dict[str, list[int]] = {}
+    for v in db.list_videos(60, parts=("story.missing",)):
+        for m in (v["plan"].get("story") or {}).get("missing") or []:
+            what = str(m).split(" (")[0].strip().lower()
+            if what:
+                wanted.setdefault(what, []).append(v["id"])
+    pieces = [{"what": w, "stories": sorted(set(ids), reverse=True)} for w, ids in wanted.items()]
+    return {"pieces": sorted(pieces, key=lambda p: (-len(p["stories"]), p["what"]))}
 
 
 @router.delete("/api/topics/{topic_id}")
@@ -1137,7 +1286,7 @@ def drop_topic(topic_id: int):
     return {"ok": True}
 
 
-# --- the host: the Professor and his voice ------------------------------------
+# --- the narrator (the Narrator page) -----------------------------------------------------------------------------
 
 def _voice_state() -> dict:
     """His voice now: when it's asked again if it rests (and whether that's because today's free readings are used
@@ -1147,134 +1296,153 @@ def _voice_state() -> dict:
             "left": sum(left.values()), "daily": narration.DAILY * len(left), "renews": _clock(narration.renews_at())}
 
 
-def _voice_settings(cfg: dict) -> dict:
-    voice = cfg.get("voice") or {}
-    return {"name": voice.get("name") or narration.VOICE, "model": voice.get("model") or narration.TTS_MODELS[0],
-            "style": voice.get("style") or narration.STYLE, "deeper": int(voice.get("deeper") or 0)}
 
-
-@router.get("/api/host")
-def get_host():
-    cfg = load_config()
-    setup, voice = cfg.get("host") or {}, _voice_settings(cfg)
-    measured = narration.measured()
+@router.get("/api/narrator")
+def get_narrator():
+    cfg = narrator.voice_cfg()
     voices = []
-    for name, label in narration.VOICES.items():
-        sample = narration.sample_path(name, voice["deeper"], voice["style"])
-        voices.append({"name": name, "label": label, "pitch": (measured.get(name) or {}).get("pitch_hz"),
-                       "sample": f"/media/host/sample/{name}.wav{_stamp(sample)}" if sample.exists() else None})
-    test = tmp_path("out", "host_test.mp4")
-    return {
-        "name": setup.get("name", "The Professor"), "size": setup.get("size", "M"), "sizes": host.SIZES,
-        "enabled": setup.get("enabled", True), "voice": voice, "voices": voices,
-        "images": {name: f"/media/host/{name}.png" for name in HOST_FILES},
-        "test_clip": f"/media/host/test.mp4{_stamp(test)}" if test.exists() else None,
-        **_voice_state(),
-    }
+    for name, label in narrator.VOICES.items():
+        sample = narrator.sample_path({**cfg, "name": name})
+        voices.append({"name": name, "label": label,
+                       "sample": f"/media/narrator/sample/{name}.wav{_stamp(sample)}" if sample.exists() else None})
+    return {"voice": {k: cfg.get(k) for k in ("name", "model", "style", "deeper")}, "voices": voices,
+            "lines": narrator.SAMPLE_LINES, "images": {},
+            "series": _series_state(), **_voice_state()}
 
 
-@router.patch("/api/host")
-async def edit_host(request: Request):
-    _local_only("Changing the host")
+@router.patch("/api/narrator")
+async def edit_narrator(request: Request):
+    _local_only("Changing the narrator")
     body = await _json(request)
 
     def change(data):
-        setup, voice = data.setdefault("host", {}), data.setdefault("voice", {})
-        if "name" in body:
-            setup["name"] = " ".join(str(body["name"]).split())[:40] or "The Professor"
-        if body.get("size") in host.SIZES:
-            setup["size"] = body["size"]
-        if body.get("voice") in narration.VOICES:
+        voice = data.setdefault("series", {}).setdefault("narrator", {})
+        if body.get("voice") in narrator.VOICES:
             voice["name"] = body["voice"]
         if "deeper" in body:
             voice["deeper"] = max(0, min(2, int(body["deeper"])))
         if "style" in body:
-            voice["style"] = " ".join(str(body["style"]).split())[:400] or narration.STYLE
+            from ruamel.yaml.scalarstring import FoldedScalarString
+
+            voice["style"] = FoldedScalarString(" ".join(str(body["style"]).split())[:400] or series.DEFAULTS["narrator"]["style"])
     update_config(change)
-    return get_host()
+    return get_narrator()
 
 
-@router.get("/media/host/{name}.png", include_in_schema=False)
-def host_image(name: str):
-    """His cut-out drawing, the sheet it came from, or his face (a small square, for the case cards)."""
-    if name == "face":
-        path = tmp_path("out", "host_face.png")
-        if not path.exists():
-            from PIL import Image
-
-            Image.open(host.HOST_DIR / "base.png").crop((150, 110, 480, 440)).resize((160, 160), Image.LANCZOS).save(path)
-        return FileResponse(path, media_type="image/png")
-    if name not in HOST_FILES:
+@router.get("/media/narrator/sample/{voice}.wav", include_in_schema=False)
+def narrator_sample(voice: str):
+    if voice not in narrator.VOICES:
         raise HTTPException(404)
-    return FileResponse(host.HOST_DIR / HOST_FILES[name], media_type="image/png")
-
-
-@router.get("/media/host/sample/{voice}.wav", include_in_schema=False)
-def host_sample(voice: str):
-    if voice not in narration.VOICES:  # (first: a path from any other name would make its folders)
-        raise HTTPException(404)
-    settings = _voice_settings(load_config())
-    path = narration.sample_path(voice, settings["deeper"], settings["style"])
+    path = narrator.sample_path({**narrator.voice_cfg(), "name": voice})
     if not path.exists():
         raise HTTPException(404)
     return FileResponse(path, media_type="audio/wav")
 
 
-@router.get("/media/host/test.mp4", include_in_schema=False)
-def host_test_clip():
-    path = tmp_path("out", "host_test.mp4")
-    if not path.exists():
-        raise HTTPException(404)
-    return FileResponse(path, media_type="video/mp4")
+@router.put("/api/series")
+async def save_series(request: Request):
+    """The stories' own settings (Settings, S2.1): when the film goes public, its short version after it, the length,
+    the themes and the hashtags."""
+    _local_only("Settings")
+    body = await _json(request)
+    try:
+        post_at = str(body.get("post_at") or "").strip()
+        slots.validate(load_config().get("schedule") or {}, post_at)
+        hours = _number(body.get("short_after_hours", body.get("teaser_after_hours")),  # (its name until 2026-11-16)
+                        "Short version after", 0, 12, whole=False)
+        low = _number((body.get("minutes") or [3, 4])[0], "Shortest", 2, 8, whole=False)
+        high = _number((body.get("minutes") or [3, 4])[1], "Longest", low, 10, whole=False)
+        themes = {}
+        for kind in ("vices", "virtues"):
+            found = []
+            for t in body.get(kind) or []:
+                t = " ".join(re.sub(r"[^a-zA-Z' -]", "", str(t)).split()).lower()[:30]
+                if t and t not in found:
+                    found.append(t)
+            if not found:
+                raise ValueError(f"{kind.title()}: name at least one.")
+            themes[kind] = found[:30]
+        tags = []
+        for tag in body.get("hashtags") or []:
+            tag = "#" + re.sub(r"[^0-9a-z_]", "", str(tag).lower())
+            if len(tag) > 1 and tag != "#shorts" and tag not in tags:
+                tags.append(tag)
+        repeat = _number(body.get("repeat_after_days"), "Repeat a theme after", 1, 365)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+    from ruamel.yaml.comments import CommentedSeq
+    from ruamel.yaml.scalarstring import DoubleQuotedScalarString as Q
+
+    def flow(items):
+        seq = CommentedSeq([Q(i) for i in items])
+        seq.fa.set_flow_style()
+        return seq
+
+    def change(data):
+        cfg = data.setdefault("series", {})
+        cfg.pop("enabled", None)  # (retired 2026-11-16: the stories are all the channel makes)
+        cfg.pop("teaser_after_hours", None)  # (its name until 2026-11-16)
+        cfg["post_at"] = Q(post_at)
+        cfg["short_after_hours"] = int(hours) if hours == int(hours) else hours
+        cfg["minutes"] = CommentedSeq([int(x) if x == int(x) else x for x in (low, high)])
+        cfg["minutes"].fa.set_flow_style()
+        cfg["repeat_after_days"] = repeat
+        cfg.setdefault("themes", {})
+        cfg["themes"]["vices"], cfg["themes"]["virtues"] = flow(themes["vices"]), flow(themes["virtues"])
+        cfg["hashtags"] = flow(tags[:6])
+    update_config(change)
+    return {"series": _series_state()}
 
 
 # --- tasks ----------------------------------------------------------------
 
 @router.post("/api/tasks/{kind}")
 async def start_task(kind: str, request: Request):
-    # On Vercel a thread can be frozen once the response is sent, and /tmp previews don't persist,
+    # On Vercel a thread can be frozen once the response is sent, and /tmp films don't persist,
     # so this work only runs from the dashboard on your computer.
-    _local_only("Making, animating and uploading from the dashboard")
+    _local_only("Writing, making and uploading stories from the dashboard")
     body = await _json(request)
     video_id = body.get("video_id")
     if kind == "prepare":
-        return _start_task(kind, "Agents 1-3: making a new case",
-                           lambda p: jobs.run_job("prepare", count=1, progress=p))
+        return _start_task(kind, "Agents 1-2: writing a new story", lambda p: jobs.run_job("prepare", count=1, progress=p))
     if kind == "render":
         video = _planned_or_409(video_id)
-        if video["format"] != db.FORMAT:
-            raise HTTPException(409, "Shorts from earlier versions can't be animated again.")
-        return _start_task(kind, f"Agents 4-5: making and reviewing case #{video_id}",
+        if not series.current(video):
+            raise HTTPException(409, "This was made by an earlier version of the channel: it can't be made again.")
+        return _start_task(kind, f"Agents 3-4: making and reviewing story #{video_id}",
                            lambda p: jobs.run_job("publish", dry_run=True, video_id=video_id, now=True, progress=p),
                            video_id)
     if kind == "publish":
         video = _planned_or_409(video_id)
         if not youtube_auth.is_configured():
-            raise HTTPException(409, "Connect YouTube first (the YouTube page).")
-        if video["format"] == db.FORMAT and not db.ready(video):
-            raise HTTPException(409, "This case waits for your OK (or the Reviewer held it): see the Studio.")
-        return _start_task(kind, f"Agent 6: uploading case #{video_id}",
+            raise HTTPException(409, "Connect YouTube first (the Channels page).")
+        if not db.ready(video):
+            raise HTTPException(409, "The Reviewer turned this story down: it's being made again (see the Studio).")
+        return _start_task(kind, f"Agent 5: uploading story #{video_id}",
                            lambda p: jobs.run_job("publish", video_id=video_id, progress=p), video_id)
     if kind == "autopilot":
         if not youtube_auth.is_configured():
-            raise HTTPException(409, "Connect YouTube first (the YouTube page).")
-        return _start_task(kind, "Making the next Short now", _make_next_now)
+            raise HTTPException(409, "Connect YouTube first (the Channels page).")
+        return _start_task(kind, "Making the next story now", _make_next_now)
     if kind == "stats":
-        return _start_task(kind, "Agent 7: reading the numbers", lambda p: jobs.run_job("stats", learn=True, progress=p))
+        return _start_task(kind, "Agent 6: reading the numbers", lambda p: jobs.run_job("stats", learn=True, progress=p))
     if kind == "instagram":
         if not instagram.is_configured():
             raise HTTPException(409, "Connect Instagram first (the Channels page).")
-        return _start_task(kind, "Agent 6: posting to Instagram", lambda p: jobs.run_job("instagram", progress=p))
-    if kind == "host-sample":
+        return _start_task(kind, "Agent 5: posting to Instagram", lambda p: jobs.run_job("instagram", progress=p))
+    if kind == "narrator-sample":
         voice = body.get("voice")
-        if voice not in narration.VOICES:
+        if voice not in narrator.VOICES:
             raise HTTPException(422, "Unknown voice.")
-        settings = _voice_settings(load_config())
-        return _start_task(kind, f"Recording a sample of {voice}'s voice",
-                           lambda p: narration.sample(voice, settings["deeper"], settings["style"], progress=p))
-    if kind == "host-test":
-        return _start_task(kind, "Making a test clip of the Professor",
-                           lambda p: host.test_clip(tmp_path("out", "host_test.mp4"), progress=p))
+        cfg = narrator.voice_cfg()
+        return _start_task(kind, f"Recording a sample of {voice} as the narrator",
+                           lambda p: narrator.sample({**cfg, "name": voice}, progress=p))
+    if kind == "short":
+        if not youtube_auth.is_configured():
+            raise HTTPException(409, "Connect YouTube first (the Channels page).")
+        return _start_task(kind, f"Agent 5: sending story #{video_id}'s short version",
+                           lambda p: publisher.upload_short(int(video_id), progress=p), video_id)
     if kind == "connect":
         if not CLIENT_FILE.exists():
             raise HTTPException(409, "Add your OAuth client file first (step 2).")
@@ -1290,51 +1458,14 @@ def task_status(task_id: str):
     return _public(task)
 
 
-# --- signals, results, activity -----------------------------------------------
-
-_trends_lock = threading.Lock()
-
-
-def _fetch_trends(cfg: dict, refresh: bool) -> dict:
-    # One fetch at a time: asking every country takes minutes, and a second fetch alongside would
-    # only make Google refuse both. Whoever waited for the lock finds the fresh copy already saved.
-    with _trends_lock:
-        return jobs.trend_signals(cfg, days_ahead=10, refresh=refresh)
-
-
-def _wikipedia_signals() -> dict:
-    """What the Editor also reads: Wikipedia's Current events and "On this day" (cached by research_fetch)."""
-    out = {"news": [], "on_this_day": []}
-    try:
-        out["news"] = [{"date": e["date"], "section": e["section"], "text": e["text"], "outlets": [l["outlet"] for l in e["links"]]}
-                       for e in research_fetch.current_events(3)][:25]
-    except Exception as e:
-        out["news_error"] = str(e)
-    try:
-        out["on_this_day"] = research_fetch.on_this_day()[:12]
-    except Exception as e:
-        out["on_this_day_error"] = str(e)
-    return out
-
-
-@router.get("/api/trends")
-def trends(refresh: bool = False):
-    cfg = load_config()
-    if refresh or ON_VERCEL or db.fresh_note("trends", jobs.TRENDS_FRESH):
-        return {**_fetch_trends(cfg, refresh), **_wikipedia_signals()}
-    # Out of date: show the last fetch now and get today's in the background; the page asks again.
-    if not _trends_lock.locked():
-        threading.Thread(target=_fetch_trends, args=(cfg, False), name="trends", daemon=True).start()
-    return {**jobs.trend_signals(cfg, days_ahead=10, cached_only=True), **_wikipedia_signals(), "refreshing": True}
-
+# --- results, activity -----------------------------------------------------------
 
 @router.get("/api/results")
 def results():
     table = analyst.rows(min_age=timedelta(0))
     return {"playbook": playbook(), "rows": table, "min_samples": analyst.MIN_SAMPLES,
             "taught": {a["key"]: lessons_for(a["key"]) for a in AGENTS if a["key"] != "analyst"},
-            "judged": len(analyst.rows()), "follow_ups": analyst.follow_up_candidates(),
-            "comments": len(db.recent_comments(days=60, limit=10_000, unused=False))}
+            "judged": len(analyst.rows())}
 
 
 @router.get("/api/activity")
@@ -1381,7 +1512,7 @@ def youtube_status(refresh: bool = False):
 async def save_client_file(request: Request):
     _local_only("The OAuth client file")
     try:
-        data = json.loads(await request.body())
+        data = json.loads(await _body_upto(request, MAX_CLIENT_FILE, "That file is too big for an OAuth client file."))
     except ValueError:
         raise HTTPException(422, "That file isn't JSON. Download the client's JSON file from Google Cloud.")
     if not isinstance(data, dict):
@@ -1453,31 +1584,33 @@ def instagram_disconnect():
     return instagram_status()
 
 
-# --- music ----------------------------------------------------------------
+# --- music: the stories' tracks --------------------------------------------------
 
 def _music_path(name: str) -> Path:
     clean = SAFE_FILENAME.sub("", Path(name).name).strip(" .")
-    path = short_render.MUSIC_DIR / clean
-    if not clean or path.suffix.lower() not in short_render.MUSIC_EXTS:
+    path = media.STORY_MUSIC / clean
+    if not clean or path.suffix.lower() not in media.MUSIC_EXTS:
         raise HTTPException(422, "Use an mp3, m4a, aac, wav or ogg file.")
     return path
 
 
 @router.get("/api/music")
 def music():
+    """The stories' music: each film gets one of these tracks, silent until the spark, then rising to the end."""
     return [{"name": p.name, "size": p.stat().st_size, "url": f"/media/music/{quote(p.name)}",
-             "credit": short_render.music_credit(p.name)} for p in short_render.music_tracks()]
+             "credit": media.music_credit(media.track_name(p))} for p in media.music_tracks()]
 
 
 @router.put("/api/music/{name}")
 async def add_music(name: str, request: Request):
     _local_only("Music")
     path = _music_path(name)
-    if int(request.headers.get("content-length") or 0) > MAX_MUSIC_BYTES:  # (before it's all read into memory)
-        raise HTTPException(422, f"Music files must be under {MAX_MUSIC_BYTES >> 20} MB.")
-    data = await request.body()
-    if not data or len(data) > MAX_MUSIC_BYTES:
-        raise HTTPException(422, f"Music files must be under {MAX_MUSIC_BYTES >> 20} MB.")
+    too_big = f"Music files must be under {MAX_MUSIC_BYTES >> 20} MB."
+    if int(request.headers.get("content-length") or 0) > MAX_MUSIC_BYTES:  # (before any of it is read)
+        raise HTTPException(422, too_big)
+    data = await _body_upto(request, MAX_MUSIC_BYTES, too_big)
+    if not data:
+        raise HTTPException(422, too_big)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return {"name": path.name, "size": len(data), "url": f"/media/music/{quote(path.name)}"}
@@ -1503,9 +1636,8 @@ def music_file(name: str):
 @router.get("/api/settings")
 def get_settings():
     cfg = load_config()
-    return {**cfg, "look": {**draw.settings(), "style": draw.style(), "when_out": "footage" if draw.fallback() else "wait"},
-            "drawing": _drawing_state(),
-            "categories_available": editor.CATEGORIES, "editable": not ON_VERCEL}
+    return {"channel": cfg.get("channel") or {}, "schedule": cfg.get("schedule") or {}, "series": series.settings(),
+            "instagram": cfg.get("instagram") or {}, "editable": not ON_VERCEL}
 
 
 def _number(value, name: str, low: float, high: float, whole: bool = True):
@@ -1519,51 +1651,15 @@ def _number(value, name: str, low: float, high: float, whole: bool = True):
 
 
 def _validated(s: dict) -> dict:
-    section = lambda name: s.get(name) or {}
-    channel, cases = section("channel"), section("cases")
+    channel = s.get("channel") or {}
     name = str(channel.get("name", "")).strip()
     if not 1 <= len(name) <= 60:
         raise ValueError("Channel name: 1 to 60 characters.")
     contact = str(channel.get("contact_email") or "").strip()
     if contact and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", contact):
         raise ValueError("Contact email doesn't look like an email address.")
-    schedule = slots.validate(section("schedule"))
-    weights = {c: round(_number((cases.get("categories") or {}).get(c, 0), f"How often: {c}", 0, 5, whole=False), 1)
-               for c in editor.CATEGORIES}
-    if not any(weights.values()):
-        raise ValueError("Case types: switch at least one on.")
-    approval = cases.get("approval") or {}
-    target = _number(cases.get("target_seconds"), "Target length", 40, 75)
-    longest = _number(cases.get("max_seconds"), "Longest case", target, 90)
-    hashtags = []
-    for tag in section("metadata").get("base_hashtags", []):
-        tag = "#" + re.sub(r"[^0-9a-z_]", "", str(tag).lower())
-        if len(tag) > 1 and tag not in hashtags:
-            hashtags.append(tag)
-    look = section("look")
-    style = str(look.get("style") or "footage").strip().lower()
-    if style not in ("montage", "faceless", "drawn", "footage"):
-        raise ValueError("The look: montage, faceless, drawn or footage.")
-    art = " ".join(str(look.get("art") or "").split())
-    if style == "drawn" and not 40 <= len(art) <= 600:
-        raise ValueError("The art: describe his style in 40 to 600 characters (every drawing starts with it).")
-    when_out = str(look.get("when_out") or "footage").strip().lower()
-    if when_out not in ("footage", "wait"):
-        raise ValueError("When Cloudflare can't draw: footage or wait.")
-    region = str(section("trends").get("region", "US")).strip().upper()
-    if region != "ALL" and not re.fullmatch(r"[A-Z]{2}", region):
-        raise ValueError("Trends: ALL (every country) or a two-letter country code like US or GB.")
-    return {"name": name, "show_name": bool(channel.get("show_name")), "contact": contact,
-            "audience": str(channel.get("audience", "")).strip(), "voice": " ".join(str(channel.get("voice", "")).split()),
-            "schedule": schedule, "weights": weights,
-            "approval": {"trending": bool(approval.get("trending")), "politics": bool(approval.get("politics"))},
-            "expires": _number(cases.get("approval_expires_days"), "Approval wait", 1, 14),
-            "target": target, "longest": longest,
-            "follow_ups": bool(cases.get("follow_ups")), "comment_requests": bool(cases.get("comment_requests")),
-            "share_alike": bool(section("research").get("share_alike_images")),
-            "style": style, "art": art or None, "when_out": when_out,
-            "region": region, "hashtags": hashtags[:4],
-            "volume": round(_number(section("music").get("volume"), "Music volume", 0, 1.5, whole=False), 2)}
+    schedule = slots.validate(s.get("schedule") or {}, series.settings().get("post_at"))
+    return {"name": name, "contact": contact, "schedule": schedule}
 
 
 @router.put("/api/settings")
@@ -1576,38 +1672,12 @@ async def save_settings(request: Request):
 
     # ruamel keeps the comments in channel.yaml; every user string is quoted so values like
     # 23:00 or NO can't be misread as numbers or booleans when the file is loaded again.
-    from ruamel.yaml.comments import CommentedSeq
-    from ruamel.yaml.scalarstring import DoubleQuotedScalarString as Q, FoldedScalarString
-
-    def flow(items):
-        seq = CommentedSeq([Q(i) for i in items])
-        seq.fa.set_flow_style()
-        return seq
+    from ruamel.yaml.scalarstring import DoubleQuotedScalarString as Q
 
     def change(data):
-        ch, cases = data["channel"], data["cases"]
-        ch["name"], ch["audience"], ch["contact_email"] = Q(v["name"]), Q(v["audience"]), Q(v["contact"])
-        ch["show_name"], ch["voice"] = v["show_name"], FoldedScalarString(v["voice"])
-        for key in ("timezone", "first_post", "make_at"):
-            data["schedule"][key] = Q(v["schedule"][key])
-        for key in ("every_hours", "posts_per_day"):
-            data["schedule"][key] = v["schedule"][key]
-        for key, weight in v["weights"].items():
-            cases["categories"][key] = int(weight) if weight == int(weight) else weight
-        cases["approval"]["trending"], cases["approval"]["politics"] = v["approval"]["trending"], v["approval"]["politics"]
-        cases["approval_expires_days"] = v["expires"]
-        cases.pop("queue", None)  # (retired: the morning run makes each day's cases)
-        cases["target_seconds"], cases["max_seconds"] = v["target"], v["longest"]
-        cases["follow_ups"], cases["comment_requests"] = v["follow_ups"], v["comment_requests"]
-        data["research"]["share_alike_images"] = v["share_alike"]
-        if "look" not in data:
-            data["look"] = {}
-        data["look"]["style"] = Q(v["style"])
-        data["look"]["when_out"] = Q(v["when_out"])
-        if v["art"]:
-            data["look"]["art"] = FoldedScalarString(v["art"])
-        data["trends"]["region"] = Q(v["region"])
-        data["metadata"]["base_hashtags"] = flow(v["hashtags"])
-        data["music"]["volume"] = v["volume"]
+        ch = data.setdefault("channel", {})
+        ch["name"], ch["contact_email"] = Q(v["name"]), Q(v["contact"])
+        for key in ("timezone", "make_at"):
+            data.setdefault("schedule", {})[key] = Q(v["schedule"][key])
     update_config(change)
     return get_settings()

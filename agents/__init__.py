@@ -1,20 +1,19 @@
 """
-The seven agents that make the channel's case-study Shorts, in order:
+The six agents that make the channel's daily motivation story, in order:
 
-  1 editor      decides the next case: its type, its topic, the paradox and the question it answers
-  2 researcher  gathers the facts, data, photos and footage from free sources and checks every fact
-  3 writer      writes the Professor's script as a mystery and fact-checks it line by line
-  4 animator    the Professor's voice and lip-sync, the footage and graphics: the video and its thumbnail
-  5 reviewer    watches and listens to every video; a failed one goes back to the animator with notes
-  6 publisher   uploads what passed to YouTube into its posting slot, and to Instagram as a Reel
-  7 analyst     reads the numbers and comments, and writes the playbook and each agent's lessons
+  1 theme       the day's theme, a vice or a virtue, and the title named from it
+  2 story       the screenplay in eight parts, shot by shot in the look's own vocabulary, the narrator's script, and the
+                short version's script (the whole story in under a minute)
+  3 animator    the narrator's reading, the film drawn in code in your silhouette look, its thumbnail, its short version
+  4 reviewer    watches and listens to every film and its short version; a failed one goes back to the Animator with notes
+  5 publisher   uploads what passed to YouTube into its slot, the short version as a Short after it, and as a Reel
+  6 analyst     reads the numbers (watch time first) and writes the playbook and each agent's lessons
 
-Every agent learns: the Reviewer's recurring problems become standing fixes and advice, and the
-Analyst's numbers become lessons for each agent (agents/base.py lessons_for).
+Every agent learns: the Reviewer's recurring problems become standing fixes and advice, and the Analyst's numbers become
+lessons for each agent (agents/base.py lessons_for).
 
-The Professor hosts every case (the user's own character: assets/host/, tools/host.py). Agents hold the judgment
-(Gemini prompts and choices); the tools in tools/ do the work. tools/jobs.py runs them on the posting
-schedule, and each agent's work is logged in `runs` under its name. Run one on its own with
+Agents hold the judgment (Gemini prompts and choices); the tools in tools/ do the work. tools/jobs.py runs them on the
+posting schedule, and each agent's work is logged in `runs` under its name. Run one on its own with
 `python -m agents.<name>` from the project folder.
 """
 
@@ -27,11 +26,10 @@ for _path in (ROOT / "tools", ROOT):  # the tools are plain modules in tools/
         sys.path.insert(0, str(_path))
 
 AGENTS = [
-    {"key": "editor", "number": 1, "name": "Editor", "role": "Chooses the next case and its question"},
-    {"key": "researcher", "number": 2, "name": "Researcher", "role": "Gathers and checks the facts, photos and footage"},
-    {"key": "writer", "number": 3, "name": "Writer", "role": "Writes the Professor's mystery and fact-checks it"},
-    {"key": "animator", "number": 4, "name": "Animator", "role": "The Professor's voice, the edit and the thumbnail"},
-    {"key": "reviewer", "number": 5, "name": "Reviewer", "role": "Checks every video; sends failures back to be fixed"},
-    {"key": "publisher", "number": 6, "name": "Publisher", "role": "Posts to YouTube and Instagram in the slots"},
-    {"key": "analyst", "number": 7, "name": "Analyst", "role": "Reads the numbers, teaches every agent"},
+    {"key": "theme", "number": 1, "name": "Theme", "role": "The day's theme, a vice or a virtue, and its title"},
+    {"key": "story", "number": 2, "name": "Story", "role": "The screenplay, the narrator's script, the short version's"},
+    {"key": "animator", "number": 3, "name": "Animator", "role": "The narrator, the film drawn in code, its short version"},
+    {"key": "reviewer", "number": 4, "name": "Reviewer", "role": "Watches every film; sends failures back to be fixed"},
+    {"key": "publisher", "number": 5, "name": "Publisher", "role": "The film in its slot, its short version after"},
+    {"key": "analyst", "number": 6, "name": "Analyst", "role": "Reads watch time, teaches every agent"},
 ]

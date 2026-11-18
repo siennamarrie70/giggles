@@ -23,9 +23,8 @@
   --bad: #c8321f;     --bad-soft: #fbe5e1;
   --run: #2f6bff;     --run-soft: #e4ecff;
   /* one colour per agent, used on its cards, pages and log rows */
-  --editor: #d63c7a;
-  --researcher: #0f8aa8;
-  --writer: #d48f00;
+  --theme: #d63c7a;
+  --story: #d48f00;
   --animator: #e5482b;
   --reviewer: #2b7a9b;
   --publisher: #12996b;
@@ -62,13 +61,12 @@ p { margin: 0; }
 .small { font-size: 12px; }
 [hidden] { display: none !important; }
 
-[data-agent="editor"] { --agent: var(--editor); }
-[data-agent="researcher"] { --agent: var(--researcher); }
-[data-agent="writer"] { --agent: var(--writer); }
 [data-agent="animator"] { --agent: var(--animator); }
 [data-agent="reviewer"] { --agent: var(--reviewer); }
 [data-agent="publisher"] { --agent: var(--publisher); }
 [data-agent="analyst"] { --agent: var(--analyst); }
+[data-agent="theme"] { --agent: var(--theme); }
+[data-agent="story"] { --agent: var(--story); }
 
 /* ------------------------------------------------------------------ layout */
 
@@ -259,20 +257,6 @@ main { width: 100%; max-width: 1340px; padding: 28px 32px 72px; outline: none; }
 .tag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 5px; font-size: 12px; background: var(--surface-3); color: var(--ink-2); white-space: nowrap; }
 .tag small { color: var(--muted); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-/* each case type keeps its colour (the same as the studio's in tools/infographics.py) */
-[data-cat="business"] { --cat: #3b82f6; }
-[data-cat="economy"] { --cat: #22a86e; }
-[data-cat="trending"] { --cat: #ec4848; }
-[data-cat="history"] { --cat: #d6962e; }
-[data-cat="mythology"] { --cat: #8b5cf6; }
-[data-cat="dark_history"] { --cat: #be462e; }
-[data-cat="mysteries"] { --cat: #20aaa0; }
-[data-cat="technology"] { --cat: #38a5f0; }
-[data-cat="psychology"] { --cat: #a85cde; }
-[data-cat="people"] { --cat: #e8962c; }
-[data-cat="science"] { --cat: #5c76ff; }
-[data-cat="crime"] { --cat: #c4464e; }
-.tag[data-cat] { background: color-mix(in srgb, var(--cat) 13%, var(--surface)); color: color-mix(in srgb, var(--cat) 75%, var(--ink)); font-weight: 500; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
 .dot[data-tone="ok"] { background: var(--ok); }
 .dot[data-tone="warn"] { background: var(--warn); }
@@ -322,9 +306,6 @@ textarea.input { resize: vertical; min-height: 76px; }
 .check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
 .check input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--ink); flex: none; }
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.range-row { display: flex; align-items: center; gap: 12px; }
-.range-row input[type="range"] { flex: 1; accent-color: var(--ink); }
-.range-row output { min-width: 40px; text-align: right; font: 13px var(--font-mono); }
 
 .segmented { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
 .segmented button { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); font-weight: 500; font-size: 13px; cursor: pointer; }
@@ -383,39 +364,19 @@ textarea.input { resize: vertical; min-height: 76px; }
   .table.schedule .col-part::before { content: attr(data-label); display: block; margin-bottom: 6px;
     font: 500 10.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 }
-.events { list-style: none; margin: 0; padding: 0; }
-.events li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
-.events li:last-child { border-bottom: 0; }
-.events li small { font: 12px var(--font-mono); color: var(--muted); white-space: nowrap; }
 
 /* ------------------------------------------------------------------ requests (overview, 01 topics) */
 
 .request-box { display: flex; gap: 8px; }
-.mix { list-style: none; margin: 0; padding: 0; }
-.mix li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0 10px 12px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--cat, var(--line)); }
-.mix li:last-child { border-bottom: 0; }
-.mix b { font-weight: 600; font-size: 13.5px; }
 .request-box .input { flex: 1; }
 
 /* ------------------------------------------------------------------ 02 research */
 
-.facts, .sources { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.facts li, .sources li { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
-.sources li { padding: 8px 12px; font-size: 13px; }
-.fid { font: 500 12px var(--font-mono); color: var(--researcher); padding-top: 2px; }
-.facts p { font-size: 13.5px; }
-.facts .how { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.facts .how a.tag { text-decoration: none; }
-details.quote { margin-top: 6px; }
-details.quote summary { cursor: pointer; font-size: 12px; color: var(--muted); }
-details.quote blockquote { margin: 6px 0 0; padding: 8px 12px; border-left: 3px solid var(--researcher); background: var(--surface-2); font-size: 13px; color: var(--ink-2); }
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
 .photo { margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
 .photo img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: var(--surface-3); }
 .photo figcaption { display: grid; gap: 2px; padding: 8px 10px; font-size: 12px; }
 .photo figcaption a { color: var(--muted); overflow-wrap: anywhere; }
-.spark { width: 120px; height: 30px; display: block; }
-.spark polyline { fill: none; stroke: var(--researcher); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 
 /* ------------------------------------------------------------------ 02 scripts and 03 studio: list and detail */
 
@@ -453,11 +414,11 @@ details.quote blockquote { margin: 6px 0 0; padding: 8px 12px; border-left: 3px 
 
 .script { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .script li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
-.script li.punch { border-color: color-mix(in srgb, var(--writer) 45%, var(--line)); background: color-mix(in srgb, var(--writer) 6%, var(--surface)); }
+.script li.punch { border-color: color-mix(in srgb, var(--story) 45%, var(--line)); background: color-mix(in srgb, var(--story) 6%, var(--surface)); }
 .script img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; object-position: 50% 18%; background: var(--surface-3); }
 .script .who { font-weight: 600; font-size: 12.5px; }
 .script .beat-k { font: 500 12px var(--font-mono); color: var(--muted); padding-top: 2px; text-align: center; }
-.script li.punch .beat-k { color: var(--writer); }
+.script li.punch .beat-k { color: var(--story); }
 .story-list { margin: 6px 0 8px 18px; display: grid; gap: 4px; font-size: 13px; }
 .script .line { font-size: 14px; }
 .script .how { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
@@ -472,28 +433,9 @@ details.more[open] > summary::before { content: "− "; }
 details.more > :not(summary) { margin: 0 12px 12px; }
 
 /* the beat editor: one card per line, who and what on top, how below */
-.beat-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.beat { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 8px 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-.beat.punch { border-color: color-mix(in srgb, var(--writer) 45%, var(--line)); background: color-mix(in srgb, var(--writer) 5%, var(--surface)); }
-.beat .k { font: 500 12px var(--font-mono); color: var(--muted); padding-top: 9px; }
-.beat.punch .k { color: var(--writer); }
-.beat.hook { border-color: color-mix(in srgb, var(--editor) 40%, var(--line)); }
-.beat.hook .k { color: var(--editor); }
-.line-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
-.line-foot .counter { margin-right: 4px; }
-.fact-chip { font: 500 11px var(--font-mono); background: color-mix(in srgb, var(--researcher) 12%, var(--surface)); color: var(--researcher); cursor: help; }
-.beat-main { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px; }
-.beat-main .counter { display: block; margin-top: 3px; }
-.beat-main > select { align-self: start; }
-.beat-how { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.beat-how.five { grid-template-columns: minmax(0, 2.2fr) repeat(4, minmax(0, 1fr)); }
-.beat-how.three { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1.4fr); }
-.beat-how.three.drawn { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1.2fr); }
 .scene-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 6px; }
 .scene-row img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); display: block; }
 .scene-row p { margin: 0; }
-.beat-how label { display: grid; gap: 3px; font-size: 11.5px; color: var(--muted); }
-.beat .input { min-height: 34px; padding: 6px 8px; font-size: 13px; }
 
 /* ------------------------------------------------------------------ trends */
 
@@ -528,29 +470,12 @@ details.more > :not(summary) { margin: 0 12px 12px; }
 .dropzone b { font-weight: 600; }
 .dropzone small { max-width: 60ch; color: var(--muted); font-size: 12.5px; }
 
-/* ------------------------------------------------------------------ L2 hosts */
+/* ------------------------------------------------------------------ L2 the narrator */
 
-.host-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
-.host-card { display: grid; grid-template-columns: 200px minmax(0, 1fr); overflow: hidden; }
-.host-card .portrait { width: 100%; height: 100%; min-height: 246px; object-fit: cover; object-position: 50% 20%; background: var(--surface-3); border-right: 1px solid var(--line); }
-.char-body { display: grid; gap: 6px; align-content: start; padding: 14px 16px 16px; }
-.char-body h3 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font: 600 16px/1.25 var(--font-sans); }
-.char-body h3 small { font: 500 12px var(--font-mono); color: var(--muted); text-transform: capitalize; }
-.char-body p { font-size: 13px; color: var(--ink-2); line-height: 1.45; }
-.char-body .look { color: var(--muted); font-size: 12px; }
-.char-body audio { width: 100%; height: 32px; margin-top: 2px; }
-/* The Professor, cut out, on the kind of dark footage he floats over. */
-.host-figure { display: grid; place-items: end center; min-height: 300px; padding: 18px 12px 0;
-               background: radial-gradient(120% 90% at 50% 30%, #3b4a63 0%, #1a2130 60%, #0e121b 100%); border-right: 1px solid var(--line); }
-.host-figure img { width: 100%; max-width: 230px; height: auto; display: block; }
-.host-card .phone { max-width: 200px; margin: 14px auto 14px 14px; }
-.sheet-thumb { width: 100%; border-radius: 8px; border: 1px solid var(--line); display: block; }
+/* The voice samples table. */
 .card-body { display: grid; gap: 10px; padding: 14px 16px 16px; }
 .table tr.current td { background: color-mix(in srgb, var(--animator) 7%, var(--surface)); }
 .table td audio { width: 230px; height: 30px; display: block; }
-.host-form { margin-top: 8px; padding-top: 12px; border-top: 1px dashed var(--line); display: grid; gap: 10px; }
-.host-form .field + .field { margin-top: 0; }
-.host-form .inline-fields { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
 
 /* ------------------------------------------------------------------ youtube setup */
 
@@ -577,8 +502,6 @@ details.more > :not(summary) { margin: 0 12px 12px; }
 .form-row .hint { margin-top: 4px; }
 .inline-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .inline-fields .field + .field { margin-top: 0; }
-.slot-preview { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.slot-preview .hint.warn { color: var(--warn); }
 .drawing-status .warn { color: var(--warn); }
 .option-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
 .option { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
@@ -711,3 +634,21 @@ details.more > :not(summary) { margin: 0 12px 12px; }
 .signin-note { margin: 0; font-size: 12px; color: var(--muted); text-align: center; }
 .signout { padding: 0 10px 16px; }
 .signout .btn { width: 100%; justify-content: flex-start; color: var(--muted); }
+
+/* ------------------------------------------------------------------ the motivation series: a story in the Studio */
+
+.story-top { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 20px; padding: 20px 20px 0; align-items: start; }
+.screen { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #0d0d0c;
+          box-shadow: 0 0 0 1px var(--line-2), var(--shadow-lg); }
+.screen video, .screen img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.story-short .phone { max-width: 210px; }
+.chapters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.plates { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.plate { margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.plate img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+.plate-blank { aspect-ratio: 16 / 9; display: grid; place-items: center; background: var(--surface-3); color: var(--muted);
+               font: 500 11px var(--font-mono); }
+.plate figcaption { padding: 6px 8px; font-size: 11.5px; line-height: 1.35; }
+.plate figcaption span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+                         color: var(--muted); margin-top: 2px; }
+@media (max-width: 960px) { .story-top { grid-template-columns: minmax(0, 1fr); } .story-short .phone { margin: 0 auto; } }

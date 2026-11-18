@@ -1,19 +1,19 @@
 """
-Storage for the pipeline: Postgres (Neon) in the cloud, a SQLite file locally.
+Storage for the pipeline: Postgres in the cloud (Aiven since 2026-11-15), a SQLite file locally.
 
 DATABASE_URL set -> Postgres. Not set -> .tmp/ezzy.db, for local runs only. On
 Vercel a missing DATABASE_URL is an error, since /tmp doesn't survive between runs.
 Tables are created automatically on first use, and new columns are added to old tables
 (only ever added, so an older version of the app still works on the same database).
 
-What the agents hand each other lives here: videos whose plan holds the brief (Agent 1), the
-research pack (Agent 2), the script (Agent 3), the render, its review and the upload (Agents 4, 5 and 6); stats
-and viewers' comments (Agent 7); topics you ask for; the two hosts (characters); and notes (the
-playbook, caches, heartbeats). Only rows of FORMAT are the case studies: older versions' Shorts
-share the database and are left alone.
+What the agents hand each other lives here: videos (one row a story) whose plan holds the theme and title (Agent 1),
+the screenplay and the narrator's script (Agent 2), the film, its review and the upload (Agents 3, 4 and 5); stats
+(Agent 6); the themes you ask for (topics); and notes (the playbook, caches, heartbeats). Only rows of FORMAT are the
+stories: rows earlier versions of the channel made share the database and are left alone. (Tables only the
+case-study Shorts used, before 2026-11-16, stay in an old database untouched: nothing reads them.)
 
-A Short "making" or "scheduled" holds its posting slot: a unique index lets only one
-run claim each slot, even when Vercel delivers the same cron call twice.
+A story "making" or "scheduled" holds its posting slot: a unique index lets only one
+run claim each slot, even when the same run is started twice.
 
 Usage:
     python tools/db.py recent      # latest videos and job runs
@@ -46,10 +46,6 @@ CREATE TABLE IF NOT EXISTS videos (
     slot TEXT,
     claimed_at TEXT
 );
-CREATE TABLE IF NOT EXISTS used_clips (
-    clip_key TEXT PRIMARY KEY,
-    used_at TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS runs (
     id {pk},
     job TEXT NOT NULL,
@@ -75,12 +71,6 @@ CREATE TABLE IF NOT EXISTS notes (
     body TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS characters (
-    id {pk},
-    created_at TEXT NOT NULL,
-    name TEXT NOT NULL,
-    spec TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS topics (
     id {pk},
     created_at TEXT NOT NULL,
@@ -89,16 +79,9 @@ CREATE TABLE IF NOT EXISTS topics (
     reason TEXT,
     video_id INTEGER
 );
-CREATE TABLE IF NOT EXISTS comments (
-    comment_id TEXT PRIMARY KEY,
-    youtube_id TEXT NOT NULL,
-    text TEXT NOT NULL,
-    likes INTEGER,
-    published_at TEXT,
-    used_by INTEGER
-)
+
 """
-FORMAT = "doc"  # the documentary cases' rows (v5); "case" rows are v4's cartoon-host cases, other formats earlier versions'
+FORMAT = "story"  # the stories' rows (tools/series.py STORY); other formats are earlier versions' ("doc": the case studies)
 # Columns added after the first release, for databases created before them.
 NEW_COLUMNS = {"slot": "TEXT", "claimed_at": "TEXT"}
 CONNECT_TIMEOUT = 20  # seconds the cloud database may take to answer a new connection
@@ -138,16 +121,47 @@ def now_iso(delta: timedelta = timedelta()) -> str:
 
 
 class _Conn:
-    """Same query() call for Postgres and SQLite; SQL is written with %s placeholders."""
+    """Same query() call for Postgres and SQLite; SQL is written with %s placeholders. A read whose connection the
+    server dropped (2026-11-17: "server closed the connection unexpectedly" broke a dashboard page) is asked once more
+    on a new connection (reopen); a change never is, since it may have been made before the answer was lost."""
 
-    def __init__(self, conn, sqlite: bool):
-        self.conn, self.sqlite = conn, sqlite
+    def __init__(self, conn, sqlite: bool, reopen=None):
+        self.conn, self.sqlite, self.reopen = conn, sqlite, reopen
 
     def query(self, sql: str, params: tuple = ()) -> list[dict]:
         if self.sqlite:
             sql = sql.replace("%s", "?")
-        cur = self.conn.execute(sql, params)
+        try:
+            cur = self.conn.execute(sql, params)
+        except Exception as e:
+            if self.reopen is None or not _dropped(e) or not READS.match(sql):
+                raise
+            self.conn = self.reopen()
+            cur = self.conn.execute(sql, params)
         return [dict(row) for row in cur.fetchall()] if cur.description else []
+
+
+READS = re.compile(r"\s*SELECT\b", re.I)
+
+
+def _dropped(error: Exception) -> bool:
+    """Did the cloud database's connection fail (dropped, refused, timed out) rather than the query itself?"""
+    try:
+        import psycopg
+    except ImportError:
+        return False
+    return isinstance(error, psycopg.OperationalError)
+
+
+def _open(url: str):
+    """A new connection to the cloud database. prepare_threshold=None: Neon's pooled connections don't support prepared
+    statements. connect_timeout: a database that doesn't answer fails in CONNECT_TIMEOUT seconds instead of holding a
+    run (Neon wakes in ~1-5 s)."""
+    import psycopg
+    from psycopg.rows import dict_row
+
+    return psycopg.connect(url, autocommit=True, row_factory=dict_row, prepare_threshold=None,
+                           connect_timeout=CONNECT_TIMEOUT)
 
 
 @contextmanager
@@ -156,21 +170,24 @@ def connect():
     url = env("DATABASE_URL") or env("POSTGRES_URL")
     holder = _held.get() if url else None  # (inside held(): the request's shared connection)
     if url:
-        import psycopg
-        from psycopg.rows import dict_row
-
         raw = holder.get("raw") if holder is not None else None
         if raw is None or raw.closed or raw.broken:
             if raw is not None:
                 raw.close()
-            # prepare_threshold=None: Neon's pooled connections don't support prepared statements. connect_timeout:
-            # a database that doesn't answer fails in CONNECT_TIMEOUT seconds instead of holding a run (Neon wakes
-            # in ~1-5 s).
-            raw = psycopg.connect(url, autocommit=True, row_factory=dict_row, prepare_threshold=None,
-                                  connect_timeout=CONNECT_TIMEOUT)
+            raw = _open(url)
             if holder is not None:
                 holder["raw"] = raw
-        conn, pk = _Conn(raw, sqlite=False), "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
+
+        def reopen():   # (the connection dropped: a new one, the request's shared one from now on)
+            try:
+                conn.conn.close()
+            except Exception:
+                pass
+            fresh = _open(url)
+            if holder is not None:
+                holder["raw"] = fresh
+            return fresh
+        conn, pk = _Conn(raw, sqlite=False, reopen=reopen), "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
     else:
         if ON_VERCEL:
             raise RuntimeError("DATABASE_URL is not set. Connect a Neon database to the Vercel project.")
@@ -194,7 +211,7 @@ def connect():
             raw.commit()
     finally:
         if holder is None:  # (a held connection closes when held() ends)
-            raw.close()
+            conn.conn.close()
 
 
 def _video(row: dict | None) -> dict | None:
@@ -328,21 +345,25 @@ def slot_holders(start: str, end: str, parts: tuple[str, ...] | None = None) -> 
 
 
 def planned_videos(limit: int = 50, parts: tuple[str, ...] | None = None) -> list[dict]:
-    """The queue: cases written and waiting for a slot, oldest first (including those waiting for your
-    OK). Shorts planned by earlier versions (other formats) are left to the dashboard. `parts`: as in slot_holders."""
+    """The queue: stories written and waiting for a slot, oldest first. Rows earlier versions made (other formats) are
+    left to the dashboard. `parts`: as in slot_holders."""
     with connect() as db:
-        return _read(db, "WHERE status = 'planned' AND format = %s ORDER BY id LIMIT %s", (FORMAT, limit), parts)
+        return _read(db, "WHERE status = 'planned' AND format = %s ORDER BY id LIMIT %s", (fmt(), limit), parts)
+
+
+def fmt() -> str:
+    """The format of the rows the agents make: the stories'."""
+    return FORMAT
 
 
 def ready(video: dict) -> bool:
-    """Can it go up without anyone's OK: approved (or it never needed approval), and not held by the Reviewer
-    (agents/reviewer.py: a video that still failed after the Animator's fixes is made again by itself first)."""
-    plan = video["plan"]
-    return plan.get("approval") in (None, "approved") and not (plan.get("review") or {}).get("held")
+    """Can it go up: not held by the Reviewer (agents/reviewer.py: a film that still failed after the Animator's fixes
+    is made again by itself first)."""
+    return not (video["plan"].get("review") or {}).get("held")
 
 
 def next_planned() -> dict | None:
-    """The oldest case ready to go up."""
+    """The oldest story ready to go up."""
     return next((v for v in planned_videos() if ready(v)), None)
 
 
@@ -389,32 +410,20 @@ def recent_videos(days: int = 21, parts: tuple[str, ...] | None = None) -> list[
 
 
 def published_videos(days: int = 60, parts: tuple[str, ...] | None = None) -> list[dict]:
-    """Shorts whose publish time has passed (they're public unless you vetoed them)."""
+    """Stories whose publish time has passed (they're public unless you vetoed them)."""
     with connect() as db:
         return _read(db, "WHERE status = 'scheduled' AND youtube_id IS NOT NULL AND publish_at <= %s AND publish_at >= %s "
                          "ORDER BY publish_at", (now_iso(), now_iso(-timedelta(days=days))), parts)
 
 
 def scheduled_videos(days: int = 3, parts: tuple[str, ...] | None = None) -> list[dict]:
-    """Shorts on YouTube whose publish time is still to come, or passed at most `days` ago."""
+    """Stories on YouTube whose publish time is still to come, or passed at most `days` ago."""
     with connect() as db:
         return _read(db, "WHERE status = 'scheduled' AND youtube_id IS NOT NULL AND publish_at >= %s ORDER BY publish_at",
                      (now_iso(-timedelta(days=days)),), parts)
 
 
-# --- clips, stats, notes, runs --------------------------------------------
-
-def used_clip_keys() -> set[str]:
-    with connect() as db:
-        return {r["clip_key"] for r in db.query("SELECT clip_key FROM used_clips")}
-
-
-def mark_clips_used(keys: list[str]) -> None:
-    with connect() as db:
-        for key in keys:
-            db.query("INSERT INTO used_clips (clip_key, used_at) VALUES (%s, %s) ON CONFLICT (clip_key) DO NOTHING",
-                     (key, now_iso()))
-
+# --- stats, notes, runs ---------------------------------------------------
 
 def save_stats(rows: list[dict], taken_on: str) -> None:
     with connect() as db:
@@ -497,7 +506,7 @@ def last_run(job: str, ok: bool | None = True) -> dict | None:
     return rows[0] if rows else None
 
 
-# --- topics you ask for, viewers' comments ----------------------------------
+# --- themes you ask for (the Themes page; Agent 1 takes them first) ---------
 
 def add_topic(text: str) -> int:
     with connect() as db:
@@ -516,59 +525,6 @@ def set_topic(topic_id: int, status: str, reason: str | None = None, video_id: i
     with connect() as db:
         db.query("UPDATE topics SET status = %s, reason = %s, video_id = %s WHERE id = %s",
                  (status, reason, video_id, topic_id))
-
-
-def save_comments(rows: list[dict]) -> int:
-    """New top-level comments (text and likes only, never who wrote them); returns how many were new."""
-    added = 0
-    with connect() as db:
-        for r in rows:
-            if db.query("SELECT 1 FROM comments WHERE comment_id = %s", (r["comment_id"],)):
-                db.query("UPDATE comments SET likes = %s WHERE comment_id = %s", (r["likes"], r["comment_id"]))
-                continue
-            db.query("INSERT INTO comments (comment_id, youtube_id, text, likes, published_at) VALUES (%s, %s, %s, %s, %s)",
-                     (r["comment_id"], r["youtube_id"], r["text"], r["likes"], r["published_at"]))
-            added += 1
-    return added
-
-
-def recent_comments(days: int = 30, limit: int = 30, unused: bool = True) -> list[dict]:
-    with connect() as db:
-        return db.query("SELECT * FROM comments WHERE published_at >= %s" + (" AND used_by IS NULL" if unused else "")
-                        + " ORDER BY likes DESC, published_at DESC LIMIT %s", (now_iso(-timedelta(days=days)), limit))
-
-
-def use_comment(comment_id: str, video_id: int) -> None:
-    with connect() as db:
-        db.query("UPDATE comments SET used_by = %s WHERE comment_id = %s", (video_id, comment_id))
-
-
-# --- characters (the hosts) -------------------------------------------------
-
-def insert_character(spec: dict) -> int:
-    with connect() as db:
-        return db.query("INSERT INTO characters (created_at, name, spec) VALUES (%s, %s, %s) RETURNING id",
-                        (now_iso(), spec["name"], json.dumps(spec)))[0]["id"]
-
-
-def _character(row: dict) -> dict:
-    return {**json.loads(row["spec"]), "id": row["id"], "created_at": row["created_at"]}
-
-
-def get_characters(ids: list[int]) -> list[dict]:
-    """Characters in the order asked for."""
-    if not ids:
-        return []
-    marks = ", ".join(["%s"] * len(ids))
-    with connect() as db:
-        rows = {r["id"]: r for r in db.query(f"SELECT * FROM characters WHERE id IN ({marks})", tuple(ids))}
-    return [_character(rows[i]) for i in ids if i in rows]
-
-
-def list_characters(limit: int = 60) -> list[dict]:
-    with connect() as db:
-        rows = db.query("SELECT * FROM characters ORDER BY id DESC LIMIT %s", (limit,))
-    return [_character(r) for r in rows]
 
 
 def start_run(job: str) -> int:

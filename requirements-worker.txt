@@ -7,4 +7,3 @@ filelock==4.2.4  # (comes with faster-whisper; 4.1.1 and older have known securi
 imageio-ffmpeg==0.6.0
 onnxruntime==1.31.0
 opencv-python-headless==4.14.0.94
-trafilatura==2.3.1

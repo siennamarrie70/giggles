@@ -1,67 +1,52 @@
 """
-Agent 6, Publisher: puts each case on YouTube in its posting slot, and on Instagram as a Reel.
+Agent 5, Publisher: puts each day's story on YouTube in its slot, its short version as a Short a few hours later, and the
+short version on Instagram as a Reel.
 
-It takes the oldest case that's ready: approved, or never needing approval (with cases.approval off
-in the settings, as now, it approves news and politics itself: auto_approve), and not held by the
-Reviewer. Its video must have passed the Reviewer (Agent 5): without a reviewed video, the Animator
-makes it and the Reviewer reviews it first, fixes included (agents/reviewer.py, reviewed()). If
-Gemini's voice is out, the case goes back to the queue untouched and waits for it (no other voice
-reads him). A video the Reviewer turns down after the fixes is never posted as it is: the slot goes to the
-next case, and it's made again by itself until it passes (agents/reviewer.py hold()), then takes a slot.
+It takes the oldest story that's ready: written in the look of now and not held by the Reviewer (choose()). Its film must
+have passed the Reviewer (Agent 4): without a reviewed film, the Animator makes it and the Reviewer reviews it first, fixes
+included (agents/reviewer.py, reviewed()). If Gemini's voice is out, the story goes back to the queue untouched and waits
+for it (no other voice reads it). A film the Reviewer turns down after the fixes is never posted as it is: it's made again
+by itself until it passes (agents/reviewer.py hold()), then takes a slot.
 
-YouTube: uploaded as private with the slot as its publish time, so YouTube makes it public on the
-minute; a slot only minutes away, or already passed, goes up public at once. Category Education, "not
-made for kids", no synthetic-media label (a drawn host, real footage, real photos and charts aren't
-realistic synthetic footage), except a faceless Short whose design says so (your Agent 4 prompt's ai_disclosure_flag:
-photorealistic AI pictures), which also gets Instagram's AI label. Then its thumbnail: the Animator's wide one (16:9), which YouTube
-shows in YouTube Studio, search on computers, shared links and embeds (verified channels only). The
-Shorts tab and feed show a frame YouTube picks from the video: custom Shorts covers are only for
-YouTube Partner Program channels (since 2026-07-24), set in YouTube Studio on a computer, not
-through the API.
+YouTube: the film is uploaded as private with the slot as its publish time, so YouTube makes it public on the minute; a
+slot only minutes away, or already passed, goes up public at once. An ordinary video (Film & Animation, series.category_id;
+no #shorts), "not made for kids", no synthetic-media label (it's animated: nothing a viewer could take for real footage),
+its description carrying the story's two lines, its chapters (one at each part), how it was made and the music's credit
+(the CC BY licence asks for it). Then its thumbnail (the Animator's wide one; custom thumbnails need a channel verified by
+phone). Then its short version (the whole story in under a minute, your choice 2026-11-16) goes up as a Short, public
+series.short_after_hours after the film, with #shorts, its description linking to the film and crediting the music. A
+short version YouTube refuses is tried once more at once; one that still fails is noted on the story (the dashboard can
+send it again while its file is on this computer: upload_short).
 
-Instagram (when it's connected and switched on: settings `instagram.enabled`): when the Short's slot
-comes and it's public on YouTube (not deleted there: that's still the veto), the same video goes up
-as a Reel (tools/instagram.py; Instagram can't schedule them), with a caption made from the same
-description and its cover frame at the thumbnail's shot. A failed try waits longer each time
-(REEL_WAITS: Instagram drops uploads in spells, #46 ten times in a row over 90 minutes on 2026-10-27),
-about nine hours in all. The video is kept on this computer until the Reel is up, or REEL_DAYS after
-its slot. In the cloud (GitHub Actions, whose machine is wiped after each run) a Reel whose slot comes
-while the run that made it is still going is posted by that run (tools/jobs.py, morning); the others'
-videos are kept, encrypted, with that run (tools/kept.py: the Reel records it as `kept_in`), and the
-Reels workflow (.github/workflows/reels.yml) fetches each at its slot. With the database in the cloud,
-this computer's dashboard only shows Reels: it neither posts nor makes them again (_made_here).
+Instagram (when it's connected and switched on: settings `instagram.enabled`): at the short version's time, if it's public
+on YouTube (not deleted there: that's still the veto), the short version goes up as a Reel (tools/instagram.py; Instagram
+can't schedule them), its cover the moment its title is in, with a caption made from the same description. A failed try
+waits longer each time (REEL_WAITS: Instagram drops uploads in spells), about nine hours in all. The short version is
+kept on this computer until the Reel is up, or REEL_DAYS after its time. In the cloud (GitHub Actions, whose machine is wiped after each run) a Reel whose time comes while the run
+that made it is still going is posted by that run (tools/jobs.py, morning); the others' videos are kept, encrypted, with
+that run (tools/kept.py: the Reel records it as `kept_in`), and the Reels workflow (.github/workflows/reels.yml) fetches
+each at its time. With the database in the cloud, this computer's dashboard only shows Reels: it neither posts nor makes
+them again (_made_here).
 
-When Meta refuses the connection itself, not one video (the token, its permissions, the Meta app or
-the account: tools/instagram.py Disconnected), no Reel can go up until that's fixed. Then every Reel
-still to post waits for it with no try counted (one given up only for that comes back:
-_hold_reels), the connection is asked again every DOWN_RECHECK with one harmless read, and once a
-Reel goes up the others follow at once (_came_back). You're told: the dashboard's Overview page says
-so while it lasts, and a Reels run fails once a day (DOWN_RETELL; tools/jobs.py reels), so GitHub
-emails you. Seen 2026-10-29, when Meta blocked the app: before this, Reels #67 and #69 had spent five
-and four of their tries on it, and all of them would have been given up that evening.
+When Meta refuses the connection itself, not one video (the token, its permissions, the Meta app or the account:
+tools/instagram.py Disconnected), no Reel can go up until that's fixed. Then every Reel still to post waits for it with no
+try counted (_hold_reels), the connection is asked again every DOWN_RECHECK with one harmless read, and once a Reel goes up
+the others follow at once (_came_back). You're told: the dashboard's Overview page says so while it lasts, and a Reels run
+fails once a day (DOWN_RETELL; tools/jobs.py reels), so GitHub emails you. Seen 2026-10-29, when Meta blocked the app.
 
-Beside each Short the Schedule page shows where it stands on YouTube and on Instagram (platforms())
-with your buttons for each. YouTube: Open, Post now (public at once; its slot stays its own and its
-Reel still waits for the slot), Stop, Delete (public or not; a Reel not posted yet goes with it).
-Instagram: Open, Post now (at once, even before it's public on YouTube), Delete (a posted Reel is
-deleted from Instagram; one not posted yet is taken off, and Post now still can while its video is
-kept). A Reel is claimed ("posting") before it's posted, so it goes up once whoever asks. A Short
-that went up while Reels were off has no video kept: Schedule (remake_reel) makes it again for
-Instagram (the same case, music and drawings, read again by the same voice) and its Reel then waits
-for its slot.
+Beside each story the Schedule page shows where it stands on YouTube and on Instagram (platforms()) with your buttons for
+each. YouTube: Open, Post now (public at once; its slot stays its own and its Reel still waits for its short version's
+time), Stop and Delete (take_off: the film and its short version both; a Reel not posted yet goes with them). Instagram:
+Open, Post now, Delete. A Reel is claimed ("posting") before it's posted, so it goes up once whoever asks. A story that
+went up while Reels were off has no short version kept: Schedule (remake_reel) makes it again for Instagram (only the
+short version: the film is on YouTube), and its Reel then waits for its time.
 
-The description is put together here, so its credits always match the final video: the Writer's
-summary, the sources the script's facts came from, the photos, stock clips and archive films it shows
-(stock clips are marked as illustrative; NASA is credited without suggesting it endorses anything),
-part 1's link for a follow-up, the music's credit line, and the hashtags, of which any the Analyst's
-numbers show doing clearly worse than usual are dropped. Once a Short is up, its clips count as used,
-so no later case shows them again. On a failed upload the case goes back to the queue for one more
-try (its reviewed video kept), then counts as failed. Until it goes public you can still delete it in
-YouTube Studio: that's the veto.
+On a failed upload the story goes back to the queue for one more try (its reviewed film kept), then counts as failed. Until
+it goes public you can still delete it in YouTube Studio: that's the veto.
 
 Usage:
-    python tools/jobs.py publish        # Agent 6 uploads the oldest ready case into the next open slot
-    python tools/jobs.py instagram      # ...and posts the Reels whose slot has come
+    python tools/jobs.py publish        # Agent 5 uploads the oldest ready story into the next open slot
+    python tools/jobs.py instagram      # ...and posts the Reels whose time has come
 """
 
 import threading
@@ -71,162 +56,90 @@ import db
 import instagram
 import kept
 import notify
-import short_render
+import series
 import slots
-import text_clean
+import story_film
 import youtube_auth
 import youtube_upload
 from agents import animator, reviewer
 from agents.base import act, log, playbook
-from common import TMP_DIR, env, load_config
+from common import env, load_config
 
-GO_LIVE_MARGIN = timedelta(minutes=3)  # closer than this to its slot, a Short is uploaded as public right away
-MAX_SOURCES = 6
-WEAK_HASHTAG = 0.7                     # a hashtag this far below the channel's usual views is dropped
+GO_LIVE_MARGIN = timedelta(minutes=3)  # closer than this to its slot, a story is uploaded as public right away
+WEAK_HASHTAG = 0.7                     # a hashtag this far below the channel's usual is dropped
 REEL_WAITS = (10, 20, 40, 60, 90, 120, 180)  # minutes before the next try of a Reel Instagram didn't take, by try
 REEL_TRIES = len(REEL_WAITS) + 1
-REEL_DAYS = 2                          # a Reel not posted within this long after its slot is given up (its video deleted)
+REEL_DAYS = 2                          # a Reel not posted within this long after its time is given up (its video deleted)
 POSTING_STALE = timedelta(minutes=30)  # a Reel "posting" for longer was cut off (the dashboard stopped)
 STUDIO_GRACE = timedelta(minutes=5)    # still private this long after its time: made private in YouTube Studio
 PUBLISH_LAG = timedelta(minutes=30)    # a Reel waits this long for YouTube to make its Short public (it's a little late)
 DOWN_RECHECK = timedelta(minutes=30)   # while Meta refuses Instagram's connection, it's asked again this often
 DOWN_RETELL = timedelta(hours=24)      # ...and a Reels run fails this often meanwhile, so GitHub emails you
+MADE_WITH = ("Told by an AI narrator (Gemini's text-to-speech). Animated in code, frame by frame: no AI pictures. "
+             "Sounds: CC0 recordings (Freesound, Openverse).")
 _reels = threading.RLock()             # one claim at a time, so a Reel goes up once whoever asks
 
 
 def choose() -> dict | None:
-    """The case that takes the next slot: the oldest one ready to go up."""
-    return db.next_planned()
+    """The story that takes the next slot: the oldest one ready to go up and written in the look of now (an older row,
+    made by an earlier version of the channel, is never uploaded: series.current)."""
+    return next((v for v in db.planned_videos() if db.ready(v) and series.current(v)), None)
 
 
-def approve(video_id: int, by: str = "you") -> dict:
-    """The OK for a case that waits for it (news and politics): yours from the Studio, or the Publisher's own."""
-    row = db.get_video(video_id)
-    if not row or row["status"] != "planned" or row["plan"].get("approval") != "waiting":
-        raise ValueError(f"Short #{video_id} isn't waiting for approval")
-    db.update_video(video_id, plan={**row["plan"], "approval": "approved", "approved_at": db.now_iso(), "approved_by": by})
-    return {"video_id": video_id, "approved": True}
-
-
-def auto_approve(progress=log) -> list[int]:
-    """The Publisher approves, by itself, every waiting case whose reason to wait is switched off in the settings
-    (cases.approval: false for news and for politics means no case waits for anyone). Runs with every check."""
-    approval = load_config()["cases"].get("approval") or {}
-    approved = []
-    for v in db.planned_videos():
-        brief = v["plan"].get("brief") or {}
-        if v["plan"].get("approval") != "waiting":
-            continue
-        still = ((brief.get("category") == "trending" and approval.get("trending", True))
-                 or (brief.get("political") and approval.get("politics", True)))
-        if not still:
-            approve(v["id"], by="publisher")
-            approved.append(v["id"])
-            progress(f"The Publisher approved case #{v['id']} itself")
-    return approved
-
-
-def shown(plan: dict) -> dict[str, list[dict]]:
-    """The pack's photos, stock clips and archive films that the script puts on screen, in order."""
-    pack, lines = plan.get("research") or {}, (plan.get("script") or {}).get("lines") or []
-    names = [v for line in lines for v in line.get("visuals") or []]
-    if not names:  # v4 cases: one visual per line
-        names = [line["visual"] for line in lines if line.get("visual")]
-    out = {}
-    for kind, key in (("photo", "images"), ("footage", "footage"), ("archive", "archive")):
-        ids = list(dict.fromkeys(n.split(":", 1)[1] for n in names if n.startswith(f"{kind}:")))
-        by_id = {x["id"]: x for x in pack.get(key) or []}
-        out[kind] = [by_id[i] for i in ids if i in by_id]
-    return out
-
-
-def credits(plan: dict) -> dict:
-    """The sources behind the facts the script uses, and the photos, clips and films it shows."""
-    pack, lines = plan.get("research") or {}, (plan.get("script") or {}).get("lines") or []
-    used_facts = {f for line in lines for f in line.get("facts") or []}
-    by_fact = {f["id"]: f["source"] for f in pack.get("facts") or []}
-    cited = {by_fact[f] for f in used_facts if f in by_fact}
-    sources = [s for s in pack.get("sources") or [] if s["id"] in cited][:MAX_SOURCES]
-    on_screen = shown(plan)
-    return {"sources": sources, "photos": on_screen["photo"], "footage": on_screen["footage"],
-            "archive": on_screen["archive"]}
-
+# --- the description -----------------------------------------------------------------------------------------------------
 
 def hashtags(tags: list[str]) -> list[str]:
-    """The Writer's hashtags without any the playbook shows doing clearly worse than usual (never the channel's own
-    base hashtags, and always at least two)."""
+    """The story's hashtags without any the playbook shows doing clearly worse than usual (never the channel's own
+    hashtags from the settings, and always at least two)."""
     lifts = (playbook().get("weights") or {}).get("hashtag") or {}
-    base = set(load_config()["metadata"]["base_hashtags"])
-    kept = [t for t in tags if t in base or lifts.get(t.lower(), 1.0) > WEAK_HASHTAG]
-    return kept if len(kept) >= 2 else tags
-
-
-def _named(text: str) -> str:
-    """A name from a web page or a photo's details, as shown: no web addresses, no < or >, at most 120 characters."""
-    return text_clean.no_brackets(text_clean.no_links(text))[:120]
-
-
-def _source(s: dict) -> str:
-    """A "Sources:" line; its address only if it's an ordinary page (text_clean.linkable)."""
-    title, publisher = _named(s["title"]), _named(s.get("publisher") or "")
-    link = s["url"] if text_clean.linkable(s["url"]) else ""
-    if publisher and publisher != title:
-        return f"- {publisher}: {title} {link}".rstrip()
-    return f"- {title}: {link}" if link else f"- {title}"
+    base = set(series.settings().get("hashtags") or [])
+    kept_tags = [t for t in tags if t in base or lifts.get(t.lower(), 1.0) > WEAK_HASHTAG]
+    return kept_tags if len(kept_tags) >= 2 else tags
 
 
 def description(meta: dict, plan: dict, links: bool = True) -> str:
-    """The description, credits included; without links (Instagram's caption), the sources are named but not linked."""
+    """A story's description: its two lines, its chapters (YouTube makes them from times starting at 0:00), how it was
+    made, the music's credit, and the hashtags (never #shorts on the film). Without links (Instagram's caption) the
+    chapters are left out."""
     parts = [meta.get("description") or ""]
-    found = credits(plan)
-    if found["sources"] and links:
-        parts.append("Sources:\n" + "\n".join(_source(s) for s in found["sources"]))
-    elif found["sources"]:
-        parts.append("Sources: " + "; ".join(dict.fromkeys(_named(s.get("publisher") or s["title"])
-                                                           for s in found["sources"])))
-    if found["photos"]:
-        parts.append("Photos (Wikimedia Commons):\n" + "\n".join(
-            f"- {_named(p['title'])} by {_named(p['author'])}, {p['licence']}"
-            + (f": {p['page']}" if text_clean.linkable(p["page"]) else "") for p in found["photos"]))
-    if found["archive"]:
-        parts.append("Archive footage:\n" + "\n".join(f"- {c['credit']}" for c in found["archive"]))
-    if found["footage"]:
-        parts.append("Stock footage (illustrative):\n" + "\n".join(f"- {c['credit']}" for c in found["footage"]))
-    earlier = (plan.get("brief") or {}).get("follow_up_of")
-    if earlier and links and (row := db.get_video(earlier)) and row.get("youtube_id"):
-        parts.append(f"Part 1: https://youtube.com/shorts/{row['youtube_id']}")
-    credit = short_render.music_credit(plan.get("music"))
-    if credit:
-        parts.append(credit)
+    marks = (plan.get("render") or {}).get("chapters") or []
+    if links and len(marks) >= 3:
+        parts.append("\n".join(f"{story_film.clock(c['at'])} {c['name']}" for c in marks))
+    parts.append(MADE_WITH)
+    parts += [c for c in plan.get("credits") or [] if c]   # (the music's CC BY credit)
     if meta.get("hashtags"):
-        parts.append(" ".join(hashtags(meta["hashtags"])[:instagram.MAX_HASHTAGS]))
+        parts.append(" ".join(t for t in hashtags(meta["hashtags"]) if t.lower() != "#shorts")[:300])
     return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
 
+def short_description(meta: dict, plan: dict, youtube_id: str) -> str:
+    """The short version's description (the Short): the story's lines, a link to the whole film, how it was made, the
+    music's credit (CC BY asks for it on every video it plays in) and the hashtags with #shorts."""
+    tags = " ".join(["#shorts", *[t for t in hashtags(meta.get("hashtags") or []) if t.lower() != "#shorts"]])
+    low, high = series.minutes()
+    return "\n\n".join(p.strip() for p in [meta.get("description") or "",
+                                             f"The full story ({low:g}-{high:g} min): https://www.youtube.com/watch?v={youtube_id}",
+                                             MADE_WITH, *[c for c in plan.get("credits") or [] if c], tags[:300]]
+                       if p and p.strip())
+
+
 def caption(meta: dict, plan: dict) -> str:
-    """The Reel's caption: the title, then the description without source links, within Instagram's 2,200
-    characters (the stock and archive credits are shortened first if it's too long)."""
-    text = f"{meta['title']}\n\n{description(meta, plan, links=False)}"
-    if len(text) > instagram.CAPTION_CHARS:
-        lean = {**plan, "research": {**(plan.get("research") or {}), "footage": [], "archive": []}}
-        text = f"{meta['title']}\n\n{description(meta, lean, links=False)}"
-    return text[:instagram.CAPTION_CHARS]
-
-
-def ai_made(plan: dict) -> bool:
-    """Does the video need the platforms' AI label: your Agent 4 prompt's ai_disclosure_flag (photorealistic AI pictures)."""
-    return bool((plan.get("manifest") or {}).get("ai_disclosure_flag"))
+    """The Reel's caption: the title, then the description without the chapters, within Instagram's limit."""
+    return f"{meta['title']}\n\n{description(meta, plan, links=False)}"[:instagram.CAPTION_CHARS]
 
 
 def reels_on() -> bool:
     return bool((load_config().get("instagram") or {}).get("enabled")) and instagram.is_configured()
 
 
+# --- YouTube ---------------------------------------------------------------------------------------------------------------
+
 def upload(row: dict, slot: datetime, sched: dict, progress=log) -> dict:
-    """Uploads a case already claimed for `slot`, once its video has passed the Reviewer (made and reviewed now if
-    needed). A case the Reviewer turns down gives the slot back, for the next case, and is made again by itself later
-    (agents/reviewer.py hold()); nothing of it goes to YouTube meanwhile."""
-    cfg = load_config()
+    """A story claimed for `slot`: its film (made and reviewed now if needed, its short version too) uploaded for the
+    slot, then its short version as a Short short_after_hours later, and its Reel set for that time. A story the Reviewer
+    turns down gives the slot back and is made again by itself later (agents/reviewer.py hold()); nothing of it goes to
+    YouTube meanwhile."""
+    settings = series.settings()
     out = animator.preview_path(row["id"])
     when = slots.clock(slot, sched)
     _fetch_kept(row, progress)
@@ -234,62 +147,135 @@ def upload(row: dict, slot: datetime, sched: dict, progress=log) -> dict:
         row = reviewer.reviewed(row, progress=progress, now=True)
         if not reviewer.passed(row["plan"]):
             db.update_video(row["id"], status="planned", slot=None, claimed_at=None)
-            return {"skipped": f"the Reviewer turned case #{row['id']} down (it's made again by itself); the {when} "
-                               "slot goes to the next case", "video_id": row["id"], "held": True}
+            return {"skipped": f"the Reviewer turned story #{row['id']} down (it's made again by itself); the {when} "
+                               "slot waits for the next story", "video_id": row["id"], "held": True}
         plan = row["plan"]
         meta = plan["metadata"]
-        db.update_video(row["id"], claimed_at=db.now_iso())  # still alive: making and reviewing can take a while
+        db.update_video(row["id"], claimed_at=db.now_iso())
         live_now = slot - datetime.now(timezone.utc) <= GO_LIVE_MARGIN
-        progress("Uploading to YouTube, public right away" if live_now
-                 else f"Uploading to YouTube, scheduled for {when}")
+        progress("Uploading the film to YouTube, public right away" if live_now
+                 else f"Uploading the film to YouTube, scheduled for {when}")
         result = youtube_upload.run(out, meta["title"], description(meta, plan), meta["tags"],
                                     publish_at=None if live_now else slots.iso(slot), public=live_now,
-                                    category_id=cfg["metadata"]["category_id"], language=cfg["metadata"]["language"],
-                                    synthetic_media=ai_made(plan))
-    except (animator.Resting, youtube_upload.UploadLimit):  # not the case's fault: it waits for Gemini's voice,
-        db.update_video(row["id"], status="planned", slot=None, claimed_at=None)  # Cloudflare's drawing or YouTube's
-        raise                                                                     # daily upload limit, no try counted
+                                    category_id=str(settings.get("category_id") or "1"),
+                                    language=str(settings.get("language") or "en"), synthetic_media=False)
+    except (animator.Resting, youtube_upload.UploadLimit):  # not the story's fault: it waits for Gemini's voice or
+        db.update_video(row["id"], status="planned", slot=None, claimed_at=None)  # YouTube's daily upload limit, no try
+        raise                                                                     # counted
     except Exception as e:
         attempts = row["attempts"] + 1
         status = "planned" if attempts < 2 else "failed"
         db.update_video(row["id"], status=status, attempts=attempts, error=str(e)[:500], slot=None, claimed_at=None)
         outcome = "it goes back to the queue for another try" if status == "planned" else "gave up after 2 tries"
-        raise RuntimeError(f"Short #{row['id']} for {when} not uploaded ({outcome}): {e}") from e
-
-    publish_at = slots.iso(datetime.now(timezone.utc)) if live_now else slots.iso(slot)
+        raise RuntimeError(f"Story #{row['id']} for {when} not uploaded ({outcome}): {e}") from e
+    now = datetime.now(timezone.utc)
+    publish_at = slots.iso(now) if live_now else slots.iso(slot)
     db.update_video(row["id"], status="scheduled", youtube_id=result["id"], publish_at=publish_at, error=None)
     plan = {**plan, "youtube_thumbnail": _thumbnail(result["id"], row["id"], progress)}
-    on_screen = shown(plan)
-    db.mark_clips_used([c["key"] for c in on_screen["footage"] + on_screen["archive"] if c.get("key")])
-    for clip in on_screen["footage"] + on_screen["archive"]:  # 50-150 MB a case; fetched again if ever needed
-        (TMP_DIR / clip["file"]).unlink(missing_ok=True)
-    animator.forget(row["id"])
-    if reels_on():
-        plan["instagram"] = {"status": "pending", "tries": 0}  # the video stays until the Reel is up
+    short_at = max(slot, now) + timedelta(hours=series.short_after_hours())
+    plan["short_upload"] = _send_short(row["id"], meta, plan, result["id"], short_at, progress)
+    short_id = plan["short_upload"].get("youtube_id")
+    if reels_on() and short_id:
+        plan["instagram"] = {"status": "pending", "tries": 0, "at": slots.iso(short_at), "youtube_id": short_id}
         if kept.in_cloud():  # (...kept with this run when it ends, for the Reels workflow: tools/kept.py)
             plan["instagram"]["kept_in"] = kept.this_run()
-    else:
-        out.unlink(missing_ok=True)
+    elif short_id:
+        animator.remove(animator.short_path(row["id"]))
+    animator.forget(row["id"])
+    animator.remove(out)  # (the film is on YouTube; the short version stays for its Reel)
     db.update_video(row["id"], plan=plan)
-    reel = " It goes on Instagram then too." if reels_on() else ""
+    watch = f"https://www.youtube.com/watch?v={result['id']}"
+    short_note = (f"\nIts short version goes public as a Short at {slots.clock(short_at, sched)}." if short_id
+                  else "\nIts short version couldn't be uploaded: send it again from the dashboard.")
     if live_now:
-        notify.run(f"\U0001F3AC New case is live (the {when} slot):\n{meta['title']}\n{result['url']}")
+        notify.run(f"\U0001F3AC Today's story is live (the {when} slot):\n{meta['title']}\n{watch}{short_note}")
     else:
-        notify.run(f"\U0001F3AC New case goes live at {when}:{reel}\n{meta['title']}\n"
-                   f"Watch, edit or delete it before then: {result['studio_url']}")
+        notify.run(f"\U0001F3AC Today's story goes live at {when}:\n{meta['title']}\nWatch, edit or delete it before then: "
+                   f"{result['studio_url']}{short_note}")
     return {"video_id": row["id"], "youtube_id": result["id"], "slot": slots.iso(slot), "publish_at": publish_at,
-            "live_now": live_now, "title": meta["title"], "thumbnail": plan["youtube_thumbnail"].get("set")}
+            "live_now": live_now, "title": meta["title"], "thumbnail": plan["youtube_thumbnail"].get("set"),
+            "short": short_id, "short_at": slots.iso(short_at)}
 
 
-def kept_files(video_id: int) -> list:
-    """A Short's files a cloud run keeps when it ends before the Short is uploaded: (name, file) for kept.keep_files."""
-    return [(p.name, p) for p in (animator.preview_path(video_id), *animator.thumb_paths(video_id))]
+def _send_short(video_id: int, meta: dict, plan: dict, film_id: str, at: datetime, progress=log) -> dict:
+    """The story's short version uploaded as a Short, public at `at` (tried twice); what happened, for the story's plan."""
+    path = animator.short_path(video_id)
+    if not path.exists():
+        return {"status": "failed", "error": "the short version wasn't made", "publish_at": slots.iso(at)}
+    settings = series.settings()
+    last = None
+    for attempt in range(2):
+        try:
+            progress(f"Uploading the short version as a Short, public at {slots.clock(at, slots.plan())}")
+            short = youtube_upload.run(path, meta["title"], short_description(meta, plan, film_id), meta["tags"],
+                                       publish_at=slots.iso(at), category_id=str(settings.get("category_id") or "1"),
+                                       language=str(settings.get("language") or "en"), synthetic_media=False)
+            return {"status": "scheduled", "youtube_id": short["id"], "publish_at": slots.iso(at), "at": db.now_iso()}
+        except youtube_upload.UploadLimit as e:
+            last = e
+            break
+        except Exception as e:
+            last = e
+    progress(f"The short version wasn't uploaded ({str(last)[:160]})")
+    return {"status": "failed", "error": str(last)[:300], "publish_at": slots.iso(at)}
+
+
+def upload_short(video_id: int, progress=log) -> dict:
+    """Your "Send the short version" on a story whose short version didn't go up with its film: uploaded now, public at
+    its time (or in a few minutes if that has passed); its Reel is set for then."""
+    row = db.get_video(video_id)
+    if not row or not series.is_story(row) or not row["youtube_id"]:
+        raise ValueError(f"Story #{video_id} isn't on YouTube")
+    plan = row["plan"]
+    if (plan.get("short_upload") or {}).get("youtube_id"):
+        raise ValueError("Its short version is on YouTube already")
+    at = max(slots.parse((plan.get("short_upload") or {}).get("publish_at") or slots.iso(datetime.now(timezone.utc))),
+             datetime.now(timezone.utc) + timedelta(minutes=10))
+    sent = _send_short(video_id, plan["metadata"], plan, row["youtube_id"], at, progress)
+    plan = {**db.get_video(video_id)["plan"], "short_upload": sent}
+    if sent.get("youtube_id") and reels_on():
+        plan["instagram"] = {"status": "pending", "tries": 0, "at": sent["publish_at"], "youtube_id": sent["youtube_id"]}
+    db.update_video(video_id, plan=plan)
+    if not sent.get("youtube_id"):
+        raise RuntimeError(f"YouTube didn't take the short version: {sent.get('error')}")
+    return {"video_id": video_id, **sent}
+
+
+def take_off(video_id: int, action: str) -> dict:
+    """Your Stop or Delete on a scheduled story: the film and its short version both, on YouTube ("stop": kept as
+    private, never public by itself; "delete": gone for good), its slot freed and its Reel not posted. Returns the
+    story's new status ("stopped" or "deleted") and what YouTube said of each. youtube_upload.NotAllowed when YouTube
+    hasn't let this app change videos yet."""
+    row = db.get_video(video_id)
+    if not row or row["status"] != "scheduled" or not row["youtube_id"]:
+        raise ValueError("Only a story on the schedule can be changed here.")
+    act_on = {"stop": youtube_upload.unschedule, "delete": youtube_upload.delete}[action]
+    film = act_on(row["youtube_id"])
+    key = "short_upload" if row["plan"].get("short_upload") else "teaser_upload"  # (teaser: a story before 2026-11-16)
+    short_id = (row["plan"].get(key) or {}).get("youtube_id")
+    short = act_on(short_id) if short_id else None
+    was = {"at": db.now_iso(), "slot": row["slot"], "publish_at": row["publish_at"]}
+    status = "deleted" if action == "delete" or film.get("gone") else "stopped"
+    plan = {**row["plan"], status: was}
+    if short is not None:
+        plan[key] = {**plan[key], status: db.now_iso()}
+    db.update_video(video_id, status=status, slot=None, publish_at=None, plan=plan)
+    cancel_reel(video_id, because=f"{status} on YouTube", keep_video=False)
+    return {"video_id": video_id, "status": status, "film": film, "short": short}
+
+
+def kept_files(video_id: int, every: bool = False) -> list:
+    """A story's files a cloud run keeps when it ends before the story is uploaded: (name, file) for kept.keep_files.
+    `every`: all a run may have kept (to fetch them on a machine that has none of them), not only those here."""
+    short = animator.short_path(video_id)
+    return [(p.name, p) for p in (animator.preview_path(video_id), *animator.thumb_paths(video_id))] + (
+        [(short.name, short)] if every or short.exists() else [])
 
 
 def _fetch_kept(row: dict, progress=log) -> None:
-    """In the cloud, a Short made and reviewed by an earlier run that ended before YouTube took it (its daily upload
-    limit) is fetched from that run, with its thumbnails, so it isn't made again (another reading of his voice, more
-    drawings). If it can't be, it's made again as before."""
+    """In the cloud, a story made and reviewed by an earlier run that ended before YouTube took it (its daily upload
+    limit) is fetched from that run, with its thumbnail and short version, so it isn't made again (more of the
+    narrator's free readings). If it can't be, it's made again as before."""
     kept_by = row["plan"].get("kept_video") or {}
     out = animator.preview_path(row["id"])
     if (out.exists() or not kept_by.get("run") or not kept.in_cloud()
@@ -298,39 +284,36 @@ def _fetch_kept(row: dict, progress=log) -> None:
     try:
         kept.fetch(row["id"], kept_by["run"], out)
     except Exception as e:
-        progress(f"Short #{row['id']}'s video kept by run {kept_by['run']} couldn't be fetched ({str(e)[:150]}): it's "
+        progress(f"Story #{row['id']}'s film kept by run {kept_by['run']} couldn't be fetched ({str(e)[:150]}): it's "
                  "made again")
         return
-    for name, file in kept_files(row["id"])[1:]:
+    for name, file in kept_files(row["id"], every=True)[1:]:
         try:
             kept.fetch_file(kept_by["run"], name, file)
-        except Exception:  # (without its thumbnail, YouTube shows a frame it picks)
-            pass
-    progress(f"Short #{row['id']}'s video, made by run {kept_by['run']} before YouTube's upload limit, fetched from it")
+        except Exception:  # (without its thumbnail, YouTube shows a frame it picks; without its short version, that's
+            pass           # made again before the upload: agents/reviewer.py reviewed)
+    progress(f"Story #{row['id']}'s film, made by run {kept_by['run']} before YouTube's upload limit, fetched from it")
 
 
 def _thumbnail(youtube_id: str, video_id: int, progress=log) -> dict:
-    """The Animator's thumbnail on the YouTube video, if YouTube takes it (never fails the upload). The wide one:
-    YouTube puts a Short's custom thumbnail in its 16:9 places, where the tall cover came out small between blurred
-    copies of itself (2026-10-27); the tall one is only used if there's no wide one."""
-    cover, wide = animator.thumb_paths(video_id)
-    image = wide if wide.exists() else cover
-    if not image.exists():
+    """The Animator's thumbnail on the YouTube film, if YouTube takes it (never fails the upload)."""
+    _, wide = animator.thumb_paths(video_id)
+    if not wide.exists():
         return {"set": False, "why": "no thumbnail was made"}
     try:
-        done = youtube_upload.set_thumbnail(youtube_id, image)
+        done = youtube_upload.set_thumbnail(youtube_id, wide)
     except Exception as e:
         done = {"set": False, "why": str(e)[:200]}
     if not done["set"]:
         progress(f"YouTube kept its own thumbnail ({done.get('why', '')[:120]})")
-    return {**done, "image": "wide" if image == wide else "cover", "at": db.now_iso()}
+    return {**done, "image": "wide", "at": db.now_iso()}
 
 
 def resend_thumbnail(video_id: int, progress=log) -> dict:
-    """Puts a case's thumbnail on its YouTube video again (e.g. the wide one on a Short that got the tall one)."""
+    """Puts a story's thumbnail on its YouTube film again."""
     row = db.get_video(video_id)
     if not row or not row["youtube_id"]:
-        raise ValueError(f"Short #{video_id} isn't on YouTube")
+        raise ValueError(f"Story #{video_id} isn't on YouTube")
     done = _thumbnail(row["youtube_id"], video_id, progress)
     db.update_video(video_id, plan={**db.get_video(video_id)["plan"], "youtube_thumbnail": done})
     return done
@@ -339,9 +322,9 @@ def resend_thumbnail(video_id: int, progress=log) -> dict:
 # --- Instagram -------------------------------------------------------------------------
 
 def _turn(row: dict) -> str | None:
-    """When a Short's Reel goes: its slot, or when it went public on YouTube if that was later (a late upload). A Short
-    you put on YouTube early with Post now keeps its Reel for the slot."""
-    return max(row["slot"] or "", row["publish_at"] or "") or None
+    """When a story's Reel goes: at its short version's time (instagram.at), or its slot or publish time if that's
+    later."""
+    return max(row["slot"] or "", row["publish_at"] or "", ((row.get("plan") or {}).get("instagram") or {}).get("at") or "") or None
 
 
 def _posting(reel: dict) -> bool:
@@ -355,7 +338,7 @@ def _remaking(reel: dict) -> bool:
 
 
 def reels_due() -> list[dict]:
-    """Shorts whose slot has come and whose Reel is still to post (and not waiting to try again)."""
+    """Stories whose Reel's time has come and is still to post (and not waiting to try again)."""
     if not instagram.is_configured():
         return []
     now = db.now_iso()
@@ -365,7 +348,7 @@ def reels_due() -> list[dict]:
 
 
 def reels_coming(until: str) -> list[dict]:
-    """Shorts whose Reel is still to post and comes due by `until` (its slot, or its next try)."""
+    """Stories whose Reel is still to post and comes due by `until` (its time, or its next try)."""
     if not instagram.is_configured():
         return []
     return [v for v in db.scheduled_videos(days=REEL_DAYS, parts=("instagram",))
@@ -373,8 +356,9 @@ def reels_coming(until: str) -> list[dict]:
 
 
 def reel_due_at(row: dict) -> str:
-    """When a Reel still to post comes due: its slot (or a late upload's time), or its next try ("" if neither)."""
-    turn = max(row.get("slot") or "", row.get("publish_at") or "")  # (as _turn, without raising on a partial row)
+    """When a Reel still to post comes due: its time, or its next try ("" if neither)."""
+    turn = max(row.get("slot") or "", row.get("publish_at") or "",  # (as _turn, without raising on a partial row)
+               ((row.get("plan") or {}).get("instagram") or {}).get("at") or "")
     return max(turn, ((row.get("plan") or {}).get("instagram") or {}).get("retry_at") or "")
 
 
@@ -385,8 +369,9 @@ def _made_here() -> bool:
 
 
 def expire_reels(progress=log) -> list[int]:
-    """REEL_DAYS after a Short's slot its video is deleted from this computer (only its Reel needed it): a Reel still
-    waiting then (this computer was off) is given up; one that failed or that you took off can't be posted any more."""
+    """REEL_DAYS after a story's Reel time its short version is deleted from this computer (only its Reel needed it): a
+    Reel still waiting then (this computer was off) is given up; one that failed or that you took off can't be posted any
+    more."""
     cutoff = db.now_iso(-timedelta(days=REEL_DAYS))
     expired = []
     for v in db.published_videos(days=30, parts=("instagram",)):
@@ -395,19 +380,19 @@ def expire_reels(progress=log) -> list[int]:
                 or _turn(v) >= cutoff):
             continue
         if reel.get("status") in ("pending", "posting"):
-            whole = db.get_video(v["id"])  # (the whole case, as it is now)
+            whole = db.get_video(v["id"])  # (the whole story, as it is now)
             reel = ((whole or {}).get("plan") or {}).get("instagram") or {}
             if whole and reel.get("status") in ("pending", "posting") and not _posting(reel):
                 db.update_video(v["id"], plan={**whole["plan"], "instagram": {**reel, "status": "expired"}})
                 expired.append(v["id"])
-                progress(f"The Reel for Short #{v['id']} waited more than {REEL_DAYS} days and was given up")
-        animator.remove(animator.preview_path(v["id"]))
+                progress(f"The Reel for story #{v['id']} waited more than {REEL_DAYS} days and was given up")
+        animator.remove(animator.reel_path(v))
     return expired
 
 
 def _on_youtube(youtube_id: str) -> str:
-    """Where the Short is on YouTube: "public"; "publishing" (still private with its publish time: YouTube makes it
-    public a little after the minute); or "vetoed" (deleted, or kept private: no Reel then)."""
+    """Where a video is on YouTube: "public"; "publishing" (still private with its publish time: YouTube makes it public a
+    little after the minute); or "vetoed" (deleted, or kept private: no Reel then)."""
     items = youtube_auth.yt_get("videos", {"part": "status", "id": youtube_id}).get("items") or []
     status = items[0]["status"] if items else {}
     if status.get("privacyStatus") == "public":
@@ -447,7 +432,7 @@ def _when(text: str) -> str:
 def down_message(down: dict) -> str:
     """What you're told while Meta refuses Instagram's connection."""
     return (f"Instagram has taken no Reels since {_when(down['since'])}: Meta refuses the connection "
-            f"({down['error']}). The Reels wait (none is given up for this, until {REEL_DAYS} days after its slot) and go "
+            f"({down['error']}). The Reels wait (none is given up for this, until {REEL_DAYS} days after its time) and go "
             "up by themselves once it works again. To fix it: developers.facebook.com, My Apps, your app: it shows whether "
             "Meta blocked or restricted it, and why. With a new app or token, connect Instagram again on the dashboard's "
             "Channels page (workflows/setup_accounts.md, Instagram).")
@@ -518,9 +503,9 @@ def _still_refused(progress=log) -> dict | None:
 
 
 def _claim_reel(video_id: int, now: bool) -> tuple[dict | None, str | None]:
-    """Marks a Short's Reel as being posted, so it goes up once whoever asks (the loop at its slot, or your Post now):
+    """Marks a story's Reel as being posted, so it goes up once whoever asks (the loop at its time, or your Post now):
     the row as claimed and the Reel's status before, or None if it isn't for posting (posted or being posted already;
-    at its slot, anything but waiting for it)."""
+    at its time, anything but waiting for it)."""
     with _reels:
         row = db.get_video(video_id)
         reel = (row["plan"].get("instagram") or {}) if row else {}
@@ -533,25 +518,26 @@ def _claim_reel(video_id: int, now: bool) -> tuple[dict | None, str | None]:
 
 
 def post_reel(row: dict, progress=log, now: bool = False) -> dict:
-    """Posts a Short to Instagram as a Reel: once its slot has come and it's public on YouTube, or at once when you
-    press Post now (even before it's public on YouTube: your call). In the cloud a video kept by an earlier run is
-    fetched from it first (tools/kept.py); one whose run is still going is left to that run, untouched. While Meta
-    refuses Instagram's connection it waits, untouched, except for your Post now, which tries anyway."""
+    """Posts a story's short version to Instagram as a Reel: once its time has come and its Short is public on YouTube,
+    or at once when you press Post now (even before it's public on YouTube: your call). Its cover is the moment its title
+    is in. In the cloud a short version kept by an earlier run is fetched from it first (tools/kept.py); one whose run is
+    still going is left to that run, untouched. While Meta refuses Instagram's connection it waits, untouched, except for
+    your Post now, which tries anyway."""
     video_id = row["id"]
-    out = animator.preview_path(video_id)
+    out = animator.reel_path(row)
     run = (row["plan"].get("instagram") or {}).get("kept_in")
     if run and not out.exists():
         if not kept.in_cloud():
             return {"video_id": video_id, "skipped": "its video is kept in the cloud, which posts its Reel"}
         if kept.still_running(run):
-            progress(f"Short #{video_id}'s video is with run {run}, still going: that run posts its Reel")
+            progress(f"Story #{video_id}'s short version is with run {run}, still going: that run posts its Reel")
             return {"video_id": video_id, "skipped": f"run {run}, which made it, is still going", "waits_for_run": run}
     if not now and (down := _still_refused(progress)):
         return {"video_id": video_id, "skipped": f"Meta refuses Instagram's connection ({down['error'][:150]})",
                 "waits_for_instagram": True}
     row, before = _claim_reel(video_id, now)
     if not row:
-        return {"video_id": video_id, "skipped": f"the Reel of Short #{video_id} is posted, or being posted, already"}
+        return {"video_id": video_id, "skipped": f"the Reel of story #{video_id} is posted, or being posted, already"}
     plan = row["plan"]
     reel = {k: v for k, v in plan["instagram"].items() if k != "posting_at"}
 
@@ -559,11 +545,11 @@ def post_reel(row: dict, progress=log, now: bool = False) -> dict:
         reel.update(status=status, **extra)
         db.update_video(video_id, plan={**db.get_video(video_id)["plan"], "instagram": reel})
         if status == "posted":
-            out.unlink(missing_ok=True)  # (a Reel that didn't go keeps it until REEL_DAYS after its slot, for Post now)
+            out.unlink(missing_ok=True)  # (a Reel that didn't go keeps it until REEL_DAYS after its time, for Post now)
         return {"video_id": video_id, "instagram": status, **extra}
 
     def again(e: Exception, what: str) -> dict:
-        """A try that didn't work: your Post now is tried once; at its slot it's tried again later (REEL_WAITS). Meta
+        """A try that didn't work: your Post now is tried once; at its time it's tried again later (REEL_WAITS). Meta
         refusing the connection isn't counted as a try: every Reel waits for it (_went_down)."""
         if getattr(e, "link_refused", None):  # (why Instagram refused the temporary link before the sending failed)
             reel["link_refused"] = e.link_refused[:300]
@@ -575,7 +561,7 @@ def post_reel(row: dict, progress=log, now: bool = False) -> dict:
                                    "Channels page; if that doesn't help, developers.facebook.com shows whether Meta "
                                    "blocked your app") from e
             return done("pending", error=str(e)[:300], tries=0, retry_at=db.now_iso(DOWN_RECHECK))
-        if now:  # your Post now: tried once; a Reel that was waiting for its slot still waits for it
+        if now:  # your Post now: tried once; a Reel that was waiting for its time still waits for it
             done("pending" if before == "pending" else "failed", error=str(e)[:300])
             raise RuntimeError(f"{what}: {e}") from e
         tries = int(reel.get("tries") or 0) + 1
@@ -588,7 +574,7 @@ def post_reel(row: dict, progress=log, now: bool = False) -> dict:
         return done("failed", error=str(e)[:300])
 
     if run and not out.exists():
-        progress(f"Getting Short #{video_id}'s video from run {run}, which kept it")
+        progress(f"Getting story #{video_id}'s short version from run {run}, which kept it")
         try:
             kept.fetch(video_id, run, out)
         except FileNotFoundError as e:
@@ -598,48 +584,46 @@ def post_reel(row: dict, progress=log, now: bool = False) -> dict:
             return again(e, "Its video couldn't be fetched")
     if not out.exists():
         return done("failed", error="the video file was gone")
-    where = "public" if now else _on_youtube(row["youtube_id"])
-    if where == "publishing" and (row["publish_at"] or "") > db.now_iso(-PUBLISH_LAG):
-        progress(f"YouTube hasn't made Short #{video_id} public yet; its Reel waits a few minutes more")
+    where = "public" if now else _on_youtube(reel.get("youtube_id") or row["youtube_id"])
+    if where == "publishing" and (_turn(row) or "") > db.now_iso(-PUBLISH_LAG):
+        progress(f"YouTube hasn't made story #{video_id}'s short version public yet; its Reel waits a few minutes more")
         return done("pending", retry_at=db.now_iso(timedelta(minutes=3)))  # (no try counted)
     if where != "public":
-        progress(f"Short #{video_id} isn't public on YouTube (deleted or made private): no Reel")
+        progress(f"Story #{video_id}'s short version isn't public on YouTube (deleted or made private): no Reel")
         return done("skipped", error="not public on YouTube")
     meta = plan["metadata"]
+    cover = float((plan.get("short_render") or {}).get("cover_at") or story_film.SHORT_COVER_AT)
     try:
-        posted = instagram.publish(out, caption(meta, plan), float((plan.get("thumbnail") or {}).get("at") or 0),
-                                   progress=progress, **({"ai_label": True} if ai_made(plan) else {}))
+        posted = instagram.publish(out, caption(meta, plan), cover, progress=progress)
     except Exception as e:
         return again(e, "Instagram didn't take it")
     notify.run(f"\U0001F4F8 On Instagram now: {meta['title']}" + (f"\n{posted['url']}" if posted.get("url") else ""))
     _came_back(progress)  # (if the connection was refused until now, the Reels that waited go up next)
     if posted.get("link_refused"):  # (sent instead: kept to find out why Instagram refused the temporary link)
         reel["link_refused"] = posted["link_refused"][:300]
-    if posted.get("label_refused"):
-        reel["label_refused"] = posted["label_refused"][:300]
-        notify.run("\u26A0\uFE0F Instagram refused the AI label on a Reel, so it went up without it: " + meta["title"])
     return done("posted", id=posted["id"], url=posted.get("url"), posted_at=db.now_iso(), error=None, retry_at=None)
 
 
 def cancel_reel(video_id: int, because: str = "you took it off", keep_video: bool = True) -> bool:
     """Takes a Reel that isn't posted off Instagram's schedule: it isn't posted (your Post now still can while its video
     is kept). False if there's none to take off (none, posted, or being posted). Without keep_video its video goes too
-    (the Short was stopped or deleted on YouTube, so no Reel is wanted)."""
+    (the story was stopped or deleted on YouTube, so no Reel is wanted)."""
     with _reels:
         row = db.get_video(video_id)
         reel = (row["plan"].get("instagram") or {}) if row else {}
         taken = reel.get("status") in ("pending", "posting", "failed", "skipped", "remaking") and not _posting(reel)
         if taken:
-            kept = {k: v for k, v in reel.items() if k not in ("retry_at", "posting_at", "remaking_at")}
-            db.update_video(video_id, plan={**row["plan"], "instagram": {**kept, "status": "cancelled", "because": because,
+            kept_parts = {k: v for k, v in reel.items() if k not in ("retry_at", "posting_at", "remaking_at")}
+            db.update_video(video_id, plan={**row["plan"], "instagram": {**kept_parts, "status": "cancelled",
+                                                                          "because": because,
                                                                           "cancelled_at": db.now_iso()}})
         if row and not keep_video and not _posting(reel) and not _remaking(reel):  # (remake_reel clears its own)
-            animator.remove(animator.preview_path(video_id))
+            animator.remove(animator.reel_path(row))
     return taken
 
 
 def drop_reel(video_id: int) -> dict:
-    """Your Delete on a Short's Instagram side: a posted Reel is deleted from Instagram; one not posted yet is taken off
+    """Your Delete on a story's Instagram side: a posted Reel is deleted from Instagram; one not posted yet is taken off
     (cancel_reel). ValueError if there's neither; InstagramError if Instagram refuses."""
     with _reels:
         row = db.get_video(video_id)
@@ -655,21 +639,21 @@ def drop_reel(video_id: int) -> dict:
 
 
 def remake_reel(row: dict, progress=log) -> dict:
-    """A Short that went up while Reels were off (its video wasn't kept) made again for Instagram: the same case, music
-    and drawings, read again by the same voice (the first reading isn't kept either), so its Reel is the same Short in
-    a new take. The Reel then waits for its slot; what's saved about the YouTube video stays as it was."""
+    """A story that went up while Reels were off (its short version wasn't kept) made again for Instagram: only its
+    short version (the film is on YouTube), read again by the same voice, so its Reel is the same short version in a new
+    take. The Reel then waits for its time; what's saved about the YouTube videos stays as it was."""
     video_id = row["id"]
     with _reels:
         row = db.get_video(video_id)
         if not row or not platforms(row)["instagram"]["can"]["schedule"]:
-            raise ValueError(f"Short #{video_id} can't be made again for Instagram (on the schedule, Instagram connected, "
+            raise ValueError(f"Story #{video_id} can't be made again for Instagram (on the schedule, Instagram connected, "
                              "and no Reel waiting or posted)")
         before = row["plan"].get("instagram")
         db.update_video(video_id, plan={**row["plan"], "instagram": {**(before or {}), "status": "remaking",
                                                                       "remaking_at": db.now_iso()}})
     try:
-        progress(f"Making Short #{video_id}'s video again for Instagram")
-        made = animator.animate(row, animator.preview_path(video_id), progress, now=True, again=True)
+        progress(f"Making story #{video_id}'s short version again for Instagram")
+        made = animator.make_short(row, progress, now=True, again=True)
     except Exception:
         with _reels:  # as it was before
             db.update_video(video_id, plan={**db.get_video(video_id)["plan"], "instagram": before})
@@ -677,18 +661,20 @@ def remake_reel(row: dict, progress=log) -> dict:
     with _reels:
         fresh = db.get_video(video_id)
         if (fresh["plan"].get("instagram") or {}).get("status") != "remaking":  # taken off meanwhile (deleted on YouTube)
-            animator.remove(animator.preview_path(video_id))
+            animator.remove(animator.short_path(video_id))
             return {**made, "instagram": "cancelled"}
-        db.update_video(video_id, plan={**fresh["plan"], "instagram": {"status": "pending", "tries": 0,
-                                                                        "remade_at": db.now_iso()}})
-    progress(f"Its Reel goes on Instagram at its slot ({slots.clock(slots.parse(_turn(fresh)), slots.plan())})")
+        short = fresh["plan"].get("short_upload") or {}
+        db.update_video(video_id, plan={**fresh["plan"], "instagram": {
+            "status": "pending", "tries": 0, "remade_at": db.now_iso(), "at": short.get("publish_at"),
+            "youtube_id": short.get("youtube_id")}})
+    progress(f"Its Reel goes on Instagram at its time ({slots.clock(slots.parse(_turn(db.get_video(video_id))), slots.plan())})")
     return {**made, "instagram": "pending"}
 
 
 def platforms(row: dict, live: dict | None = None) -> dict:
-    """Where a Short stands on YouTube and on Instagram, and which of your buttons work there now (the Schedule page's
-    two parts; the dashboard's actions check the same). `live`: what YouTube said just now about the videos it was
-    asked about (youtube_upload.statuses; None for one it doesn't have any more), to notice changes made in Studio."""
+    """Where a story stands on YouTube and on Instagram, and which of your buttons work there now (the Schedule page's
+    two parts; the dashboard's actions check the same). `live`: what YouTube said just now about the videos it was asked
+    about (youtube_upload.statuses; None for one it doesn't have any more), to notice changes made in Studio."""
     now = db.now_iso()
     yid, status = row["youtube_id"], row["status"]
     public = status == "scheduled" and bool(row["publish_at"]) and row["publish_at"] <= now
@@ -707,13 +693,13 @@ def platforms(row: dict, live: dict | None = None) -> dict:
     there = bool(yid) and yt["state"] not in ("gone", "deleted")
     early = status == "scheduled" and not public
     if there:
-        yt["url"] = (f"https://youtube.com/shorts/{yid}" if yt["state"] == "public"
+        yt["url"] = (f"https://www.youtube.com/watch?v={yid}" if yt["state"] == "public"
                      else f"https://studio.youtube.com/video/{yid}/edit")
     yt["can"] = {"open": there, "now": early and there and yt["state"] not in ("public", "rejected"),
                  "stop": early and there, "delete": status == "scheduled" and bool(yid)}
 
     reel = row["plan"].get("instagram") or {}
-    connected, video = instagram.is_configured(), animator.preview_path(row["id"]).exists()
+    connected, video = instagram.is_configured(), animator.reel_path(row).exists()
     state, error = reel.get("status") or ("making" if status == "making" else "none"), reel.get("error")
     if state == "posting" and not _posting(reel):
         state, error = "failed", "its posting was cut off (the dashboard stopped)"
@@ -725,13 +711,14 @@ def platforms(row: dict, live: dict | None = None) -> dict:
     why = ("Connect Instagram first (the Channels page)" if not connected
            else "It's on Instagram already" if state == "posted"
            else "It's being posted right now" if state == "posting"
-           else "Its video is being made again for Instagram" if state == "remaking"
+           else "Its short version is being made again for Instagram" if state == "remaking"
            else "It isn't on the schedule yet" if status != "scheduled"
            else None if video
-           else "Its video is kept in the cloud, which posts its Reel at its slot"
+           else "Its short version is kept in the cloud, which posts its Reel at its time"
            if reel.get("kept_in") and state in ("waiting", "due", "retry")
-           else "Reels weren't on when it went up, so its video wasn't kept: Schedule makes it again" if state == "none"
-           else f"Its video isn't kept any more (only until {REEL_DAYS} days after its slot)")
+           else "Reels weren't on when it went up, so its short version wasn't kept: Schedule makes it again"
+           if state == "none"
+           else f"Its short version isn't kept any more (only until {REEL_DAYS} days after its time)")
     username = env("INSTAGRAM_USERNAME")
     ig = {"state": state, "at": at, "url": reel.get("url"), "error": error, "retry_at": reel.get("retry_at"),
           "posted_at": reel.get("posted_at"), "because": reel.get("because"), "why": why,
@@ -745,13 +732,14 @@ def platforms(row: dict, live: dict | None = None) -> dict:
 
 
 def run(row: dict, slot: datetime, sched: dict, progress=log) -> dict:
-    return act("publisher", f"Upload Short #{row['id']}", upload, row, slot, sched, progress=progress)
+    return act("publisher", f"Upload story #{row['id']}", upload, row, slot, sched, progress=progress)
 
 
 def run_remake(row: dict, progress=log) -> dict:
-    return act("animator", f"Make Short #{row['id']} again for Instagram", remake_reel, row, progress=progress)
+    return act("animator", f"Make story #{row['id']}'s short version again for Instagram", remake_reel, row,
+               progress=progress)
 
 
 def run_instagram(row: dict, progress=log, now: bool = False) -> dict:
-    return act("publisher", f"Reel for Short #{row['id']}" + (" (Post now)" if now else ""), post_reel, row,
+    return act("publisher", f"Reel for story #{row['id']}" + (" (Post now)" if now else ""), post_reel, row,
                progress=progress, now=now)

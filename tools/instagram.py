@@ -75,7 +75,7 @@ from pathlib import Path
 import requests
 from dotenv import set_key, unset_key
 
-import short_render
+import media
 import tunnel
 from common import ROOT, env, load_config, tmp_path
 
@@ -284,7 +284,7 @@ def check() -> str | None:
 
 
 def _seconds(video: Path) -> float:
-    err = subprocess.run([short_render.ffmpeg_exe(), "-hide_banner", "-i", str(video)], capture_output=True, text=True,
+    err = subprocess.run([media.ffmpeg_exe(), "-hide_banner", "-i", str(video)], capture_output=True, text=True,
                          encoding="utf-8", errors="replace", timeout=60).stderr
     found = re.search(r"Duration: (\d+):(\d+):([\d.]+)", err)
     return int(found[1]) * 3600 + int(found[2]) * 60 + float(found[3]) if found else 90.0
@@ -301,7 +301,7 @@ def _for_reels(video: Path, mb: float = REEL_MB) -> Path:
     most `mb` MB."""
     out = tmp_path("out", f"reel_{video.stem}.mp4")
     kbps = picture_kbps(_seconds(video), mb)
-    subprocess.run([short_render.ffmpeg_exe(), "-y", "-v", "error", "-i", str(video), "-map", "0:v", "-map", "0:a",
+    subprocess.run([media.ffmpeg_exe(), "-y", "-v", "error", "-i", str(video), "-map", "0:v", "-map", "0:a",
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-bf", "0", "-pix_fmt", "yuv420p",
                     "-maxrate", f"{kbps}k", "-bufsize", f"{2 * kbps}k", "-c:a", "aac", "-b:a", AUDIO_RATE, "-ar", "44100",
                     "-use_editlist", "0", "-movflags", "+faststart", str(out)],

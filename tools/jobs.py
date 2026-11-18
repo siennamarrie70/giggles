@@ -1,87 +1,70 @@
 """
-The jobs that run the channel on its posting schedule, by calling the seven agents (agents/) in
-order. GitHub Actions runs the morning run every day (.github/workflows/morning.yml); the dashboard
-on this computer runs the same jobs while its database is the local one.
+The jobs that run the channel on its posting schedule, by calling the six agents (agents/) in order: one motivation
+story a day, public at series.post_at (17:30 in India), and its short version (the whole story in under a minute) as a
+Short series.short_after_hours later. GitHub
+Actions runs the morning run every day (.github/workflows/morning.yml); the dashboard on this computer runs the same jobs
+while its database is the local one.
 
-  morning    the day's run: from schedule.make_at (07:00), one Short after another for every open
-             slot of the posting day, with no pause, until all are scheduled; then one summary to
-             your phone and the day's numbers. Then it rests until the next morning.
-  autopilot  one slot (the earliest that's due) -> the oldest case ready to go up (or a new one,
-             made on the spot from a topic that needs nobody's OK) -> Agent 4 animates it and Agent 5
-             reviews it (unless that's done; a video that fails goes back to Agent 4, at most twice,
-             then another case takes the slot and the loop has it made again by itself, until it
-             passes: unmade()) -> Agent 6 uploads it, scheduled
-             to go public on the minute of its slot. A snag is fixed where it happens or the case is
-             replaced at once (see "When an agent hits a snag" below)
-  prepare    Agents 1, 2 and 3 make a case: the Editor picks it, the Researcher checks the facts, the
-             Writer scripts and fact-checks it. News and politics can wait for your OK.
-  publish    with --dry-run Agents 4 and 5 make and review a case's video (the dashboard's "Make the
-             video" by itself, or "Make it now"); without it Agent 6 then uploads it into the next open slot
-  instagram  Agent 6 posts a Short to Instagram as a Reel once its slot has come (Instagram's API
-             can't schedule Reels), when Instagram is connected and switched on
-  stats      Agent 7: today's numbers and comments; weekly, the playbook and every agent's lessons
+  morning    the day's run: from schedule.make_at (07:00), the day's story, made and scheduled; then one summary to your
+             phone and the day's numbers. Then it rests until the next morning.
+  autopilot  the day's slot (or, with --now / the dashboard's "Make the 17:30 video now", the next open one) -> the oldest
+             story ready to go up (or a new one, written on the spot) -> Agent 3 makes the film and its short version and
+             Agent 4 reviews them (unless that's done; a film that fails goes back to Agent 3, at most twice, then it's
+             made again by itself until it passes: unmade()) -> Agent 5 uploads it, scheduled to go public on the minute
+             of its slot, and its short version after it
+  prepare    Agents 1 and 2 write a story: the theme and title, then the screenplay and the narrator's script
+  publish    with --dry-run Agents 3 and 4 make and review a story's film and its short version (the dashboard's "Make it
+             now"); without it Agent 5 then uploads them into the next open slot
+  instagram  Agent 5 posts a story's short version to Instagram as a Reel once its time has come (Instagram's API can't
+             schedule Reels), when Instagram is connected and switched on
+  stats      Agent 6: today's numbers; weekly, the playbook and every agent's lessons
 
-When an agent hits a snag, it's fixed where it can be: the Researcher's topic that the sources can't
-support, or a script the Writer can't get past the fact-check even rewritten, is swapped for another
-topic (TOPIC_TRIES); a video the Reviewer fails goes back to the Animator with notes; a case whose
-making or upload fails is tried once more. If that doesn't fix it, the whole process starts again at
-once with a new case for the same slot (CASE_TRIES), with no waiting. Only what another case can't
-fix makes the run wait: Gemini's voice out, or in the drawn look Cloudflare's drawing (out, or the
-day's free drawing used up: until 00:00 UTC, 05:30 in India) (the case waits for it, nothing counted
-against it), Gemini out of quota, or YouTube's sign-in.
+When an agent hits a snag, it's fixed where it can be: a theme the story can't be written for (it keeps breaking the
+rules) is swapped for another (THEME_TRIES); a film the Reviewer fails goes back to the Animator with notes; a story whose
+making or upload fails is tried once more. If that doesn't fix it, the whole process starts again at once with a new
+story for the same slot (STORY_TRIES), with no waiting. Only what another story can't fix makes the run wait: Gemini's
+voice out (the story waits for it, nothing counted against it), Gemini out of quota, or YouTube's sign-in.
 
-Every job runs at below-normal priority (common.background_priority), and so do the renders it
-starts: on this computer, whatever you're doing comes first and the run just takes a little longer
-(measured 2026-10-27 with two renders at once: the worst stall of a normal-priority program fell from
-0.31 to 0.21 s, the typical slow moments by about half).
+Every job runs at below-normal priority (common.background_priority), and so do the renders it starts: on this computer,
+whatever you're doing comes first and the run just takes a little longer.
 
-A case that's waiting without its video (made from the Topics page, sent back with "Make it again",
-or left from a run) is made and reviewed by the loop on this computer between runs, without anyone
-pressing "Make the video" (unmade()): not while Gemini's voice (or Cloudflare's drawing) rests, a failed one again after
-PREVIEW_RETRY, and given up after PREVIEW_TRIES failures (a new case takes its place in the run).
+A story that's waiting without its film (written from the Themes page, sent back with "Make it again", or left from a
+run) is made and reviewed by the loop on this computer between runs, without anyone pressing "Make it now" (unmade()):
+not while Gemini's voice rests, a failed one again after PREVIEW_RETRY, and given up after PREVIEW_TRIES failures.
 
-A slot is due once its posting day's run has started (make_at that morning; see tools/slots.py)
-until an hour after the slot. next_chore() is what the dashboard's loop on this computer asks every
-minute: the morning run while the day has open slots, then a waiting case's video, then the day's
-numbers. Between runs nothing is made ahead. Reels whose slot has come are posted by the same loop
-beside all that (the instagram job as a task of its own), so a long morning run doesn't hold them up. A case still waiting for approval after
-cases.approval_expires_days is discarded (news goes stale).
+A slot is due once its posting day's run has started (make_at that morning; see tools/slots.py) until an hour after the
+slot. next_chore() is what the dashboard's loop on this computer asks every minute: the morning run while the day's slot
+is open, then a waiting story's film, then the day's numbers. Between runs nothing is made ahead. Reels whose time has
+come are posted by the same loop beside all that (the instagram job as a task of its own).
 
-In the cloud (GitHub Actions) there's no such loop, and the machine is wiped after each run: the
-morning run posts the Reels whose slot comes while it goes, from a thread beside it (their videos are
-on its machine: _reels_beside); at its end `keep` encrypts the videos of the Reels still waiting for
-GitHub to keep with the run (tools/kept.py), and the Reels workflow (.github/workflows/reels.yml) runs
-`instagram --stay 40` after each slot, which fetches them from there and posts them, staying a while
-for retries and for YouTube being a little late making a Short public. While Meta refuses Instagram's
-connection (the token or the Meta app, not one video) the Reels wait for it, no try counted, and a
-Reels run fails once a day so GitHub emails you (agents/publisher.py).
+In the cloud (GitHub Actions) there's no such loop, and the machine is wiped after each run: the morning run posts the
+Reels whose time comes while it goes, from a thread beside it (their videos are on its machine: _reels_beside); at its end
+`keep` encrypts the videos of the Reels still waiting for GitHub to keep with the run (tools/kept.py), and the Reels
+workflow (.github/workflows/reels.yml) runs `instagram --stay 40` at the short version's time, which fetches them from there and
+posts them. While Meta refuses Instagram's connection the Reels wait for it, no try counted, and a Reels run fails once a
+day so GitHub emails you (agents/publisher.py).
 
-YouTube's daily upload limit (about 10 uploads in 24 hours for this channel on 2026-10-29, the same
-as the Shorts a day, deleted ones counting too; not documented, and it has varied): when YouTube
-refuses an upload for it, the case waits, nothing new is made meanwhile, and it's tried again when
-YouTube should take one (upload_room_at: when the oldest upload filling the limit is 24 hours old, or
-midnight in California), at most an hour later. A run that would end before then stops at once (not
-a failure) and the next run carries on; in the cloud a video already made is kept for it, not made
-again (keep_videos). The dashboard says until when.
+YouTube's daily upload limit (about 10 uploads in 24 hours for this channel on 2026-10-29, deleted ones counting too; not
+documented, and it has varied): when YouTube refuses an upload for it, the story waits, nothing new is made meanwhile,
+and it's tried again when YouTube should take one (upload_room_at). A run that would end before then stops at once (not a
+failure) and the next run carries on; in the cloud a film already made is kept for it, not made again (keep_videos).
 
-PAUSED=true (in .env or GitHub's variables), or the dashboard's pause switch (kept in the database),
-stops the morning run and every automatic job. Cases, videos and uploads you start yourself still
-work. Each job reports its steps through `progress` (stderr by default; the dashboard shows them
-live).
+PAUSED=true (in .env or GitHub's variables), or the dashboard's pause switch (kept in the database), stops the morning
+run and every automatic job. Stories, films and uploads you start yourself still work. Each job reports its steps
+through `progress` (stderr by default; the dashboard shows them live).
 
 Usage:
     python tools/jobs.py morning               # the day's run (what GitHub runs at 06:55)
-    python tools/jobs.py autopilot [--now]     # one Short; --now: the next open slot, even if it isn't due
+    python tools/jobs.py autopilot [--now]     # one story; --now: the next open slot, even if it isn't due
     python tools/jobs.py prepare
-    python tools/jobs.py publish [--dry-run] [--newest]  # --dry-run makes and reviews but doesn't upload; --newest: the case made last
-    python tools/jobs.py instagram [--stay 40]  # posts the Reels whose slot has come (--stay: and those due soon)
+    python tools/jobs.py publish [--dry-run] [--newest]  # --dry-run makes and reviews but doesn't upload; --newest: the story written last
+    python tools/jobs.py instagram [--stay 40]  # posts the Reels whose time has come (--stay: and those due soon)
     python tools/jobs.py keep                  # (the cloud, after a run) the videos still needed, kept
     python tools/jobs.py stats [--learn]
 """
 
 import argparse
 import json
-import re
 import sys
 import threading
 import time
@@ -91,46 +74,41 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the agents/ package
 
-import archive_find  # noqa: E402
 import db  # noqa: E402
-import draw  # noqa: E402
 import kept  # noqa: E402
 import llm  # noqa: E402
 import notify  # noqa: E402
 import prompts  # noqa: E402
+import series  # noqa: E402
 import slots  # noqa: E402
-import trends_fetch  # noqa: E402
 import youtube_auth  # noqa: E402
 import youtube_upload  # noqa: E402
-from agents import analyst, animator, editor, publisher, researcher, reviewer, writer  # noqa: E402
-from common import background_priority, is_true, load_config, redact, tmp_path  # noqa: E402
+from agents import analyst, animator, publisher, reviewer, story, storyboard, theme  # noqa: E402
+from common import background_priority, hide_secrets_in_crashes, is_true, redact  # noqa: E402
 
-LATE_GRACE = timedelta(minutes=60)     # a slot stays due this long after it (the Short then goes live at once)
-STALE_CLAIM = timedelta(minutes=15)    # "making" for longer means the run was cut off
+LATE_GRACE = timedelta(minutes=60)     # a slot stays due this long after it (the story then goes live at once)
+STALE_CLAIM = timedelta(minutes=45)    # "making" for longer means the run was cut off (a story takes 15-30 minutes)
 MANUAL_LEAD = timedelta(minutes=10)    # an upload you start yourself takes a slot at least this far ahead
-TRENDS_FRESH = timedelta(hours=6)      # how long fetched trends are reused (worldwide is ~190 requests)
 STATS_EVERY = timedelta(hours=20)      # the Analyst reads the numbers about once a day
 STATS_RETRY = timedelta(hours=1)       # ...and after a failed read, tries again this long after
-TOPIC_TRIES = 3                        # topics the Editor may pick before a case is given up
-CASE_TRIES = 3                         # cases tried, one after another, for one slot before the run waits
-PREVIEW_RETRY = timedelta(minutes=30)  # a waiting case whose video failed is made again this long after
+THEME_TRIES = 3                        # themes Agent 1 may pick before a story is given up
+STORY_TRIES = 3                        # stories tried, one after another, for one slot before the run waits
+PREVIEW_RETRY = timedelta(minutes=30)  # a waiting story whose film failed is made again this long after
 PREVIEW_TRIES = 3                      # ...and given up after this many failures
 MORNING_WAIT = timedelta(minutes=30)   # a run started this early waits for make_at (GitHub starts it at 06:55)
-RETRY_FIRST = timedelta(minutes=2)     # after a Short fails: 2, 4, 8, 16 minutes before the next try...
+RETRY_FIRST = timedelta(minutes=2)     # after a story fails: 2, 4, 8, 16 minutes before the next try...
 RETRY_MOST = timedelta(minutes=20)     # ...up to 20, so Gemini's free per-minute limits recover
-UPLOAD_WAIT = timedelta(hours=1)       # YouTube's daily upload limit reached: its case tried again at most this much
+UPLOAD_WAIT = timedelta(hours=1)       # YouTube's daily upload limit reached: its story tried again at most this much
                                        # later, or when YouTube should take one again (upload_room_at), if that's sooner
 UPLOAD_SOONEST = timedelta(minutes=2)  # ...but not sooner than this
 PACIFIC = ZoneInfo("America/Los_Angeles")  # (YouTube's days may be California's: its upload limit isn't documented)
 LIMIT_STOP = "YouTube's daily upload limit"
-NO_TOPIC_STOP = "No topic with enough real material"
-EMPTY_IN_A_ROW = 2                     # slots in a row with no topic that can be made (Constructivist Montage): the run ends quietly
-MAX_TRIES = 25                         # Shorts tried in one run before it stops (something's wrong every time)
+MAX_TRIES = 6                          # stories tried in one run before it stops (something's wrong every time)
 RUN_LIMIT = timedelta(hours=5, minutes=40)  # a run stops before GitHub's 6-hour job limit
 REELS_EVERY = 60                       # seconds: how often the cloud's morning run looks for Reels due (_reels_beside)
-SLOT_PARTS = ("metadata.title", "brief.category", "instagram")  # what the schedule board shows of a case (db.LIGHT)
+SLOT_PARTS = ("metadata.title", "brief.theme", "instagram", "short_upload")  # what the schedule shows of a story (db.LIGHT)
 PAUSE_CHECK = timedelta(minutes=10)    # while a run waits, the dashboard's pause switch (in the database) is read this
-                                       # often: every read wakes the database, whose hours awake Neon's free plan counts
+                                       # often: every read wakes the database
 REELS_FINISH = timedelta(minutes=10)   # ...and how long it waits, at its end, for a Reel being posted
 clock = slots.clock
 
@@ -156,8 +134,8 @@ def _now() -> datetime:
 # --- slots ----------------------------------------------------------------
 
 def slot_board(start: datetime, end: datetime, sched: dict, now: datetime | None = None) -> list[dict]:
-    """Each slot from start to end, with the Short holding it and where it stands: posted, scheduled, making,
-    late (its time has come), due (its day's run has started), open (made in a later run) or missed."""
+    """Each slot from start to end, with the story holding it and where it stands: posted, scheduled, making, late (its
+    time has come), due (its day's run has started), open (made in a later run) or missed."""
     now = now or _now()
     holders = db.slot_holders(slots.iso(start - sched["every"]), slots.iso(end + sched["every"]), parts=SLOT_PARTS)
     board = []
@@ -179,14 +157,14 @@ def slot_board(start: datetime, end: datetime, sched: dict, now: datetime | None
 
 
 def due_slot(now: datetime | None = None, sched: dict | None = None) -> datetime | None:
-    """The earliest slot that needs a Short now, if any: an open slot of a posting day whose run has started."""
+    """The earliest slot that needs a story now, if any: an open slot of a posting day whose run has started."""
     now, sched = now or _now(), sched or slots.plan()
     return next((s["slot"] for s in slot_board(now - LATE_GRACE, now + timedelta(days=1), sched, now)
                  if s["state"] in ("late", "due")), None)
 
 
 def next_open_slot(lead: timedelta, now: datetime | None = None, sched: dict | None = None) -> datetime:
-    """The earliest slot at least `lead` from now that no Short holds."""
+    """The earliest slot at least `lead` from now that no story holds."""
     now, sched = now or _now(), sched or slots.plan()
     found = next((s["slot"] for s in slot_board(now + lead, now + timedelta(days=8), sched, now)
                   if s["state"] in ("due", "open")), None)
@@ -195,35 +173,18 @@ def next_open_slot(lead: timedelta, now: datetime | None = None, sched: dict | N
     return found
 
 
-def expire_approvals(progress=_log) -> list[int]:
-    """Cases that waited for your OK longer than cases.approval_expires_days: discarded (news goes stale)."""
-    days = int(load_config()["cases"].get("approval_expires_days", 2))
-    cutoff = _now() - timedelta(days=days)
-    expired = []
-    for v in db.planned_videos():
-        if v["plan"].get("approval") == "waiting" and slots.parse(v["created_at"]) < cutoff:
-            db.update_video(v["id"], status="discarded", error=f"Waited more than {days} days for approval")
-            expired.append(v["id"])
-            progress(f"Case #{v['id']} waited too long for your OK and was discarded")
-    if expired:
-        notify.run(f"\U0001F5D1 {len(expired)} case(s) waited more than {days} days for your OK and were discarded.")
-    return expired
-
-
 def check(progress=_log) -> datetime | None:
-    """The cheap part of each check: check in, free Shorts whose run was cut off, drop stale approvals,
-    and say whether a slot is due."""
+    """The cheap part of each check: check in, free stories whose run was cut off, give up Reels too old to post, and
+    say whether a slot is due."""
     db.beat("autopilot")
     for row in db.release_stale(slots.iso(_now() - STALE_CLAIM)):
-        progress(f"Short #{row['id']} was interrupted while being made; it's now {row['status']}")
-    publisher.auto_approve(progress)  # with approvals off, nothing waits for anyone
-    expire_approvals(progress)
+        progress(f"Story #{row['id']} was interrupted while being made; it's now {row['status']}")
     publisher.expire_reels(progress)
     return due_slot()
 
 
 def tick(progress=_log) -> dict:
-    """What Vercel Cron calls every hour: a full autopilot run only when a slot is due."""
+    """A full autopilot run only when a slot is due."""
     if paused := _paused():
         return paused
     if not check(progress):
@@ -233,8 +194,7 @@ def tick(progress=_log) -> dict:
 
 def next_chore() -> tuple[str, dict] | None:
     """What the loop on this computer should do now, most urgent first, or None. Between morning runs it rests:
-    nothing is made ahead. (Reels aren't a chore: the loop posts them at their slot beside whatever is going, since
-    a morning run can take hours, or wait hours for Cloudflare.)"""
+    nothing is made ahead. (Reels aren't a chore: the loop posts them at their time beside whatever is going.)"""
     if check():
         return "morning", {}
     if waiting := unmade():
@@ -246,8 +206,7 @@ def next_chore() -> tuple[str, dict] | None:
 
 def stats_due() -> bool:
     """Is it time for the Analyst to read the numbers: STATS_EVERY since it last did, not within STATS_RETRY of a
-    failed or unfinished try, and something published to read. (It's asked beside everything else, not only when the
-    rest is done: a morning run that never finished cleanly kept it from reading anything from 2026-10-26 to 28.)"""
+    failed or unfinished try, and something published to read."""
     if not db.published_videos(days=60, parts=()):
         return False
     tried = db.last_run("analyst", ok=None)
@@ -258,25 +217,26 @@ def stats_due() -> bool:
 
 
 def unmade() -> dict | None:
-    """The oldest waiting case whose video isn't made, or isn't reviewed as it is now: the Animator makes it without
-    anyone pressing "Make the video". None while Gemini's voice (or Cloudflare's drawing, with look.when_out: wait)
-    rests; one the Reviewer turned down after the fixes is made again by itself when its remake_at comes (until it
-    passes: nothing waits for you, your call on 2026-10-27); one that failed is made again PREVIEW_RETRY later."""
+    """The oldest waiting story whose film isn't made, or isn't reviewed as it is now: the Animator makes it without
+    anyone pressing "Make it now". None while Gemini's voice rests; one the Reviewer turned down after the fixes is made
+    again by itself when its remake_at comes (until it passes: nothing waits for you, your call on 2026-10-27); one that
+    failed is made again PREVIEW_RETRY later."""
     if animator.resting():
         return None
     return next((v for v in db.planned_videos() if to_make(v)), None)
 
 
 def to_make(v: dict) -> bool:
-    """Is this waiting case's video for the loop to make now (unmade())?"""
+    """Is this waiting story's film, or its short version, for the loop to make now (unmade())?"""
     plan = v["plan"]
     review = plan.get("review") or {}
-    if not plan.get("script"):
+    if not plan.get("story") or not series.current({**v, "plan": {k: x for k, x in plan.items() if k != "render"}}):
         return False
     if review.get("held"):  # turned down after the fixes: made again by itself when its time comes
         return (review.get("remake_at") or "") <= db.now_iso()
     made = (animator.preview_path(v["id"]).exists() and (plan.get("render") or {}).get("id")
-            and not (plan.get("voice") or {}).get("backup"))
+            and (plan.get("render") or {}).get("look") == series.LOOK
+            and (animator.short_made(v) or review.get("override")))
     if made and reviewer.current(plan):
         return False
     failed = plan.get("preview_failed_at")
@@ -284,9 +244,9 @@ def to_make(v: dict) -> bool:
 
 
 def _must_wait(error: BaseException | None) -> bool:
-    """Is it something no other case would get past: Gemini's voice or Cloudflare's drawing out, Gemini out of quota or
-    refusing the key, YouTube's sign-in or its daily upload limit? Then the run waits instead of throwing away good
-    cases (on 2026-10-27 the upload limit threw away 16 cases made one after another: #49-#64)."""
+    """Is it something no other story would get past: Gemini's voice out, Gemini out of quota or refusing the key,
+    YouTube's sign-in or its daily upload limit, the look's description unreadable? Then the run waits instead of
+    throwing away good stories."""
     while error:
         if isinstance(error, (animator.Resting, youtube_auth.YouTubeAuthError, youtube_upload.UploadLimit, prompts.NoPromptKey)):
             return True
@@ -296,97 +256,43 @@ def _must_wait(error: BaseException | None) -> bool:
     return False
 
 
-# --- making cases -----------------------------------------------------------
+# --- making stories -----------------------------------------------------------
 
-def trend_signals(cfg: dict, days_ahead: int | None = None, refresh: bool = False, cached_only: bool = False) -> dict:
-    """Today's trend signals for the Editor and the dashboard. What comes from the internet is kept for
-    TRENDS_FRESH: trends move slowly, and Google's feed refuses to be asked by every country for every
-    Short. cached_only never goes online: the last fetch however old (for the dashboard to show at once).
-    The calendar part is worked out fresh each time."""
-    region = str(cfg["trends"]["region"]).upper()
-    if cached_only:
-        online = db.fresh_note("trends", timedelta(days=3650)) or {}
-        if online.get("region") != region:
-            online = {"region": region, "fetched_at": None, "google_trends": [], "youtube_popular": [], "errors": []}
-    else:
-        online = None if refresh else db.fresh_note("trends", TRENDS_FRESH)
-        if not online or online.get("region") != region:
-            online = trends_fetch.online(region)
-            if online["google_trends"] or online["youtube_popular"]:  # an empty fetch is retried next time
-                db.keep_note("trends", online)
-    today = _now().date()
-    days = cfg["trends"]["calendar_days_ahead"] if days_ahead is None else days_ahead
-    return {"date": today.isoformat(), "weekday": today.strftime("%A"), **trends_fetch.calendar_signals(today, days),
-            **online}
-
-
-def research_folder(topic: str) -> Path:
-    slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:40] or "case"
-    return tmp_path("research", f"{_now():%Y%m%d-%H%M%S}-{slug}", "x").parent
-
-
-class NoTopic(RuntimeError):
-    """The Constructivist Montage look found no topic it can make right now: not a failure (your choice, 2026-11-04: a Short waits rather
-    than go up without real material, and there's no daily quota). The slot stays open for a later run."""
-
-
-def _make_case(progress, ready_now: bool = False) -> dict:
-    """Agent 1 picks the case, Agent 2 researches it, Agent 3 writes it: a plan ready for the queue. A
-    topic the sources can't support, or that the Writer can't script past the fact-check (it rewrites
-    once itself), is swapped for another one. In the Constructivist Montage look a quick search comes first, so a topic without real
-    material costs only the Editor's call, and running out of topics isn't a failure: the Short just waits (NoTopic)."""
+def make_story(progress=_log) -> dict:
+    """The next story: Agent 1 writes the day's brief, Agent 2 (your script writer) the script, Agent 3 its storyboard
+    (agents/storyboard.py: its places, its people, a shot for every line). A brief the story can't be made for (it keeps
+    breaking the rules) is swapped for another."""
     avoid, why = [], []
-    in_montage = draw.style_now() == "montage"
-    for attempt in range(TOPIC_TRIES):
+    for attempt in range(THEME_TRIES):
+        brief = theme.run(progress=progress, avoid=avoid)["brief"]
         try:
-            brief = editor.run(progress=progress, avoid=avoid, ready_now=ready_now)["brief"]
-        except Exception as e:
-            if not in_montage or _must_wait(e):
-                raise
-            why.append(str(e)[:120])
-            break
-        if in_montage and not archive_find.quick_check(brief, progress)["enough"]:
-            progress(f"“{brief['topic']}” hasn't enough free archive material"
-                     + ("; choosing another case" if attempt + 1 < TOPIC_TRIES else ""))
-            avoid.append(brief["topic"])
-            why.append(f"{brief['topic']}: too little free archive material")
-            continue
-        try:
-            pack = researcher.run(brief, research_folder(brief["topic"]), progress=progress)["pack"]
-            written = writer.run(brief, pack, progress=progress)
+            written = story.run(brief, progress=progress)
+            boarded = storyboard.run(written["story"], progress=progress)
+            written = {"story": boarded, "metadata": story.metadata(boarded),
+                       "script": {**written["script"], "lines": story.lines_of(boarded)}}
         except Exception as e:
             if _must_wait(e):
                 raise
-            progress(f"Snag with “{brief['topic']}” ({str(e)[:160]})"
-                     + ("; choosing another case" if attempt + 1 < TOPIC_TRIES else ""))
-            avoid.append(brief["topic"])
-            why.append(f"{brief['topic']}: {str(e)[:120]}")
+            progress(f"Snag with “{brief['theme']}” ({str(e)[:160]})"
+                     + ("; choosing another theme" if attempt + 1 < THEME_TRIES else ""))
+            avoid.append(brief["theme"])
+            why.append(f"{brief['theme']}: {str(e)[:120]}")
             continue
-        return {"brief": brief, "research": pack, "script": written["script"], "metadata": written["metadata"],
-                "approval": "waiting" if brief["needs_approval"] else None}
-    if in_montage:
-        raise NoTopic(f"{NO_TOPIC_STOP} was found ({'; '.join(why)}). The Short waits")
-    raise RuntimeError(f"no case could be made ({'; '.join(why)})")
+        return {"brief": brief, "story": written["story"], "script": written["script"], "metadata": written["metadata"]}
+    raise RuntimeError(f"no story could be written ({'; '.join(why)})")
 
 
-def _saved(plan: dict, video_id: int, progress) -> None:
-    """After a case is saved: mark the request or comment it answers, and ask for approval if needed."""
-    brief = plan["brief"]
-    if brief.get("request_id"):
-        db.set_topic(brief["request_id"], "used", video_id=video_id)
-    if brief.get("comment_id"):
-        db.use_comment(brief["comment_id"], video_id)
-    if plan["approval"] == "waiting":
-        progress(f"Case #{video_id} waits for your OK in the Studio")
-        notify.run(f"\U0001F4F0 A case waits for your OK (news or politics): {plan['metadata']['title']}\n"
-                   "Watch it in the dashboard's Studio, then approve or discard it.")
+def _saved(plan: dict, video_id: int) -> None:
+    """After a story is saved: mark the request it answers."""
+    if plan["brief"].get("request_id"):
+        db.set_topic(plan["brief"]["request_id"], "used", video_id=video_id)
 
 
 def autopilot(force: bool = False, slot: datetime | None = None, progress=_log) -> dict:
-    """Makes and uploads the Short for `slot`, or the earliest slot that's due. With force, takes the
-    next open slot even if it isn't due yet (the dashboard's "make it now" button). A case that fails is
-    tried once more (it goes back to the queue), then another case takes its place, up to CASE_TRIES,
-    with no waiting; what no other case would fix (_must_wait) is raised at once."""
+    """Makes and uploads the story for `slot`, or the earliest slot that's due. With force, takes the next open slot
+    even if it isn't due yet (the dashboard's "Make the 17:30 video now"). A story that fails is tried once more (it goes
+    back to the queue), then another story takes its place, up to STORY_TRIES, with no waiting; what no other story would
+    fix (_must_wait) is raised at once."""
     sched = slots.plan()
     now = _now()
     slot = slot or due_slot(now, sched) or (next_open_slot(publisher.GO_LIVE_MARGIN, now, sched) if force else None)
@@ -394,49 +300,39 @@ def autopilot(force: bool = False, slot: datetime | None = None, progress=_log) 
         return {"skipped": "no slot is due yet"}
     when = clock(slot, sched)
     snags = []
-    for attempt in range(CASE_TRIES):
+    for attempt in range(STORY_TRIES):
         try:
             return _fill(slot, sched, when, progress)
-        except NoTopic:
-            raise
         except Exception as e:
             if _must_wait(e):
                 raise
             snags.append(str(e)[:200])
-            if attempt + 1 < CASE_TRIES:
+            if attempt + 1 < STORY_TRIES:
                 progress(f"Snag: {str(e)[:200]}. Starting again for the {when} slot")
-    raise RuntimeError(f"Couldn't make the {when} Short in {CASE_TRIES} tries: " + " | ".join(snags))
+    raise RuntimeError(f"Couldn't make the {when} story in {STORY_TRIES} tries: " + " | ".join(snags))
 
 
 def _fill(slot: datetime, sched: dict, when: str, progress) -> dict:
-    """One try at the slot: the oldest case ready to go up (a failed try puts it back once), or a new one made on
-    the spot; then the Publisher (the Animator and the Reviewer first)."""
+    """One try at the slot: the oldest story ready to go up (a failed try puts it back once), or a new one written on the
+    spot; then the Publisher (the Animator and the Reviewer first)."""
     row = publisher.choose()
     if row:
         if not db.claim(row["id"], slots.iso(slot)):
-            return {"skipped": f"another run is already making the {when} Short"}
-        progress(f"Using case #{row['id']} for the {when} slot")
+            return {"skipped": f"another run is already making the {when} story"}
+        progress(f"Using story #{row['id']} for the {when} slot")
         row = db.get_video(row["id"])
     else:
-        video_id = db.insert_video("making", db.FORMAT, None, None, {}, slot=slots.iso(slot))
+        video_id = db.insert_video("making", db.fmt(), None, None, {}, slot=slots.iso(slot))
         if video_id is None:
-            return {"skipped": f"another run is already making the {when} Short"}
-        progress(f"No case ready: making one for the {when} slot")
+            return {"skipped": f"another run is already making the {when} story"}
+        progress(f"No story ready: writing one for the {when} slot")
         try:
-            plan = _make_case(progress, ready_now=True)
-        except NoTopic as e:  # (the slot goes back: a later run tries it)
-            db.update_video(video_id, status="skipped", error=str(e)[:500])
-            raise
+            plan = make_story(progress)
         except Exception as e:
             db.update_video(video_id, status="skipped", error=str(e)[:500])
-            raise RuntimeError(f"Couldn't make the {when} Short: {e}") from e
-        if plan["approval"] == "waiting":  # it turned out to need your OK: it waits, the slot stays empty
-            db.update_video(video_id, status="planned", slot=None, claimed_at=None, theme=plan["brief"]["topic"],
-                            trend=plan["brief"]["trend"] or None, plan=plan)
-            _saved(plan, video_id, progress)
-            return {"skipped": f"the case made for {when} needs your OK first", "video_id": video_id}
-        db.update_video(video_id, theme=plan["brief"]["topic"], trend=plan["brief"]["trend"] or None, plan=plan)
-        _saved(plan, video_id, progress)
+            raise RuntimeError(f"Couldn't make the {when} story: {e}") from e
+        db.update_video(video_id, theme=plan["brief"]["theme"], plan=plan)
+        _saved(plan, video_id)
         row = db.get_video(video_id)
     return publisher.run(row, slot, sched, progress=progress)
 
@@ -445,9 +341,7 @@ def upload_room_at(now: datetime | None = None) -> datetime | None:
     """When YouTube should take the channel's next upload, while its daily upload limit holds (it refused one in the
     last 24 hours): the moment the oldest of the uploads filling the limit is 24 hours old (the limit being as many as
     there were in the 24 hours before the refusal), or midnight in California if that's sooner (YouTube doesn't say
-    whether its days roll or are calendar days); now if there's room. None if YouTube hasn't refused one for 24 hours.
-    Seen 2026-10-29: 7 uploads at 14:05-14:39 IST (a backlog) plus the morning's 3 filled it, and the hourly tries from
-    08:12 on were all refused."""
+    whether its days roll or are calendar days); now if there's room. None if YouTube hasn't refused one for 24 hours."""
     now = now or _now()
     hit = db.fresh_note("youtube_limit", timedelta(hours=24))
     if not hit:
@@ -473,7 +367,7 @@ def upload_limit_hit() -> datetime:
 
 
 def _upload_limit(error: BaseException | None) -> bool:
-    """Is it YouTube's daily upload limit? Then no Short goes up for a while, whichever case it is."""
+    """Is it YouTube's daily upload limit? Then nothing goes up for a while, whichever story it is."""
     while error:
         if isinstance(error, youtube_upload.UploadLimit):
             return True
@@ -482,7 +376,7 @@ def _upload_limit(error: BaseException | None) -> bool:
 
 
 def _signed_out(error: BaseException | None) -> bool:
-    """Is it YouTube's sign-in (revoked or expired)? Then every Short would fail the same way."""
+    """Is it YouTube's sign-in (revoked or expired)? Then every story would fail the same way."""
     while error:
         if isinstance(error, youtube_auth.YouTubeAuthError):
             return True
@@ -491,19 +385,18 @@ def _signed_out(error: BaseException | None) -> bool:
 
 
 def day_count(day, sched: dict) -> tuple[int, int]:
-    """How many of a posting day's slots have their Short scheduled (or posted), and how many there are."""
+    """How many of a posting day's slots have their story scheduled (or posted), and how many there are."""
     times = slots.day_slots(day, sched)
     board = slot_board(times[0], times[-1], sched)
     return sum(1 for s in board if s["state"] in ("scheduled", "posted")), len(board)
 
 
 def morning(progress=_log) -> dict:
-    """The day's run: from schedule.make_at, a Short for every open slot of the posting day, one after another with
-    no pause, until all are scheduled; then one summary to your phone and the day's numbers. A Short that fails
-    doesn't stop it: the next try waits RETRY_FIRST, twice as long after each failure in a row, up to RETRY_MOST.
-    It stops early (an error, so GitHub marks the run failed and emails you) when YouTube's sign-in is broken,
-    after MAX_TRIES Shorts, or at RUN_LIMIT; the pause switch stops it quietly. In the cloud the Reels whose slot
-    comes meanwhile are posted beside it (_reels_beside)."""
+    """The day's run: from schedule.make_at, the day's story, made and scheduled; then one summary to your phone and the
+    day's numbers. A story that fails doesn't stop it: the next try waits RETRY_FIRST, twice as long after each failure
+    in a row, up to RETRY_MOST. It stops early (an error, so GitHub marks the run failed and emails you) when YouTube's
+    sign-in is broken, after MAX_TRIES stories, or at RUN_LIMIT; the pause switch stops it quietly. In the cloud the
+    Reels whose time comes meanwhile are posted beside it (_reels_beside)."""
     try:
         if not (kept.in_cloud() and publisher.reels_on()):
             return _morning(progress)
@@ -520,7 +413,7 @@ def morning(progress=_log) -> dict:
 
 
 def _reels_beside(stop: threading.Event, progress) -> None:
-    """In the cloud, while the morning run goes: every REELS_EVERY seconds, the Reels whose slot has come and whose
+    """In the cloud, while the morning run goes: every REELS_EVERY seconds, the Reels whose time has come and whose
     video is on this machine (made by this run), posted. The others are the Reels workflow's (tools/kept.py)."""
     while not stop.wait(REELS_EVERY):
         try:
@@ -529,7 +422,7 @@ def _reels_beside(stop: threading.Event, progress) -> None:
             for row in publisher.reels_due():
                 if stop.is_set():
                     break
-                if animator.preview_path(row["id"]).exists() and (whole := _whole(row)):
+                if animator.reel_path(row).exists() and (whole := _whole(row)):
                     publisher.run_instagram(whole, progress=progress)
         except Exception as e:  # (a Reel's own failure is handled where it's posted: this is the database or YouTube)
             progress(f"Reels: {str(e)[:200]}")
@@ -546,9 +439,8 @@ def _morning(progress) -> dict:
     if skipped := _paused():
         return skipped
     if not youtube_auth.is_configured():
-        raise RuntimeError("YouTube isn't connected: connect it on the dashboard's YouTube page")
+        raise RuntimeError("YouTube isn't connected: connect it on the dashboard's Channels page")
     made, held, tries, failures, day, stopped = [], [], 0, 0, None, None
-    empty = 0
     while True:
         if paused():
             stopped = "the autopilot is paused"
@@ -558,72 +450,62 @@ def _morning(progress) -> dict:
             break
         day = day or slots.posting_day(slot, sched)
         if tries >= MAX_TRIES:
-            stopped = f"{MAX_TRIES} Shorts were tried and the slots still aren't filled"
+            stopped = f"{MAX_TRIES} stories were tried and the slot still isn't filled"
             break
         if _now() - started >= RUN_LIMIT:
             stopped = "it ran out of time"
             break
         tries += 1
-        progress(f"The {clock(slot, sched)} Short")
+        progress(f"The {clock(slot, sched)} story")
         try:
             result = autopilot(slot=slot, progress=progress)
-        except animator.Resting as e:  # the case waits for Gemini's voice or Cloudflare's drawing: nothing counted
+        except animator.Resting as e:  # the story waits for Gemini's voice: nothing counted
             tries -= 1
             rest = animator.resting()
             wait = max(60.0, (slots.parse(rest["until"]) - _now()).total_seconds()) if rest else 60.0
             if _now() + timedelta(seconds=wait) >= started + RUN_LIMIT:  # (waiting would only keep the database awake)
                 stopped = f"{str(e)[:200]}, which is after this run must end; a later run carries on"
                 break
-            progress(f"{str(e)[:200]}. The {clock(slot, sched)} Short waits ({wait / 60:.0f} minutes)")
+            progress(f"{str(e)[:200]}. The {clock(slot, sched)} story waits ({wait / 60:.0f} minutes)")
             _wait(wait)
-            continue
-        except NoTopic as e:  # the look found nothing it can make: not a failure, and no reason to keep spending Gemini's calls
-            empty += 1
-            progress(str(e)[:300])
-            if empty >= EMPTY_IN_A_ROW:
-                stopped = f"{NO_TOPIC_STOP} for the {clock(slot, sched)} Short"
-                break
             continue
         except Exception as e:
             if _signed_out(e):
                 stopped = f"YouTube's sign-in needs renewing ({e})"
                 break
-            if _upload_limit(e):  # YouTube's daily upload limit: the case stays queued, nothing new is made meanwhile
+            if _upload_limit(e):  # YouTube's daily upload limit: the story stays queued, nothing new is made meanwhile
                 tries -= 1
                 room = upload_limit_hit()
-                if room > started + RUN_LIMIT:  # none before this run must end: a later run uploads it (its video kept)
+                if room > started + RUN_LIMIT:  # none before this run must end: a later run uploads it (its film kept)
                     stopped = f"{LIMIT_STOP}: YouTube should take uploads again at about {clock(room, sched)}"
                     break
                 wait = min(max(room - _now(), UPLOAD_SOONEST), UPLOAD_WAIT)
                 progress(f"YouTube takes no more uploads for now (the channel's daily upload limit); it should take one "
-                         f"again at about {clock(room, sched)}. The {clock(slot, sched)} Short waits until "
-                         f"{clock(_now() + wait, sched)}, its case kept")
+                         f"again at about {clock(room, sched)}. The {clock(slot, sched)} story waits until "
+                         f"{clock(_now() + wait, sched)}, its film kept")
                 _wait(wait.total_seconds())
                 continue
             failures += 1
             wait = min(RETRY_MOST, RETRY_FIRST * 2 ** min(failures - 1, 8))
-            progress(f"The {clock(slot, sched)} Short failed ({str(e)[:200]}); the next try in {wait.seconds // 60} "
+            progress(f"The {clock(slot, sched)} story failed ({str(e)[:200]}); the next try in {wait.seconds // 60} "
                      "minutes")
             _wait(wait.total_seconds())
             continue
         failures = 0
-        empty = 0
         if result.get("youtube_id"):
             made.append(result)
         elif result.get("held"):
             held.append(result["video_id"])
-    if not day:  # every slot was taken already (a catch-up run after a full morning)
+    if not day:  # the day's slot was taken already (a catch-up run after a full morning)
         if stats_due():  # (in the cloud the runs are the Analyst's only chance to read the numbers)
             try:
                 stats(progress=progress)
             except Exception as e:
                 progress(f"The day's numbers couldn't be read ({str(e)[:200]})")
-        return {"skipped": "every open slot of the day has its Short"}
+        return {"skipped": "the day's story is scheduled already"}
     done, total = day_count(day, sched)
-    times = slots.day_slots(day, sched)
-    hours = f"{clock(times[0], sched)}–{clock(times[-1], sched)}"
-    missed = sum(1 for s in slot_board(times[0], times[-1], sched) if s["state"] == "missed")
-    notes = (f" {missed} slot{'s' if missed > 1 else ''} had passed before it ran." if missed else "") + (
+    missed = sum(1 for s in slot_board(*(slots.day_slots(day, sched)[i] for i in (0, -1)), sched) if s["state"] == "missed")
+    notes = (" Its slot had passed before the run." if missed else "") + (
         f" The Reviewer turned down {len(held)} after the Animator's fixes: each is made again by itself until it passes."
         if held else "")
     result = {"made": len(made), "held": held, "tries": tries, "scheduled": done, "slots": total, "missed": missed,
@@ -631,23 +513,16 @@ def _morning(progress) -> dict:
     if stopped != "the autopilot is paused" and stats_due():  # (first: also after a run that stopped early)
         try:
             stats(progress=progress)
-        except Exception as e:  # the numbers can wait for tomorrow; the Shorts are what matter
+        except Exception as e:  # the numbers can wait for tomorrow; the story is what matters
             progress(f"The day's numbers couldn't be read ({str(e)[:200]})")
     waits = (stopped or "").startswith(LIMIT_STOP)  # (not a failure: a later run goes on when YouTube takes uploads)
-    no_topic = (stopped or "").startswith(NO_TOPIC_STOP)  # (nor this: there's no daily quota, and a catch-up run tries again)
-    if stopped and stopped != "the autopilot is paused" and not waits and not no_topic:
-        raise RuntimeError(f"stopped with {done} of {total} Shorts of the day scheduled: {stopped}.{notes}")
-    if no_topic:
-        notify.run(f"🗂 This run made {len(made)} Short{'' if len(made) == 1 else 's'}: {done} of {total} of the day are scheduled ({hours}). "
-                   f"It found no more topics with enough real archive material; the next catch-up run tries again.{notes}")
-    elif waits:
-        notify.run(f"⏳ Today's run stopped at YouTube's daily upload limit with {done} of {total} Shorts scheduled "
-                   f"({hours}): {stopped[len(LIMIT_STOP) + 2:]}, and a later run carries on then.{notes}")
-    elif made or held:
-        if stopped:
-            notify.run(f"⏸ Today's run is paused with {done} of {total} Shorts scheduled ({hours}).{notes}")
-        else:
-            notify.run(f"☀️ Today's run is done: {done} of {total} Shorts scheduled ({hours}).{notes}")
+    if stopped and stopped != "the autopilot is paused" and not waits:
+        raise RuntimeError(f"stopped without the day's story scheduled: {stopped}.{notes}")
+    if waits:
+        notify.run(f"⏳ Today's run stopped at YouTube's daily upload limit: {stopped[len(LIMIT_STOP) + 2:]}, and a later "
+                   f"run carries on then.{notes}")
+    elif held and not made:
+        notify.run(f"⏸ Today's story isn't scheduled yet.{notes}")
     return result
 
 
@@ -665,71 +540,69 @@ def _wait(seconds: float) -> None:
 
 
 def prepare(count: int = 1, progress=_log) -> dict:
-    """Makes `count` cases, which the autopilot picks up oldest first."""
+    """Writes `count` stories, which the autopilot picks up oldest first."""
     planned = []
     for _ in range(count):
-        plan = _make_case(progress)
-        video_id = db.insert_video("planned", db.FORMAT, plan["brief"]["topic"], plan["brief"]["trend"] or None, plan)
-        _saved(plan, video_id, progress)
-        planned.append({"id": video_id, "topic": plan["brief"]["topic"], "title": plan["metadata"]["title"],
-                        "waits_for_approval": plan["approval"] == "waiting"})
-        progress(f"Saved case #{video_id}: {plan['metadata']['title']}")
+        plan = make_story(progress)
+        video_id = db.insert_video("planned", db.fmt(), plan["brief"]["theme"], None, plan)
+        _saved(plan, video_id)
+        planned.append({"id": video_id, "theme": plan["brief"]["theme"], "title": plan["metadata"]["title"]})
+        progress(f"Saved story #{video_id}: {plan['metadata']['title']}")
     return {"planned": planned}
 
 
 def publish(dry_run: bool = False, video_id: int | None = None, progress=_log, now: bool = False) -> dict:
-    """Agents 4 and 5 make and review one queued case (the oldest ready one, or `video_id`); without dry_run Agent 6
-    then uploads it into the next open slot. A real upload reuses an existing preview, so what you
-    watched in the dashboard is exactly what goes up. `now` (you pressed "Make the video"): Gemini's voice is asked
-    even while it rests. A preview that fails PREVIEW_TRIES times gives the case up (a new case takes its place);
-    Gemini's voice being out isn't counted."""
+    """Agents 3 and 4 make and review one waiting story (the oldest ready one, or `video_id`); without dry_run Agent 5
+    then uploads it into the next open slot. A real upload reuses an existing film, so what you watched in the dashboard
+    is exactly what goes up. `now` (you pressed "Make it now"): Gemini's voice is asked even while it rests. A film that
+    fails PREVIEW_TRIES times gives the story up; Gemini's voice being out isn't counted."""
     row = db.get_video(video_id) if video_id else publisher.choose()
     if not row:
         return {"skipped": "nothing ready to post"}
     if row["status"] != "planned":
-        raise RuntimeError(f"Short #{row['id']} is {row['status']}, not planned")
+        raise RuntimeError(f"Story #{row['id']} is {row['status']}, not waiting")
+    if not series.current({**row, "plan": {k: x for k, x in row["plan"].items() if k != "render"}}):
+        raise RuntimeError(f"#{row['id']} was made by an earlier version of the channel: it can't be made or posted now")
     if dry_run:
         try:
             if (row["plan"].get("review") or {}).get("held"):  # turned down after the fixes: made again by itself
                 row = animator.make_again(row, progress)
             row = reviewer.reviewed(row, progress=progress, now=now)
         except Exception as e:
-            if not isinstance(e, animator.Resting):  # (a resting voice or drawing says itself when it's asked again)
+            if not isinstance(e, animator.Resting):  # (a resting voice says itself when it's asked again)
                 failed = db.get_video(row["id"])
                 tries = int(failed["plan"].get("preview_failures") or 0) + 1
                 db.update_video(row["id"], plan={**failed["plan"], "preview_failed_at": slots.iso(_now()),
                                                  "preview_failures": tries})
                 if tries >= PREVIEW_TRIES:
                     db.update_video(row["id"], status="failed",
-                                    error=f"Its video couldn't be made in {tries} tries: {str(e)[:300]}")
-                    raise RuntimeError(f"Short #{row['id']} given up after {tries} tries (a new case takes its place): "
-                                       f"{e}") from e
+                                    error=f"Its film couldn't be made in {tries} tries: {str(e)[:300]}")
+                    raise RuntimeError(f"Story #{row['id']} given up after {tries} tries: {e}") from e
             raise
         verdict = row["plan"]["review"]
         return {"rendered": str(animator.preview_path(row["id"])), "video_id": row["id"],
                 "title": row["plan"]["metadata"]["title"], "length": (row["plan"].get("render") or {}).get("seconds"),
                 "passed": verdict["passed"], "held": verdict.get("held", False), "rounds": verdict["round"] + 1}
-    if row["format"] == db.FORMAT and not db.ready(row):
-        raise RuntimeError(f"Short #{row['id']} waits for your OK: approve it in the Studio first")
-
+    if not db.ready(row):
+        raise RuntimeError(f"Story #{row['id']} was turned down by the Reviewer: it's being made again")
     sched = slots.plan()
     slot = next_open_slot(MANUAL_LEAD, sched=sched)
     if not db.claim(row["id"], slots.iso(slot)):
-        raise RuntimeError(f"Short #{row['id']} couldn't take the {clock(slot, sched)} slot; try again")
+        raise RuntimeError(f"Story #{row['id']} couldn't take the {clock(slot, sched)} slot; try again")
     return publisher.run(db.get_video(row["id"]), slot, sched, progress=progress)
 
 
 def _whole(row: dict) -> dict | None:
-    """The case to post a Reel from: one a list read in part (db.LIGHT) is read again whole (None if it's gone)."""
+    """The story to post a Reel from: one a list read in part (db.LIGHT) is read again whole (None if it's gone)."""
     return db.get_video(row["id"]) if (row.get("plan") or {}).get(db.LIGHT) else row
 
 
 def reels(progress=_log, stay: float = 0) -> dict:
-    """Agent 6 posts to Instagram every Short whose slot has come and whose Reel is still to post. With `stay`
-    minutes (the cloud's Reels workflow), it looks again every minute for Reels coming due meanwhile (a try again,
-    or YouTube a little late making the Short public), until none is left to wait for. A Reel whose video is with a
-    run still going is left to that run. While Meta refuses Instagram's connection the Reels wait for it
-    (agents/publisher.py): the job doesn't stay, and once a day (DOWN_RETELL) it fails, so GitHub emails you."""
+    """Agent 5 posts to Instagram every story whose Reel's time has come and is still to post. With `stay` minutes (the
+    cloud's Reels workflow), it looks again every minute for Reels coming due meanwhile (a try again, or YouTube a little
+    late making the Short public), until none is left to wait for. A Reel whose video is with a run still going is left
+    to that run. While Meta refuses Instagram's connection the Reels wait for it (agents/publisher.py): the job doesn't
+    stay, and once a day (DOWN_RETELL) it fails, so GitHub emails you."""
     until = _now() + timedelta(minutes=stay)
     posted, left = [], set()
     while True:
@@ -752,7 +625,7 @@ def reels(progress=_log, stay: float = 0) -> dict:
 
 def keep_videos(progress=_log) -> dict:
     """At the end of a cloud run: what's still needed of its videos, encrypted for GitHub to keep with the run
-    (tools/kept.py): its Reels still waiting (the Reels workflow posts them at their slots), and its Shorts made and
+    (tools/kept.py): its Reels still waiting (the Reels workflow posts them at their time), and its stories made and
     reviewed but not uploaded (YouTube's daily upload limit: the next run uploads them instead of making them again)."""
     run = kept.this_run()
     if not run:
@@ -760,7 +633,7 @@ def keep_videos(progress=_log) -> dict:
     waiting = [v for v in db.scheduled_videos(days=publisher.REEL_DAYS, parts=("instagram",))
                if (v["plan"].get("instagram") or {}).get("status") == "pending"
                and v["plan"]["instagram"].get("kept_in") == run]
-    files = kept.keep([(v["id"], animator.preview_path(v["id"])) for v in waiting])
+    files = kept.keep([(v["id"], animator.reel_path(v)) for v in waiting])
     progress(f"{len(files)} video{'s' if len(files) != 1 else ''} kept for the Reels still to post")
     made = [v for v in db.planned_videos(limit=1000) if animator.preview_path(v["id"]).exists() and reviewer.passed(v["plan"])
             and (v["plan"].get("render") or {}).get("id")]
@@ -769,7 +642,7 @@ def keep_videos(progress=_log) -> dict:
         db.update_video(v["id"], plan={**v["plan"], "kept_video": {"run": run, "render": v["plan"]["render"]["id"],
                                                                     "at": db.now_iso()}})
     if made:
-        progress(f"{len(made)} Short{'s' if len(made) != 1 else ''} made but not uploaded yet kept for the next run: "
+        progress(f"{len(made)} stor{'ies' if len(made) != 1 else 'y'} made but not uploaded yet kept for the next run: "
                  + ", ".join(f"#{v['id']}" for v in made))
     return {"kept": [f.name for f in files]}
 
@@ -790,8 +663,8 @@ def run_job(name: str, **kwargs) -> dict:
         result = JOBS[name](**kwargs)
     except Exception as e:
         db.finish_run(run_id, False, {"error": str(e)})
-        if not isinstance(e, animator.Resting):  # waiting for Gemini's voice or Cloudflare's drawing isn't a failure
-            what = (f"Making the video for Short #{kwargs['video_id']}" if kwargs.get("dry_run") and kwargs.get("video_id")
+        if not isinstance(e, animator.Resting):  # waiting for Gemini's voice isn't a failure
+            what = (f"Making the film for story #{kwargs['video_id']}" if kwargs.get("dry_run") and kwargs.get("video_id")
                     else "Today's morning run" if name == "morning" else f"The {name} job")
             notify.run(f"⚠️ {what} failed: {e}")
         raise
@@ -801,11 +674,12 @@ def run_job(name: str, **kwargs) -> dict:
 
 
 def main() -> int:
+    hide_secrets_in_crashes()   # (the cloud run's log is public: a crash's report is cleaned like every other line)
     background_priority()
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     parser.add_argument("job", choices=list(JOBS))
-    parser.add_argument("--dry-run", action="store_true", help="publish only: render but don't upload")
-    parser.add_argument("--newest", action="store_true", help="publish only: the case made last, not the oldest ready one (the cloud test's)")
+    parser.add_argument("--dry-run", action="store_true", help="publish only: make and review but don't upload")
+    parser.add_argument("--newest", action="store_true", help="publish only: the story written last, not the oldest ready one (the cloud test's)")
     parser.add_argument("--now", action="store_true", help="autopilot only: the next open slot, even if not due")
     parser.add_argument("--learn", action="store_true", help="stats only: rewrite the playbook now")
     parser.add_argument("--stay", type=float, default=0, help="instagram only: minutes to keep looking for Reels due")
@@ -827,10 +701,10 @@ def main() -> int:
     try:
         result = run_job(args.job, **kwargs)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"Error: {redact(e)}", file=sys.stderr)
         return 1
 
-    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    print(redact(json.dumps(result, indent=2, ensure_ascii=False, default=str)))
     return 0
 
 

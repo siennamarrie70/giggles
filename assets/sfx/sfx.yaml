@@ -1,75 +1,3 @@
-bass_hit.mp3:
-  creator: OwlStorm
-  kind: bass_hit
-  licence: cc0
-  seconds: 0.24
-  source: freesound
-  title: Retro video game sfx - Hit 2
-  url: https://freesound.org/people/OwlStorm/sounds/404792
-bird_squawk.mp3:
-  creator: JackMenhorn
-  kind: bird_squawk
-  licence: cc0
-  seconds: 2.53
-  source: freesound
-  title: Crows Bird Squawking Fight
-  url: https://freesound.org/people/JackMenhorn/sounds/236307
-camera_shutter.mp3:
-  creator: roachpowder
-  kind: camera_shutter
-  licence: cc0
-  seconds: 0.34
-  source: freesound
-  title: Camera Shutter
-  url: https://freesound.org/people/roachpowder/sounds/170229
-cash_register.mp3:
-  creator: MaoDin204
-  kind: cash_register
-  licence: cc0
-  seconds: 0.99
-  source: freesound
-  title: Cash register
-  url: https://freesound.org/people/MaoDin204/sounds/721774
-cinematic_boom.mp3:
-  creator: EminYILDIRIM
-  kind: cinematic_boom
-  licence: cc0
-  seconds: 4.05
-  source: freesound
-  title: Cinematic Impact Boom Metalic
-  url: https://freesound.org/people/EminYILDIRIM/sounds/535413
-cinematic_riser.mp3:
-  creator: magnuswaker
-  kind: cinematic_riser
-  licence: cc0
-  seconds: 0.73
-  source: freesound
-  title: ENERGY RISER 2
-  url: https://freesound.org/people/magnuswaker/sounds/523057
-coin_drop.mp3:
-  creator: Rocotilos
-  kind: coin_drop
-  licence: cc0
-  seconds: 0.21
-  source: freesound
-  title: Real Coin Drop
-  url: https://freesound.org/people/Rocotilos/sounds/343462
-crowd_cheer.mp3:
-  creator: Krizin
-  kind: crowd_cheer
-  licence: cc0
-  seconds: 1.83
-  source: freesound
-  title: Crowd Cheer 4
-  url: https://freesound.org/people/Krizin/sounds/651640
-crowd_gasp.mp3:
-  creator: craigsmith
-  kind: crowd_gasp
-  licence: cc0
-  seconds: 2.53
-  source: freesound
-  title: R25-05-Crowd Murmurs and Gasps in Courtroom.wav
-  url: https://freesound.org/people/craigsmith/sounds/480773
 crowd_murmur.mp3:
   creator: craigsmith
   kind: crowd_murmur
@@ -78,94 +6,6 @@ crowd_murmur.mp3:
   source: freesound
   title: S12-07 Crowd murmur at the scene of an accident; good general walla.wav
   url: https://freesound.org/people/craigsmith/sounds/675068
-dark_choir.mp3:
-  creator: Exsomniel
-  kind: dark_choir
-  licence: cc0
-  seconds: 4.23
-  source: freesound
-  title: Dark Choir 01.wav
-  url: https://freesound.org/people/Exsomniel/sounds/207809
-deep_sub_drop.mp3:
-  creator: uzerx
-  kind: deep_sub_drop
-  licence: cc0
-  seconds: 0.44
-  source: freesound
-  title: sub bass 1 seconddddd.wav
-  url: https://freesound.org/people/uzerx/sounds/59537
-distant_explosion.mp3:
-  creator: qubodup
-  kind: distant_explosion
-  licence: cc0
-  seconds: 0.63
-  source: freesound
-  title: Distant Explosion of Propelled Grenade
-  url: https://freesound.org/people/qubodup/sounds/162363
-door_slam.mp3:
-  creator: coolguy244e
-  kind: door_slam
-  licence: cc0
-  seconds: 0.55
-  source: freesound
-  title: Door slam - Gun shot.mp3
-  url: https://freesound.org/people/coolguy244e/sounds/266915
-earthquake_rumble.mp3:
-  creator: RutgerMuller
-  kind: earthquake_rumble
-  licence: cc0
-  seconds: 4.55
-  source: freesound
-  title: Sounds For Earthquakes - Spoon Cup Plate.wav
-  url: https://freesound.org/people/RutgerMuller/sounds/51117
-error_buzzer.mp3:
-  creator: Loyalty_Freak_Music
-  kind: error_buzzer
-  licence: cc0
-  seconds: 0.47
-  source: freesound
-  title: buzzer.mp3
-  url: https://freesound.org/people/Loyalty_Freak_Music/sounds/407466
-fire_crackle.mp3:
-  creator: MaoDin204
-  kind: fire_crackle
-  licence: cc0
-  seconds: 5.04
-  source: freesound
-  title: Fire crackle
-  url: https://freesound.org/people/MaoDin204/sounds/717527
-gavel_bang.mp3:
-  creator: watchthatfilms
-  kind: gavel_bang
-  licence: cc0
-  seconds: 1.75
-  source: freesound
-  title: Sold.mp3
-  url: https://freesound.org/people/watchthatfilms/sounds/692529
-glitch_burst.mp3:
-  creator: mattwasser
-  kind: glitch_burst
-  licence: cc0
-  seconds: 0.39
-  source: freesound
-  title: static_glitch.aif
-  url: https://freesound.org/people/mattwasser/sounds/58931
-gunfire_burst.mp3:
-  creator: Keatonmcq
-  kind: gunfire_burst
-  licence: cc0
-  seconds: 0.47
-  source: freesound
-  title: Assault Rifle (Single Burst)
-  url: https://freesound.org/people/Keatonmcq/sounds/160590
-heartbeat_thump.mp3:
-  creator: univ_lyon3
-  kind: heartbeat_thump
-  licence: cc0
-  seconds: 3.03
-  source: freesound
-  title: MASSARDIER_Elodie_2020_2021_Heartbeat.wav
-  url: https://freesound.org/people/univ_lyon3/sounds/540905
 keyboard_typing.mp3:
   creator: ristooooo1
   kind: keyboard_typing
@@ -174,46 +14,6 @@ keyboard_typing.mp3:
   source: freesound
   title: Keyboard Typing 001.wav
   url: https://freesound.org/people/ristooooo1/sounds/539146
-magic_shimmer.mp3:
-  creator: adh.dreaming
-  kind: magic_shimmer
-  licence: cc0
-  seconds: 3.53
-  source: freesound
-  title: Shimmer
-  url: https://freesound.org/people/adh.dreaming/sounds/632344
-metal_clank.mp3:
-  creator: jashstudios
-  kind: metal_clank
-  licence: cc0
-  seconds: 0.42
-  source: freesound
-  title: Metal Clang
-  url: https://freesound.org/people/jashstudios/sounds/184343
-monster_roar.mp3:
-  creator: ItsThatRoboGuy
-  kind: monster_roar
-  licence: cc0
-  seconds: 1.67
-  source: freesound
-  title: Robotic Monster Roar
-  url: https://freesound.org/people/ItsThatRoboGuy/sounds/528772
-notification_ding.mp3:
-  creator: JotrainG
-  kind: notification_ding
-  licence: cc0
-  seconds: 1.83
-  source: freesound
-  title: Ding Station Annoucement Notification.wav
-  url: https://freesound.org/people/JotrainG/sounds/651590
-ocean_waves.mp3:
-  creator: pandamir
-  kind: ocean_waves
-  licence: cc0
-  seconds: 5.04
-  source: freesound
-  title: Synthesized Ocean Waves / Wind
-  url: https://freesound.org/people/pandamir/sounds/194047
 page_flip.mp3:
   creator: qubodup
   kind: page_flip
@@ -230,107 +30,6 @@ paper_rip.mp3:
   source: freesound
   title: Ripping Paper
   url: https://freesound.org/people/aldenroth2/sounds/272028
-pop_click.mp3:
-  creator: GameAudio
-  kind: pop_click
-  licence: cc0
-  seconds: 0.55
-  source: freesound
-  title: Pop Click
-  url: https://freesound.org/people/GameAudio/sounds/220175
-punch_hit.mp3:
-  creator: joe_anderson22
-  kind: punch_hit
-  licence: cc0
-  seconds: 0.94
-  source: freesound
-  title: Punch Hit 1.wav
-  url: https://freesound.org/people/joe_anderson22/sounds/439747
-suspense_sting.mp3:
-  creator: Za-Games
-  kind: suspense_sting
-  licence: cc0
-  seconds: 2.53
-  source: freesound
-  title: Metal Spring Pluck (Horror/Suspense Sting)
-  url: https://freesound.org/people/Za-Games/sounds/540213
-sword_clash.mp3:
-  creator: loudernoises
-  kind: sword_clash
-  licence: cc0
-  seconds: 0.55
-  source: freesound
-  title: Sword Clash
-  url: https://freesound.org/people/loudernoises/sounds/334169
-tension_drone.mp3:
-  creator: LulSayer
-  kind: tension_drone
-  licence: cc0
-  seconds: 6.03
-  source: freesound
-  title: Dark Drone Ambient
-  url: https://freesound.org/people/LulSayer/sounds/500326
-thunder_crack.mp3:
-  creator: Veiler
-  kind: thunder_crack
-  licence: cc0
-  seconds: 0.39
-  source: freesound
-  title: thunder-crack 3.wav
-  url: https://freesound.org/people/Veiler/sounds/545748
-typewriter_keys.mp3:
-  creator: yottasounds
-  kind: typewriter_keys
-  licence: cc0
-  seconds: 0.26
-  source: freesound
-  title: Typewriter - single key - type 3.wav
-  url: https://freesound.org/people/yottasounds/sounds/380136
-war_drums.mp3:
-  creator: BuytheField
-  kind: war_drums
-  licence: cc0
-  seconds: 5.04
-  source: freesound
-  title: War Drums 5.MP3
-  url: https://freesound.org/people/BuytheField/sounds/329023
-whoosh - 13th Whoosh Swing Sound.mp3:
-  creator: qubodup
-  kind: whoosh
-  licence: cc0
-  openverse_id: 416a411f-c8e5-4279-a985-466c19f21794
-  page: https://freesound.org/people/qubodup/sounds/60000
-  title: 13th Whoosh Swing Sound
-whoosh - Swipe Whoosh.mp3:
-  creator: qubodup
-  kind: whoosh
-  licence: cc0
-  openverse_id: b7ae7822-8ec5-4a82-b6f8-d539b51caa61
-  page: https://freesound.org/people/qubodup/sounds/60007
-  title: Swipe Whoosh
-whoosh - Swosh swoosh whoosh air sound free high quality.mp3:
-  creator: qubodup
-  kind: whoosh
-  licence: cc0
-  openverse_id: f1dc6045-7965-41de-87f8-4731d2583fd2
-  page: https://freesound.org/people/qubodup/sounds/60026
-  title: Swosh swoosh whoosh air sound, free, high quality
-whoosh_fast.mp3:
-  creator: zapsplat.com
-  kind: whoosh_fast
-  licence: cc0
-  seconds: 0.5
-  source: freesound
-  title: Fast whoosh, bamboo swoosh through air, version 2
-  url: https://freesound.org/people/zapsplat.com/sounds/719637
-whoosh_soft.mp3:
-  creator: ludvique
-  kind: whoosh_soft
-  licence: cc0
-  seconds: 0.97
-  source: freesound
-  title: digital_whoosh_soft.wav
-  url: https://freesound.org/people/ludvique/sounds/71852
 wind_howl.mp3:
   creator: Takkyi
   kind: wind_howl
@@ -339,19 +38,195 @@ wind_howl.mp3:
   source: freesound
   title: Wind Howl 4 inch Pipe.wav
   url: https://freesound.org/people/Takkyi/sounds/543809
-glass_shatter.mp3:
-  kind: glass_shatter
-  creator: C_Rogers
+rain_bed.mp3:
+  kind: rain_bed
+  creator: seth-m
   licence: cc0
   source: freesound
-  title: glass-shattering-hit_01.ogg
-  url: https://freesound.org/people/C_Rogers/sounds/203368
-  seconds: 0.86
-ticking_clock.mp3:
-  kind: ticking_clock
+  title: light rain ambience
+  url: https://freesound.org/people/seth-m/sounds/270349
+  seconds: 30.04
+rain_window.mp3:
+  kind: rain_window
+  creator: kijjaz
+  licence: cc0
+  source: freesound
+  title: Raining on the Glass Window 20180905-4
+  url: https://freesound.org/people/kijjaz/sounds/440487
+  seconds: 30.04
+night_street.mp3:
+  kind: night_street
+  creator: Skjor1
+  licence: cc0
+  source: freesound
+  title: City Street Ambience Night [Florence - Italy] 01
+  url: https://freesound.org/people/Skjor1/sounds/321774
+  seconds: 30.04
+room_quiet.mp3:
+  kind: room_quiet
+  creator: kyles
+  licence: cc0
+  source: freesound
+  title: room tone medium apartment kitchen night quiet.flac
+  url: https://freesound.org/people/kyles/sounds/635728
+  seconds: 30.04
+dawn_birds.mp3:
+  kind: dawn_birds
+  creator: greybrother01
+  licence: cc0
+  source: freesound
+  title: Morning Birds.wav
+  url: https://freesound.org/people/greybrother01/sounds/273548
+  seconds: 30.04
+wind_soft.mp3:
+  kind: wind_soft
+  creator: cribbler
+  licence: cc0
+  source: freesound
+  title: Soft Wind Ambience.wav
+  url: https://freesound.org/people/cribbler/sounds/380379
+  seconds: 30.04
+crickets.mp3:
+  kind: crickets
+  creator: kyles
+  licence: cc0
+  source: freesound
+  title: crickets night or day nice neutral balanced +bg traffic.flac
+  url: https://freesound.org/people/kyles/sounds/637428
+  seconds: 30.04
+footstep.mp3:
+  kind: footstep
+  creator: Yoyodaman234
+  licence: cc0
+  source: freesound
+  title: concrete footstep 4
+  url: https://freesound.org/people/Yoyodaman234/sounds/166506
+  seconds: 0.47
+footstep_wet.mp3:
+  kind: footstep_wet
+  creator: Phil25
+  licence: cc0
+  source: freesound
+  title: Water Splashes
+  url: https://freesound.org/people/Phil25/sounds/207371
+  seconds: 1.23
+water_drop.mp3:
+  kind: water_drop
+  creator: Mafon2
+  licence: cc0
+  source: freesound
+  title: Water Drop
+  url: https://freesound.org/people/Mafon2/sounds/371266
+  seconds: 0.26
+gate_close.mp3:
+  kind: gate_close
+  creator: j1987
+  licence: cc0
+  source: freesound
+  title: metalgate.wav
+  url: https://freesound.org/people/j1987/sounds/106116
+  seconds: 1.2
+door_close.mp3:
+  kind: door_close
+  creator: wlabarron
+  licence: cc0
+  source: freesound
+  title: Fire door closing
+  url: https://freesound.org/people/wlabarron/sounds/475313
+  seconds: 1.38
+phone_buzz.mp3:
+  kind: phone_buzz
+  creator: FaKexxChaos
+  licence: cc0
+  source: freesound
+  title: Phone Vibrating
+  url: https://freesound.org/people/FaKexxChaos/sounds/700427
+  seconds: 2.04
+clock_tick.mp3:
+  kind: clock_tick
   creator: davidqr
   licence: cc0
   source: freesound
   title: clock ticking fast
   url: https://freesound.org/people/davidqr/sounds/416619
   seconds: 3.92
+alarm_clock.mp3:
+  kind: alarm_clock
+  creator: PlayPauseAndRewind
+  licence: cc0
+  source: freesound
+  title: Old alarm clock (ticking and ringing)
+  url: https://freesound.org/people/PlayPauseAndRewind/sounds/132340
+  seconds: 4.05
+heartbeat.mp3:
+  kind: heartbeat
+  creator: Lunardrive
+  licence: cc0
+  source: freesound
+  title: Single Heartbeat Clean HQ_BeatSmith.wav
+  url: https://freesound.org/people/Lunardrive/sounds/22440
+  seconds: 0.71
+thunder_far.mp3:
+  kind: thunder_far
+  creator: Fission9
+  licence: cc0
+  source: freesound
+  title: Distant Thunder 3
+  url: https://freesound.org/people/Fission9/sounds/581124
+  seconds: 6.03
+keys_jingle.mp3:
+  kind: keys_jingle
+  creator: Crinkem
+  licence: cc0
+  source: freesound
+  title: Keys jingle light.wav
+  url: https://freesound.org/people/Crinkem/sounds/481785
+  seconds: 2.04
+switch_click.mp3:
+  kind: switch_click
+  creator: SomeoneCool15
+  licence: cc0
+  source: freesound
+  title: Light Switch Click On and Off
+  url: https://freesound.org/people/SomeoneCool15/sounds/423512
+  seconds: 0.84
+page_turn.mp3:
+  kind: page_turn
+  creator: XanTheRock
+  licence: cc0
+  source: freesound
+  title: Page Turning
+  url: https://freesound.org/people/XanTheRock/sounds/537872
+  seconds: 0.68
+running_steps.mp3:
+  kind: running_steps
+  creator: Atrius1
+  licence: cc0
+  source: freesound
+  title: 46_Corriendo.wav (Running Footsteps)
+  url: https://freesound.org/people/Atrius1/sounds/470176
+  seconds: 1.57
+car_pass_wet.mp3:
+  kind: car_pass_wet
+  creator: Breviceps
+  licence: cc0
+  source: freesound
+  title: Passing Car (Wet road)
+  url: https://freesound.org/people/Breviceps/sounds/462862
+  seconds: 5.69
+train_pass.mp3:
+  kind: train_pass
+  creator: jakobhandersen
+  licence: cc0
+  source: freesound
+  title: Inside tunnel trains passing overhead, Helsinki -4.wav
+  url: https://freesound.org/people/jakobhandersen/sounds/482191
+  seconds: 8.15
+glass_set_down.mp3:
+  kind: glass_set_down
+  creator: HogantheLogan
+  licence: cc0
+  source: freesound
+  title: Setting Down Glass On Table
+  url: https://freesound.org/people/HogantheLogan/sounds/466791
+  seconds: 1.54

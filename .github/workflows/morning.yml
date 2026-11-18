@@ -1,25 +1,26 @@
 # The morning run in the cloud. Every day at 06:55 India time GitHub starts a Linux machine (free for
-# public repositories: 4 cores, 16 GB) that makes the day's Shorts one after another until every slot is
-# scheduled on YouTube (python tools/jobs.py morning), then stops. The catch-up runs at 13:00 and 19:00
-# fill any slot the morning couldn't, and end within minutes otherwise. "Run workflow" on the Actions tab
-# starts it by hand; with "test" it makes and reviews one video and uploads nothing.
+# public repositories: 4 cores, 16 GB) that makes the day's story (python tools/jobs.py morning): Agent 1 picks the
+# theme, Agent 2 writes the story, Agent 3 has the narrator read it and draws the film and its short version, Agent 4
+# reviews them, and Agent 5 uploads the film scheduled for 17:30 (series.post_at), its short version as a Short 3 hours
+# later; then it stops. The catch-up at 13:00
+# makes the day's story if the morning couldn't (e.g. the narrator's free readings, which renew at 13:30), and ends
+# within minutes otherwise. "Run workflow" on the Actions tab starts it by hand; with "test" it writes, makes and
+# reviews one story and uploads nothing.
 # Keys come from the repository's secrets (Settings -> Secrets and variables -> Actions); the PAUSED
 # variable, or the dashboard's pause switch, stops it.
-# Instagram: a Reel whose slot comes while the run goes is posted by the run itself; at its end the videos
-# of the Reels still waiting are kept with the run, encrypted (tools/kept.py), for the Reels workflow
-# (reels.yml) to post at their slots. So are the Shorts made but not uploaded because of YouTube's daily
-# upload limit: the next run (a catch-up) uploads them without making them again.
+# Instagram: at its end the short version of a Reel still waiting is kept with the run, encrypted (tools/kept.py), for the
+# Reels workflow (reels.yml) to post at its time. So is a story made but not uploaded because of YouTube's daily upload
+# limit: the next run (the catch-up) uploads it without making it again.
 name: Morning run
 
 on:
   schedule:
     - cron: "25 1 * * *"   # 06:55 India time: the run waits for 07:00 (schedule.make_at)
-    - cron: "30 7 * * *"   # 13:00: catch-up
-    - cron: "30 13 * * *"  # 19:00: catch-up
+    - cron: "30 7 * * *"   # 13:00: catch-up (the 17:30 story's slot is due until 18:30)
   workflow_dispatch:
     inputs:
       test:
-        description: "Test: make and review one video, upload nothing"
+        description: "Test: write, make and review one story, upload nothing"
         type: boolean
         default: false
 
@@ -38,10 +39,6 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-      PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}  # the drawn look's scenes (tools/draw.py)
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
       YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
       YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
@@ -51,8 +48,8 @@ jobs:
       INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}  # Reels (posting needs no app ID or secret)
       INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
       INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
-      REELS_KEY: ${{ secrets.REELS_KEY }}  # encrypts the Reels' videos kept with the run (tools/kept.py)
-      PROMPTS_KEY: ${{ secrets.PROMPTS_KEY }}  # opens your Agent 3 and 4 prompts (tools/prompts.py)
+      REELS_KEY: ${{ secrets.REELS_KEY }}  # encrypts the short versions kept with the run (tools/kept.py)
+      PROMPTS_KEY: ${{ secrets.PROMPTS_KEY }}  # opens your look description and script writer's prompt (tools/prompts.py)
       PAUSED: ${{ vars.PAUSED }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -68,23 +65,23 @@ jobs:
       - name: Install (requirements-worker.txt, the dashboard's packages and the video-making ones)
         run: pip install -r requirements-worker.txt
 
-      - name: Restore the models (whisper, depth, voice, lip-sync, cut-outs; about 1.2 GB, kept between runs)
+      - name: Restore the model (whisper, about 250 MB, kept between runs)
         id: models
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .tmp/models
-          key: models-v2
+          key: models-v3  # (v2 held the case-study Shorts' models too, 1.2 GB: not restored any more)
 
-      - name: Every model on this machine (the missing ones download once)
+      - name: The model on this machine (it downloads once)
         working-directory: tools
-        run: python -c "import cutout, depth, lipsync, narration; cutout.model_path(); depth.model_path(); lipsync.ensure_rhubarb(); narration._model()"
+        run: python -c "import narration; narration._model()"
 
-      - name: Keep the models for the next run
+      - name: Keep the model for the next run
         if: ${{ steps.models.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .tmp/models
-          key: models-v2
+          key: models-v3
 
       - name: ffmpeg with the rubberband filter (it makes his voice deeper)
         run: |
@@ -96,7 +93,7 @@ jobs:
             echo "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" >> "$GITHUB_ENV"
           fi
 
-      - name: Test (one video made and reviewed, nothing uploaded)
+      - name: Test (one story written, made and reviewed, nothing uploaded)
         if: ${{ inputs.test }}
         run: |
           python tools/jobs.py prepare
@@ -106,11 +103,11 @@ jobs:
         if: ${{ !inputs.test }}
         run: python tools/jobs.py morning
 
-      - name: Keep the videos still needed (encrypted) - Reels still to post, and Shorts YouTube's upload limit held back
+      - name: Keep the videos still needed (encrypted) - short versions still to post as Reels, and a story YouTube's upload limit held back
         if: ${{ always() && !inputs.test }}
         run: python tools/jobs.py keep
 
-      - name: Store them with this run for 3 days (the Reels workflow posts them at their slots)
+      - name: Store them with this run for 3 days (the Reels workflow posts them at their time)
         if: ${{ always() && !inputs.test }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
