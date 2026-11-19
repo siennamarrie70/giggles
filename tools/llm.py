@@ -28,6 +28,9 @@ import json
 import sys
 import time
 from collections import Counter
+from datetime import datetime, timedelta, timezone
+from datetime import time as dtime
+from zoneinfo import ZoneInfo
 
 import httpx
 from google import genai
@@ -53,6 +56,8 @@ CAREFUL_THINKING = types.ThinkingConfig(thinking_level="LOW")
 # (2026-11-17: with the bigger ones busy, Flash-Lite drew a whole film in the old ready-made sets).
 STRONG_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.8-flash"]
 STRONG_WAITS = (60, 120, 180)  # seconds
+RENEW_TZ = ZoneInfo("America/Los_Angeles")   # Gemini's free allowance renews at midnight here (13:30 in India in winter,
+                                             # 12:30 in summer); a stronger model gives 20 requests a day (2026-11-20)
 TIMEOUT_MS = 60_000
 BLIP_WAIT = 20  # seconds
 BUSY_WAITS = (60, 120)  # seconds a patient request waits before asking every model again, when they were all busy
@@ -122,6 +127,18 @@ def generate_json(parts: list, schema: dict | None, system: str, careful: bool =
     if answer is not None:
         return answer
     raise RuntimeError("All Gemini models failed: " + " | ".join(failures))
+
+
+def renewed_at(now: datetime | None = None) -> datetime:
+    """When Gemini's free allowance last renewed (the start of its day: midnight in California), in UTC."""
+    local = (now or datetime.now(timezone.utc)).astimezone(RENEW_TZ)
+    return datetime.combine(local.date(), dtime(0), tzinfo=RENEW_TZ).astimezone(timezone.utc)
+
+
+def renews_at(now: datetime | None = None) -> datetime:
+    """When Gemini's free allowance renews next (the next midnight in California), in UTC."""
+    local = (now or datetime.now(timezone.utc)).astimezone(RENEW_TZ)
+    return datetime.combine(local.date() + timedelta(days=1), dtime(0), tzinfo=RENEW_TZ).astimezone(timezone.utc)
 
 
 def _resting(model: str) -> bool:

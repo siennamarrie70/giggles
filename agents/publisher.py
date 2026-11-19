@@ -4,9 +4,8 @@ short version on Instagram as a Reel.
 
 It takes the oldest story that's ready: written in the look of now and not held by the Reviewer (choose()). Its film must
 have passed the Reviewer (Agent 4): without a reviewed film, the Animator makes it and the Reviewer reviews it first, fixes
-included (agents/reviewer.py, reviewed()). If Gemini's voice is out, the story goes back to the queue untouched and waits
-for it (no other voice reads it). A film the Reviewer turns down after the fixes is never posted as it is: it's made again
-by itself until it passes (agents/reviewer.py hold()), then takes a slot.
+included (agents/reviewer.py, reviewed()). A film the Reviewer turns down after the fixes is never posted as it is:
+it's made again by itself until it passes (agents/reviewer.py hold()), then takes a slot.
 
 YouTube: the film is uploaded as private with the slot as its publish time, so YouTube makes it public on the minute; a
 slot only minutes away, or already passed, goes up public at once. An ordinary video (Film & Animation, series.category_id;
@@ -75,7 +74,7 @@ STUDIO_GRACE = timedelta(minutes=5)    # still private this long after its time:
 PUBLISH_LAG = timedelta(minutes=30)    # a Reel waits this long for YouTube to make its Short public (it's a little late)
 DOWN_RECHECK = timedelta(minutes=30)   # while Meta refuses Instagram's connection, it's asked again this often
 DOWN_RETELL = timedelta(hours=24)      # ...and a Reels run fails this often meanwhile, so GitHub emails you
-MADE_WITH = ("Told by an AI narrator (Gemini's text-to-speech). Animated in code, frame by frame: no AI pictures. "
+MADE_WITH = ("Animated in code, frame by frame: no AI pictures, no AI voice. "
              "Sounds: CC0 recordings (Freesound, Openverse).")
 _reels = threading.RLock()             # one claim at a time, so a Reel goes up once whoever asks
 
@@ -275,8 +274,8 @@ def kept_files(video_id: int, every: bool = False) -> list:
 
 def _fetch_kept(row: dict, progress=log) -> None:
     """In the cloud, a story made and reviewed by an earlier run that ended before YouTube took it (its daily upload
-    limit) is fetched from that run, with its thumbnail and short version, so it isn't made again (more of the
-    narrator's free readings). If it can't be, it's made again as before."""
+    limit) is fetched from that run, with its thumbnail and short version, so it isn't made again. If it can't be,
+    it's made again as before."""
     kept_by = row["plan"].get("kept_video") or {}
     out = animator.preview_path(row["id"])
     if (out.exists() or not kept_by.get("run") or not kept.in_cloud()
@@ -641,8 +640,8 @@ def drop_reel(video_id: int) -> dict:
 
 def remake_reel(row: dict, progress=log) -> dict:
     """A story that went up while Reels were off (its short version wasn't kept) made again for Instagram: only its
-    short version (the film is on YouTube), read again by the same voice, so its Reel is the same short version in a new
-    take. The Reel then waits for its time; what's saved about the YouTube videos stays as it was."""
+    short version (the film is on YouTube), drawn again from its story. The Reel then waits for its time; what's saved
+    about the YouTube videos stays as it was."""
     video_id = row["id"]
     with _reels:
         row = db.get_video(video_id)

@@ -84,6 +84,11 @@ def _made(tag: str) -> np.ndarray | None:
         t = np.arange(int(0.12 * sr)) / sr
         env = np.minimum(1, t / 0.004) * np.exp(-np.maximum(0, t - 0.07) / 0.02)
         x = (np.sin(2 * np.pi * 960 * t) + 0.25 * np.sin(2 * np.pi * 1920 * t)) * env
+    elif tag == "bubble_pop":   # a soft, round pop: a bubble coming (never a click)
+        t = np.arange(int(0.09 * sr)) / sr
+        f = 520 + 380 * np.minimum(1, t / 0.03)
+        env = np.minimum(1, t / 0.006) * np.exp(-t / 0.028)
+        x = np.sin(2 * np.pi * np.cumsum(f) / sr) * env
     elif tag == "door_knock":
         t = np.arange(int(0.16 * sr)) / sr
         r = _rng("knock")
@@ -291,7 +296,15 @@ def music_track(spec: dict, n: int) -> np.ndarray:
     t = np.arange(m, dtype=np.float32) / SAMPLE_RATE
     rise = max(0.05, float(spec.get("rise", 4.0)))
     env = np.clip(t / rise, 0, 1) ** 2
-    swell = float(spec.get("swell", 0.0)) * np.clip((t - rise) / max(0.1, float(spec.get("swell_s", 10.0))), 0, 1)
+    if spec.get("lift_at") is not None:   # low until the lift, then up to full, then the swell
+        ta = t + i / SAMPLE_RATE
+        u = np.clip((ta - float(spec["lift_at"])) / max(0.1, float(spec.get("lift", 6.0))), 0, 1)
+        level = float(spec.get("low", 0.0)) * (1 - u * u * (3 - 2 * u))
+        after = np.clip((ta - float(spec["lift_at"]) - float(spec.get("lift", 6.0))) / max(0.1, float(spec.get("swell_s", 10.0))),
+                        0, 1)
+        swell = level + float(spec.get("swell", 0.0)) * after
+    else:
+        swell = float(spec.get("swell", 0.0)) * np.clip((t - rise) / max(0.1, float(spec.get("swell_s", 10.0))), 0, 1)
     out[i:i + m] = x[:m] * env * (10 ** ((swell + float(spec.get("gain", 0.0))) / 20))
     return out
 

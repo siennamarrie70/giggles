@@ -88,7 +88,10 @@ SET_OTHERS = {  # who can be in each place, and how ({who: {their pose: mark}})
     "new_flat": {"mother": {"sitting": "sofa_other"}, "woman": {"standing": "door", "offering": "door"},
                  "friend": {"standing": "door"}},
 }
-MOODS = ["tired", "open", "wide", "closed", "sad", "determined", "soft", "happy", "angry", "worried"]  # (silhouette.MOODS)
+MOODS = ["tired", "open", "wide", "closed", "sad", "determined", "soft", "happy", "angry", "worried",
+         # a habit's exaggerated eyes
+         "hearts", "dollars", "spirals", "droopy", "furious", "side_eye", "smug", "sobbing", "terrified",
+         "fire"]  # (silhouette.MOODS)
 EVENTS = {
     "none": "nothing happens: life, breath, a blink",
     "head_turn": "his head turns to the camera and his eyes spring wide (the look's signature moment; use it rarely)",
@@ -135,6 +138,18 @@ EFFECTS = {  # name: what it is (the storyboard's words)
     "party": "party lights: strings of warm coloured bulbs, soft coloured light moving on the walls",
     "spotlight": "a spotlight from above on him, the rest of the place dimmed (a stage, a lonely moment)",
 }
+HABIT_EFFECTS = {  # how the whole picture feels when a habit grips him
+    "red_pulse": "the picture's edges flushing red with his heartbeat (rage)",
+    "pink_haze": "a pink haze over the picture (lust, infatuation)",
+    "green_tint": "the picture turned sickly green (envy, jealousy)",
+    "grey_drain": "the colour drained out of the picture (self-pity, a grey life)",
+    "tunnel": "tunnel vision: the dark closing in on him (a craving's grip, or total focus)",
+    "shake": "the camera shaking (rage, panic, a blow)",
+    "timelapse": "time racing: day to night and back, the sun sweeping the wall, the clock spinning (no sense of time)",
+    "notifications": "notifications popping up all round the picture (the phone's pull)",
+    "shadows": "dark shapes creeping in from the edges (fear)",
+}
+EFFECTS.update(HABIT_EFFECTS)
 
 # name: (group, what it is, width, layer, where, tall?, its surface (dx0, dx1, height) for small things, or None)
 PROPS = {
@@ -203,7 +218,7 @@ PROPS = {
     "car": ("outdoors", "a parked car (its lights on at night)", 860, "mid", "out", False, None),
     "ambulance": ("outdoors", "an ambulance, its roof lights pulsing red and blue", 940, "mid", "out", False, None),
     "bus_stop": ("outdoors", "a bus stop shelter with a bench", 420, "mid", "out", True, None),
-    "bench": ("outdoors", "a park bench", 260, "mid", "both", False, None),
+    "bench": ("outdoors", "a park bench", 360, "mid", "both", False, None),
     "fence": ("outdoors", "a low fence", 440, "mid", "out", False, None),
     "street_lamp": ("outdoors", "a street lamp (its light pools on the ground at dusk and night)", 100, "mid", "out",
                     True, None),
@@ -243,7 +258,32 @@ PROPS = {
 }
 PROP_GROUPS = ("home", "wall", "work", "health", "outdoors", "small")
 HANG = {"clock": 560, "cabinets": 560, "photos": 500, "poster": 500, "certificates": 500, "calendar": 470,
-        "shelf": 420, "whiteboard": 470, "screen": 480, "notice_board": 470, "tool_wall": 470, "mirror": 440}
+        "shelf": 420, "whiteboard": 470, "screen": 480, "notice_board": 470, "tool_wall": 470, "mirror": 440,
+        "cobwebs": 640, "sticky_notes": 470, "wall_crack": 330, "trophy_shelf": 440, "checklist": 470}
+
+HABIT_PROPS = {  # a habit's things: what a place looks like when a habit has had it a while
+    "dish_pile": ("small", "dirty dishes piled high, about to topple (laziness)", 120, "small", "in", False, None),
+    "clothes_floor": ("small", "clothes thrown all over the floor (laziness)", 280, "floor_small", "in", False, None),
+    "pizza_boxes": ("small", "a stack of empty pizza boxes (laziness, comfort)", 150, "floor_small", "in", False, None),
+    "overflowing_bin": ("home", "an overflowing bin, rubbish spilling round it (laziness)", 140, "mid", "in", False,
+                        None),
+    "cobwebs": ("wall", "cobwebs in the corner (days gone by, neglect)", 170, "wall", "in", False, None),
+    "console": ("small", "a games console and its controller (procrastination)", 110, "small", "in", False, None),
+    "sticky_notes": ("wall", "sticky notes all over the wall: things left for later (procrastination)", 220, "wall",
+                     "in", False, None),
+    "wall_crack": ("wall", "a crack in the wall where a fist went in (anger)", 140, "wall", "in", False, None),
+    "money_pile": ("small", "a heap of cash and gold coins (greed)", 130, "small", "both", False, None),
+    "safe": ("work", "a steel safe, its door open on gold bars (greed)", 140, "back", "in", False, None),
+    "trophy_shelf": ("wall", "a shelf of polished trophies (ego, arrogance)", 280, "wall", "in", False, None),
+    "coin_jar": ("small", "a glass jar filling with coins (consistency, saving)", 50, "small", "in", False, None),
+    "alarm_clock": ("small", "an alarm clock, ringing and shaking (5:00, the snooze button)", 50, "small", "in", False,
+                    None),
+    "growing_plant": ("home", "a young plant that grows as the shot goes on (patience)", 110, "back", "in", False, None),
+    "energy_cans": ("small", "crushed energy drink cans (nights without sleep)", 90, "small", "in", False, None),
+    "empty_bottles": ("small", "empty bottles on the floor (a binge's mess)", 160, "floor_small", "in", False, None),
+    "checklist": ("wall", "a board with a checklist, items ticked off (discipline)", 220, "wall", "in", False, None),
+}
+PROPS.update(HABIT_PROPS)
 
 # name: (what it shows, the mark it needs: a mark kind, or a prop's use ("desk", "stove"...), or "any": a standing,
 # sitting or walking mark)
@@ -292,6 +332,48 @@ ACTIONS = {
     "holding": ("holding something (ITEMS: a bag, a suitcase, flowers, a gift, a trophy raised, money, a cup, a bottle)",
                 "any"),
 }
+HABIT_ACTIONS = {  # a habit's exaggerated actions (tools/silhouette_habits.py)
+    # anger
+    "slamming": ("slamming his fists down on a table or a desk", "table"),
+    "throwing": ("throwing his phone at the wall in rage: it shatters", "stand"),
+    "punching_wall": ("punching the wall: it cracks", "stand"),
+    "shouting": ("shouting, leaning in, fists clenched behind him", "stand"),
+    "shaking_fists": ("shaking his clenched fists, trembling with rage", "stand"),
+    # lust, the phone
+    "hiding_phone": ("hiding his phone behind his back, caught", "any"),
+    "staring": ("staring, leaning in, transfixed", "any"),
+    "doomscrolling": ("hunched over his phone, scrolling and scrolling", "any"),
+    # laziness, comfort, procrastination
+    "sprawled": ("sprawled on the sofa or the bed, an arm hanging off", "bed"),
+    "snoozing": ("in bed, slapping the ringing alarm to snooze", "bed"),
+    "stretching": ("stretching, arms up (a yawn, or a fresh start)", "stand"),
+    "snacking": ("slumped, eating junk food from a bag", "sit"),
+    "watching_tv": ("sunk deep in the sofa, remote in hand", "sit"),
+    # envy, jealousy
+    "peeking": ("peeking out from behind a doorway, watching someone", "stand"),
+    "clenching": ("crushing a paper in his fists", "any"),
+    # ego, arrogance
+    "arms_crossed": ("standing tall, arms crossed, chin up", "stand"),
+    "admiring": ("admiring himself in the mirror, hand on his chin", "mirror"),
+    "waving_off": ("waving someone off with a flick of the hand", "stand"),
+    "posing": ("posing like a winner, fists on his hips, chest out", "stand"),
+    # self-pity, fear
+    "curled_up": ("curled up on the floor, hugging his knees, head down", "floor"),
+    "sulking": ("sitting slumped, arms crossed, sulking", "sit"),
+    "hiding_bed": ("hiding under the blanket, only his eyes showing", "bed"),
+    "backing_away": ("backing away, hands up", "stand"),
+    "cowering": ("crouching, arms over his head", "stand"),
+    # greed
+    "counting_money": ("counting money at a table, eyes on the pile", "table"),
+    "hugging_bag": ("hugging a bag of money to his chest", "any"),
+    "grabbing": ("grabbing at something, greedy", "stand"),
+    # virtues
+    "rising": ("getting up off the bed's edge at once (the alarm, a new start)", "sit"),
+    "ticking": ("ticking off a list on a board", "stand"),
+    "watering": ("watering a plant", "stand"),
+    "meditating": ("sitting cross-legged on the floor, eyes closed, calm", "floor"),
+}
+ACTIONS.update(HABIT_ACTIONS)
 ITEMS = ("bag", "suitcase", "flowers", "gift", "trophy", "money", "cup", "bottle", "glass", "letter", "book", "box")
 PAIRS = ("hugging", "handshake", "arguing")
 
@@ -304,3 +386,212 @@ CLOTH_COLORS = {"teal": "#2B6470", "plum": "#7E5A68", "rose": "#7A4A5E", "charco
                 "mustard": "#8A6A2E", "grey": "#5A5A66", "cream": "#B8AC9A", "forest": "#2E4A3A", "blue": "#3D5A80",
                 "black": "#1E1A22"}
 EXTRAS = ("beard", "glasses", "cap", "helmet", "apron", "dress", "jacket", "suit", "coat", "stethoscope")
+
+# --- a habit shown big: the exaggerated pieces and each topic's kit of them ---------------------------------------------------
+MARKS = {  # comic marks round a head (tools/silhouette_marks.py draws them)
+    "steam": "steam puffing from his head: rage boiling over",
+    "vein": "a throbbing anger vein on his head",
+    "sweat": "sweat drops: nerves, guilt, a craving",
+    "drool": "drool: a craving, or fast asleep",
+    "zzz": "Zzz rising: asleep, oversleeping",
+    "hearts": "little hearts floating up: infatuation, lust",
+    "dollars": "$ signs floating up: greed",
+    "raincloud": "a small rain cloud over his head: self-pity, gloom",
+    "flies": "flies buzzing round him: neglect, days unwashed",
+    "stars": "dizzy stars circling his head: dazed, hungover",
+    "jolt": "a lightning jolt by his head: a sudden shock",
+    "tremble": "trembling: fear, nerves (he shakes, lines either side)",
+    "question": "a ? over his head: confused, lost",
+    "exclaim": "a ! over his head: alarm, a sudden realization",
+    "sparkles": "sparkles round him: vanity, feeling superior",
+    "notify": "notification dots popping round him: the phone pulling at him",
+    "aura_green": "a green glow round him: envy",
+    "aura_red": "a red glow round him: rage",
+}
+SCREENS = {  # what his phone's screen shows, turned to us (tools/silhouette_icons.py draws them)
+    "adult": "a pink mosaic under 18+: what he watches in secret (censored: nothing can be made out)",
+    "notifications": "notifications stacking up",
+    "likes": "a post's likes climbing",
+    "messages": "a chat: messages back and forth",
+    "bank": "his bank balance, red and falling",
+    "rival": "someone else's perfect life: a smug man and his new car",
+    "game": "a game, bright and loud",
+    "chart_up": "a chart going up",
+}
+PICTURES = {  # what a thought bubble can show instead of words (tools/silhouette_icons.py draws them)
+    "heart": "a heart: love, desire", "broken_heart": "a broken heart: a love lost", "lips": "red lips: a kiss, desire",
+    "phone_adult": "his phone's censored screen, a pink mosaic under 18+: what he watches in secret",
+    "notifications": "a phone full of notifications", "likes": "a heart with a counter: likes, being seen online",
+    "her": "her: a woman he loves, misses or wants", "him": "himself", "parents": "his mother and father",
+    "rival": "another man doing better: smug, with a new car", "money": "banknotes", "moneybag": "a bag of money",
+    "dollar": "a dollar sign", "wallet_empty": "an empty wallet, moths flying out", "crown": "a crown: being the best, pride",
+    "trophy": "a trophy: winning", "car": "a car", "house": "a house: home", "ring": "a ring: marriage, a promise",
+    "fist": "a clenched fist: anger, a fight", "bomb": "a bomb with a lit fuse: about to explode",
+    "volcano": "an erupting volcano: rage", "grawlix": "#@%!: swearing, shouting",
+    "bolt": "a lightning bolt: shock, a sudden idea, rage", "broken_phone": "a cracked phone",
+    "bed": "a bed with Zzz: sleep, laziness", "tv": "a TV: comfort, hours wasted", "pizza": "a slice of pizza: junk food",
+    "controller": "a game controller: games instead of work", "clock": "a clock: time",
+    "clock_spin": "a clock racing round: time slipping away", "hourglass": "an hourglass: time running out, patience",
+    "calendar": "a calendar of crossed-out days: days wasted, a deadline",
+    "calendar_ticks": "a calendar of ticked days: days kept, discipline", "alarm": "a ringing alarm clock",
+    "chain": "a chain: being trapped, addiction", "briefcase": "a briefcase: his job, work",
+    "bill": "a bill come due: rent, debt", "hospital": "a hospital bed: illness, someone he loves in hospital",
+    "mirror": "a mirror with him in it: facing himself", "mountain": "a mountain with a flag on top: a goal, the climb",
+    "sunrise": "the sun rising: a new start", "road": "a road to the horizon: the way ahead",
+    "dumbbell": "a dumbbell: training, strength", "checklist": "a ticked checklist: getting it done",
+    "plant": "a growing plant: slow growth, patience", "lightbulb": "a light bulb: an idea, understanding",
+    "book": "an open book: learning", "diploma": "a diploma: a qualification earned",
+    "door": "a door: leaving, a way out, a new chance", "tick": "a tick: yes, done", "cross": "a cross: no, wrong, failed",
+    "question": "a question mark: confusion, not knowing", "exclaim": "an exclamation mark: surprise, alarm",
+    "eye": "an eye: watching, being watched", "green_eye": "a narrowed green eye: envy", "bottle": "a bottle: drinking",
+    "coffee": "a cup of coffee: a morning, a pause", "shadow": "a dark shape with red eyes: fear",
+    "laughing": "people laughing: being judged, mocked", "target": "a target hit: focus, a goal reached",
+    "shield": "a shield: courage, protection", "star": "a star: success, fame", "drop": "a drop: a tear, sweat",
+    "puff": "a puff of smoke", "cloud_rain": "a rain cloud: sadness",
+}
+
+IDEAS = {  # a few ideas for showing big the topics of the owner's list (Settings): a starting point the storyboard is
+    # offered, never a rule. Every exaggerated piece serves any story, whatever its topic (one outside the list too); the
+    # storyboard shows each story's own habit with whichever fit (agents/storyboard.py). words: what a free Central Theme
+    # says when it's this topic; before: the weakness a virtue's story overcomes.
+    "lust": {"kind": "weakness", "eyes": ["hearts", "spirals"], "marks": ["hearts", "sweat", "drool"],
+             "actions": ["staring", "hiding_phone", "lying_awake", "doomscrolling"], "screens": ["adult", "messages"],
+             "things": ["energy_cans"], "effects": ["pink_haze", "tunnel"],
+             "pictures": ["phone_adult", "lips", "heart", "her", "broken_heart", "chain"],
+             "words": ["lust", "porn", "desire", "temptation", "infatuat", "affair", "cheat", "seduc", "craving",
+                       "pleasure", "secret"]},
+    "laziness": {"kind": "weakness", "eyes": ["droopy"], "marks": ["zzz", "drool", "flies"],
+                 "actions": ["sprawled", "snoozing", "watching_tv", "snacking", "asleep"], "screens": [],
+                 "things": ["dish_pile", "clothes_floor", "pizza_boxes", "overflowing_bin", "cobwebs", "alarm_clock"],
+                 "effects": ["timelapse", "grey_drain"], "pictures": ["bed", "tv", "pizza", "clock_spin", "calendar"],
+                 "words": ["lazy", "laziness", "sloth", "idle", "apath", "lethargy", "unmotivat", "wasted"]},
+    "ego": {"kind": "weakness", "eyes": ["smug"], "marks": ["sparkles"],
+            "actions": ["arms_crossed", "admiring", "waving_off", "posing"], "screens": ["likes"],
+            "things": ["trophy_shelf"], "effects": ["spotlight"], "pictures": ["crown", "trophy", "him", "mirror", "star"],
+            "words": ["ego", "pride", "vanity", "narciss", "self-import", "image"]},
+    "envy": {"kind": "weakness", "eyes": ["side_eye"], "marks": ["aura_green", "tremble"],
+             "actions": ["peeking", "clenching"], "screens": ["rival", "likes"], "things": [], "effects": ["green_tint"],
+             "pictures": ["rival", "green_eye", "car", "house", "trophy"],
+             "words": ["envy", "envious", "covet", "comparison", "compar", "bitter"]},
+    "comfort": {"kind": "weakness", "eyes": ["droopy"], "marks": ["zzz"], "actions": ["watching_tv", "snacking", "sprawled"],
+                "screens": ["game"], "things": ["pizza_boxes", "console"], "effects": ["timelapse"],
+                "pictures": ["tv", "pizza", "bed", "controller"],
+                "words": ["comfort", "complacen", "easy life", "settl", "stagnat", "safe"]},
+    "procrastination": {"kind": "weakness", "eyes": ["droopy", "spirals"], "marks": ["question", "sweat"],
+                        "actions": ["doomscrolling", "watching_tv", "snoozing"], "screens": ["game", "notifications"],
+                        "things": ["sticky_notes", "console", "energy_cans"], "effects": ["timelapse"],
+                        "pictures": ["clock_spin", "calendar", "controller", "hourglass", "alarm"],
+                        "words": ["procrastinat", "delay", "postpone", "put off", "tomorrow", "deadline", "later"]},
+    "anger": {"kind": "weakness", "eyes": ["furious"], "marks": ["steam", "vein", "aura_red"],
+              "actions": ["slamming", "throwing", "punching_wall", "shouting", "shaking_fists"], "screens": [],
+              "things": ["wall_crack"], "effects": ["red_pulse", "shake"],
+              "pictures": ["fist", "bomb", "volcano", "grawlix", "broken_phone", "bolt"],
+              "words": ["anger", "angry", "rage", "temper", "fury", "furious", "wrath", "hostil", "outburst"]},
+    "self-pity": {"kind": "weakness", "eyes": ["sobbing"], "marks": ["raincloud"],
+                  "actions": ["curled_up", "sulking", "crying"], "screens": [], "things": [], "effects": ["grey_drain"],
+                  "pictures": ["broken_heart", "cloud_rain", "him", "cross"],
+                  "words": ["self-pity", "pity", "victim", "sorry for himself", "blame", "despair", "hopeless"]},
+    "the phone": {"kind": "weakness", "eyes": ["spirals"], "marks": ["notify"], "actions": ["doomscrolling", "lying_awake"],
+                  "screens": ["notifications", "likes", "messages", "game"], "things": ["energy_cans"],
+                  "effects": ["notifications", "tunnel"], "pictures": ["notifications", "likes", "chain", "broken_phone"],
+                  "words": ["phone", "screen", "social media", "scroll", "digital", "online", "internet", "notification",
+                            "addict", "gaming", "video game", "dopamine"]},
+    "fear": {"kind": "weakness", "eyes": ["terrified"], "marks": ["tremble", "sweat"],
+             "actions": ["hiding_bed", "backing_away", "cowering"], "screens": [], "things": [],
+             "effects": ["shadows", "shake"], "pictures": ["shadow", "laughing", "cross", "question"],
+             "words": ["fear", "afraid", "anxiety", "anxious", "coward", "panic", "dread", "scared", "timid", "doubt"]},
+    "greed": {"kind": "weakness", "eyes": ["dollars"], "marks": ["dollars"],
+              "actions": ["counting_money", "hugging_bag", "grabbing"], "screens": ["bank"],
+              "things": ["money_pile", "safe"], "effects": [], "pictures": ["moneybag", "money", "dollar", "wallet_empty",
+                                                                            "crown"],
+              "words": ["greed", "greedy", "money", "wealth", "materialis", "avarice", "debt", "gambl", "spending",
+                        "impulse", "shopping"]},
+    "jealousy": {"kind": "weakness", "eyes": ["side_eye"], "marks": ["aura_green", "steam"],
+                 "actions": ["peeking", "clenching"], "screens": ["rival", "messages"], "things": [],
+                 "effects": ["green_tint"], "pictures": ["her", "rival", "broken_heart", "green_eye"],
+                 "words": ["jealous", "possessive", "suspicio", "insecur", "betray"]},
+    "arrogance": {"kind": "weakness", "eyes": ["smug"], "marks": ["sparkles"],
+                  "actions": ["waving_off", "arms_crossed", "posing"], "screens": [], "things": ["trophy_shelf"],
+                  "effects": ["spotlight"], "pictures": ["crown", "trophy", "laughing", "star"],
+                  "words": ["arrogan", "superior", "condescend", "entitle", "know-it-all", "boast", "contempt"]},
+    "discipline": {"kind": "virtue", "before": "laziness", "eyes": ["determined", "fire"], "marks": [],
+                   "actions": ["rising", "ticking", "stretching", "pushups", "running", "writing"], "screens": ["chart_up"],
+                   "things": ["checklist", "alarm_clock"], "effects": [],
+                   "pictures": ["calendar_ticks", "checklist", "alarm", "mountain", "dumbbell"],
+                   "words": ["disciplin", "routine", "structure", "self-control"]},
+    "obsession": {"kind": "virtue", "before": "comfort", "eyes": ["fire"], "marks": [],
+                  "actions": ["writing", "typing", "ticking"], "screens": ["chart_up"], "things": ["checklist"],
+                  "effects": ["tunnel"], "pictures": ["target", "lightbulb", "mountain", "book"],
+                  "words": ["obsess", "passion", "drive", "hunger", "relentless"]},
+    "patience": {"kind": "virtue", "before": "anger", "eyes": ["soft", "closed"], "marks": [],
+                 "actions": ["watering", "meditating"], "screens": [], "things": ["growing_plant", "coin_jar"],
+                 "effects": [], "pictures": ["plant", "hourglass", "sunrise"],
+                 "words": ["patien", "waiting", "slow", "calm"]},
+    "silence": {"kind": "virtue", "before": "ego", "eyes": ["closed", "soft"], "marks": [],
+                "actions": ["meditating", "reading"], "screens": [], "things": [], "effects": [],
+                "pictures": ["sunrise", "book", "mountain"], "words": ["silence", "silent", "quiet", "listen", "restraint"]},
+    "consistency": {"kind": "virtue", "before": "procrastination", "eyes": ["determined"], "marks": [],
+                    "actions": ["running", "pushups", "ticking", "writing"], "screens": ["chart_up"],
+                    "things": ["coin_jar", "checklist"], "effects": [],
+                    "pictures": ["calendar_ticks", "checklist", "plant", "dumbbell"],
+                    "words": ["consisten", "every day", "daily", "persever", "persist", "steady"]},
+    "sacrifice": {"kind": "virtue", "before": "comfort", "eyes": ["determined"], "marks": [],
+                  "actions": ["typing", "writing", "waving_off"], "screens": [], "things": ["coin_jar"], "effects": [],
+                  "pictures": ["road", "mountain", "diploma", "house", "parents"],
+                  "words": ["sacrific", "give up", "giving up", "trade", "cost"]},
+    "solitude": {"kind": "virtue", "before": "the phone", "eyes": ["soft"], "marks": [],
+                 "actions": ["meditating", "reading", "walking"], "screens": [], "things": [], "effects": [],
+                 "pictures": ["book", "mountain", "sunrise", "road"],
+                 "words": ["solitude", "alone", "lonel", "isolat", "solitary"]},
+    "focus": {"kind": "virtue", "before": "the phone", "eyes": ["fire", "determined"], "marks": [],
+              "actions": ["writing", "typing"], "screens": ["chart_up"], "things": ["checklist"], "effects": ["tunnel"],
+              "pictures": ["target", "checklist", "lightbulb"],
+              "words": ["focus", "concentrat", "distract", "attention", "deep work"]},
+    "courage": {"kind": "virtue", "before": "fear", "eyes": ["determined", "fire"], "marks": [],
+                "actions": ["speaking", "standing"], "screens": [], "things": [], "effects": ["spotlight"],
+                "pictures": ["shield", "mountain", "door", "road"],
+                "words": ["courage", "brave", "bold", "dare", "risk", "confiden"]},
+    "self-respect": {"kind": "virtue", "before": "self-pity", "eyes": ["determined"], "marks": [],
+                     "actions": ["arms_crossed", "waving_off", "mirror"], "screens": [], "things": [], "effects": [],
+                     "pictures": ["mirror", "door", "shield"],
+                     "words": ["self-respect", "dignity", "worth", "boundar", "self-worth", "standards"]},
+}
+
+
+def ideas_for(topic: str = "", text: str = "") -> str:
+    """Which of IDEAS a story's topic is: its brief's topic when it's one of them, else the one its own text (its Central
+    Theme, its title, its core message) names most; "" when none (a topic of its own: no ideas offered, nothing lost)."""
+    t = (topic or "").strip().lower()
+    if t in IDEAS:
+        return t
+    words = (text or "").lower()
+    score = {k: sum(words.count(w) for w in v["words"]) for k, v in IDEAS.items()}
+    best = max(score, key=lambda k: score[k])
+    return best if score[best] else ""
+
+
+# --- the bubbles: what people say and think, over their heads (no narrator; tools/silhouette_bubbles.py draws them) ---------
+BUBBLE_KINDS = {
+    "say": "speech: what someone says to another person in the picture",
+    "think": "a thought: what he (or someone) thinks, in words",
+    "shout": "a shout (a spiky burst): yelled words, or swearing as #@%!",
+    "picture": "a thought cloud showing a picture (PICTURES) instead of words, with up to 4 words or none",
+}
+BUBBLE_WORDS = 12        # words in a bubble at most (3 rows)
+BUBBLE_CHARS = 90        # ...and letters (a few very long words would draw a bubble wider than the picture)
+WORD_CHARS = 24          # letters in one word on screen at most (a bubble, the title, the closing line)
+
+
+def too_long(text: str, most: int = BUBBLE_CHARS) -> bool:
+    """Words on screen too long to draw: more than `most` letters in all, or a word over WORD_CHARS."""
+    return len(text) > most or any(len(w) > WORD_CHARS for w in text.split())
+READ_WPS, READ_FIND, READ_LEAST, READ_PICTURE = 2.5, 1.0, 2.5, 2.5   # the reading rule (your choice, 2026-11-19)
+
+
+def read_seconds(text: str = "", picture: str = "") -> float:
+    """How long a bubble stays for an average reader who looks at the picture too: a second to find it, then 2.5
+    words a second, 2.5 s at least; a picture alone 2.5 s, a picture with words a second more."""
+    n = len((text or "").split())
+    if picture and not n:
+        return READ_PICTURE
+    return max(READ_LEAST, READ_FIND + n / READ_WPS) + (1.0 if picture else 0.0)

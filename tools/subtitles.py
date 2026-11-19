@@ -137,7 +137,8 @@ def word_seconds(voice: dict | None, at: float, count: int) -> list[float] | Non
 def cues(shots: list[dict], times: list[dict], voice: list[dict] | None, fits, closing: str = "") -> list[dict]:
     """The subtitles of a film or its short version: [{"shot": k, "on", "off", "text", "first", "last"}] in its seconds
     (first/last: the line's first and last cue). times: tools/story_film.timeline's. voice: the narrator's lines as
-    placed in it ({"at", "seconds", "words", "from"}: story_film.voice_cues), or None (no reading yet: estimated)."""
+    placed in it ({"at", "seconds", "words", "from"}: story_film.voice_cues, a narrated film's before 2026-11-19), or
+    None (no reading yet: estimated)."""
     placed = {round(float(v["at"]), 2): v for v in voice or []}
     out = []
     for k, (shot, t) in enumerate(zip(shots, times)):

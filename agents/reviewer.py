@@ -1,30 +1,29 @@
 """
-Agent 4, Reviewer: watches and listens to every film the Animator makes, and its short version, before the Publisher may
-post them, the way a picture editor would. Only a film that passes goes to the Publisher. One that fails goes back to the
+Agent 4, Reviewer: watches every film the Animator makes, and its short version, before the Publisher may post them,
+the way a picture editor would. Only a film that passes goes to the Publisher. One that fails goes back to the
 Animator with the review's notes (agents/animator.py, improve()): it fixes what they point at and makes the film again
 (or only its short version, when only that failed), at most MAX_ROUNDS times; a film that still fails is turned down
 (held): never posted as it is, and made again by itself (animator.make_again: the scenes turned down drawn again with a
-change, a new reading for a voice problem, later a new story from Agent 2), at once the first time and then after
+change, later a new story from Agent 2), at once the first time and then after
 REMAKE_WAITS, over and over until it passes (your call on 2026-10-27: nothing waits for you). Its slot stays empty
 meanwhile. You can still post one anyway, or discard it, in the Studio.
 
 What it checks, on the finished film (what a viewer sees and hears):
   size and length  1920x1080, inside series.minutes
-  sound            its level (a narrated film plays at film_sound.LUFS_VOICE), peaks, and no dead silence
-  his words        faster-whisper hears every narrator's line on its own through the rain and the footsteps, and the
-                   whole must match MIN_MATCH (a line drowned out turns the sounds under him down, then has him read
-                   again)
-  his voice        that it's the narrator's own: read by a model that takes his persona, and like his sample
-                   (tools/voiceprint.py: pitch and timbre); one that isn't him is read again
-  the look         one Gemini look at a frame of every scene (a new place or light, and every head turn), the title and
-                   the closing line, against what the scene should show and your look description: too dark to see,
-                   what happens unreadable, a broken picture or anything unsuitable sends that scene back to be drawn
-                   again with a change
+  sound            its level (a silent film, told in bubbles since 2026-11-19, plays at film_sound.LUFS_TARGET),
+                   peaks, and no dead silence
+  the bubbles      (bubble_checks, measured) at least BUBBLES_LEAST, each on screen its reading time
+                   (silhouette_words.read_seconds), none past the end
+  the look         one Gemini look at a frame of every scene (a new place or light, and every head turn) and the
+                   closing line, against what the scene should show and your look description: too dark to see,
+                   what happens unreadable, a broken picture, a bubble over a face or cut off, the habit not shown big
+                   in his fall, or anything unsuitable sends that scene back to be drawn again with a change
 and on its short version (the YouTube Short and the Reel; your choice, 2026-11-16): 1080x1920, under a minute
-(SHORT_LEAST to story_film.SHORT_MOST seconds; story_film.SHORT_SECONDS is the aim), its sound, every one of its lines
-heard, his voice, and 4 of its frames in the same look (its title at the top, two scenes, its closing line). A problem
-only it has is fixed in it alone: the sounds under him, a new reading, or a new script from Agent 2 (one too long). A
-review counts for the film and the short version it saw (current()).
+(SHORT_LEAST to story_film.SHORT_MOST seconds; story_film.SHORT_SECONDS is the aim), its sound, its bubbles, and 4 of
+its frames in the same look (its first shot, two scenes, its closing line). A problem only it has is fixed in it
+alone: the sounds under it, or a new script from Agent 2 (one too long). A review counts for the film and the short
+version it saw (current()). (A narrated film, from before 2026-11-19, is listened to as before: every line heard by
+faster-whisper, MIN_MATCH of it, and his own voice.)
 
 A problem is "major" (the film fails) or "minor" (only noted). Every review is kept (note review:history, the last
 HISTORY), and problems that keep coming back at first look (RECURRING of the last LOOKBACK) become lessons (note
@@ -80,16 +79,22 @@ STORY_PROBLEMS = {  # (fails the film, in words, sent back to Agent 3 to draw th
     "broken_picture": (True, "a broken, glitched or blank picture", True),
     "unsuitable": (True, "something unsuitable for the channel", True),
     "off_look": (False, "something outside the look (a detailed face, thick outlines, a lens flare, neon)", True),
-    "text_unreadable": (False, "the title, a label, a subtitle or the closing line hard to read", False),
+    "text_unreadable": (False, "a label, a bubble or the closing line hard to read", False),
+    "bubble_wrong": (False, "a bubble over a face, cut off, or pointing at the wrong person", False),
+    "habit_not_shown": (False, "the habit isn't shown big: no exaggerated eyes, marks or actions where the story needs them",
+                        False),
 }
 STORY_LOOK = """You review frames of a finished animated short film before it goes on YouTube: a 3-4 minute motivational
 story drawn in code in one look, the owner's own description of which is below. The people are black silhouettes with a
-thin red rim of light and two white eyes (no faces: that is the look); the hero wears a teal hoodie. The first frame shows
-the film's title in widely spaced capitals, the last its closing line: those are the film's own words, and so is the
-small label at the top of some frames, and so are the subtitles (the narrator's words: in the film, one row in the black
-band under the picture; in the short version, low in the picture on a soft dark shadow). The frames marked "short
-version" come after: they're from the film's upright short version (9:16) for YouTube Shorts and Reels, the same scenes
-framed upright; its first shows the title at the top, its last the closing line. Each frame comes with what its scene
+thin red rim of light and two white eyes (no faces: that is the look); the hero wears a teal hoodie. There's no title in
+the picture: the film begins straight with its story. The last frame shows its closing line in widely spaced capitals:
+those are the film's own words, and so is the
+small label at the top of some frames, and so are the bubbles over people's heads (there's no narrator: what they say
+and think appears in cream speech bubbles, thought clouds, spiky shouts, or a cloud with a small picture, each with a thin
+coral-red rim and a tail to the one who says or thinks it). The habit the story is about is shown big, like a cartoon:
+exaggerated eyes (hearts, $, spirals, furious, droopy...), marks round a head (steam, sweat, Zzz, hearts...), glows,
+exaggerated actions: that is the look too. The frames marked "short version" come after: they're from the film's upright short version (9:16) for YouTube Shorts and Reels, the same scenes
+framed upright; its last shows the closing line. Each frame comes with what its scene
 should show. For each frame list the problems you can see, if any:
 - too_dark: the people or what they do can't be made out (too dark to see).
 - hard_to_read: what happens can't be read: people overlapping each other confusingly, cut off by the frame's edge, or
@@ -97,9 +102,13 @@ should show. For each frame list the problems you can see, if any:
 - mismatch: the picture clearly doesn't show what it should (another place, nobody where he should be, the wrong action).
 - broken_picture: a glitched, blank or corrupted frame.
 - unsuitable: anything sexual, gory or bloody, or a child. (A fire, an ambulance's lights, a hospital bed, a bottle or
-  a glass of wine are fine when the story has them.)
+  a glass of wine are fine when the story has them; so are desire's symbols: hearts, lips, heart eyes, a phone screen of
+  pink squares under "18+": they show nothing.)
 - off_look: something outside the look: a detailed face, thick outlines, realistic 3D shading, a lens flare, neon tubes.
-- text_unreadable: the title, the label, a subtitle or the closing line is cut off, misspelt or hard to read.
+- text_unreadable: the label, a bubble's words or the closing line is cut off, misspelt or hard to read.
+- bubble_wrong: a bubble covers a face, is cut by the frame's edge, or its tail points at someone who isn't speaking.
+- habit_not_shown: (only in a frame of his fall: the hook, the incident, the collapse, rock bottom) the habit the story
+  is about isn't shown big at all where it plainly should be.
 Judge only what you see. Most frames have no problems: then list none.
 
 The look, in the owner's own words:
@@ -220,12 +229,12 @@ def _grab(path: Path, at: float) -> bytes | None:
 
 
 def _story_frames(plan: dict, seconds: float) -> list[tuple[float, str | None, str]]:
-    """The frames the look takes: the title; the first shot of every scene (a new place or light) and every shot whose
-    event is the head turning to the camera (at most MAX_STORY_FRAMES); the closing line: (second, the scene's shot "sK"
-    or None, what it should show)."""
+    """The frames the look takes: the first shot of every scene (a new place or light) and every shot whose event is
+    the head turning to the camera (at most MAX_STORY_FRAMES); the closing line: (second, the scene's shot "sK" or None,
+    what it should show). (No title in the picture since 2026-11-20: the first frame is the first scene's.)"""
     story, shots = plan["story"], (plan.get("render") or {}).get("shots") or []
     scenes = {p["id"]: p["scene"] for p in story.get("plates") or []}
-    out = [(2.6, None, f"the title card: \"{story['title']}\" over the first scene")]
+    out = []
     last = None
     picked = []
     for k, (shot, made) in enumerate(zip(story["shots"], shots)):
@@ -233,9 +242,9 @@ def _story_frames(plan: dict, seconds: float) -> list[tuple[float, str | None, s
         if where != last or shot.get("event") == "head_turn":
             picked.append((k, made))
         last = where
-    for k, made in picked[1:MAX_STORY_FRAMES + 1]:
+    for k, made in picked[:MAX_STORY_FRAMES + 1]:
         pid = f"s{k + 1}"
-        t = made["start"] + min(1.6, (made["end"] - made["start"]) / 2)
+        t = made["start"] + min(2.4 if k == 0 else 1.6, (made["end"] - made["start"]) / 2)   # (the first: its bubble in)
         if story["shots"][k].get("event") == "head_turn":
             t = min(made["end"] - 0.2, made["start"] + (made["end"] - made["start"]) * 0.45 + 0.9)
         if all(abs(t - x[0]) > 0.8 for x in out):
@@ -248,16 +257,15 @@ def _story_frames(plan: dict, seconds: float) -> list[tuple[float, str | None, s
 
 
 def _short_frames(plan: dict) -> list[tuple[float, str | None, str]]:
-    """The short version's frames the look takes: its title at the top, his lowest moment and his new life (a story from
-    before the storyboard: its spark and its turn-down), and its closing line: (second in it, the film's shot "sK" or
-    None, what it should show)."""
+    """The short version's frames the look takes: its first shot (its hook), his lowest moment and his new life (a story
+    from before the storyboard: its spark and its turn-down), and its closing line: (second in it, the film's shot "sK"
+    or None, what it should show)."""
     story, shots = plan["story"], (plan.get("short_render") or {}).get("shots") or []
     if not shots:
         return []
     scenes = {p["id"]: p["scene"] for p in story.get("plates") or []}
     first = shots[0]
-    out = [(story_film.SHORT_COVER_AT, f"s{first['shot']}",
-            f"the title at the top: \"{story['title']}\", over {scenes.get(f's{first['shot']}') or 'the first scene'}")]
+    out = [(story_film.SHORT_COVER_AT, f"s{first['shot']}", scenes.get(f"s{first['shot']}") or "the first scene")]
     for part in ("rock_bottom", "payoff") if story.get("realization") is not None else ("spark", "turn_down"):
         got = next((s for s in shots[1:-1] if story["shots"][s["shot"] - 1].get("act") == part), None)
         if got:
@@ -348,19 +356,28 @@ def _short_checks(row: dict, plan: dict, progress=log) -> tuple[list[dict], dict
     elif not aim_low - 1 <= found["seconds"] <= aim_high + 1:
         issues.append(_issue("short_length", "minor", f"the short version runs {found['seconds']:.0f} s "
                              f"({aim_low:.0f}-{aim_high:.0f} s is the aim)"))
+    silent = bool(short.get("silent"))
+    aim = film_sound.LUFS_TARGET if silent else film_sound.LUFS_VOICE
     if found["loudness"] is not None:
-        off = abs(found["loudness"] - film_sound.LUFS_VOICE)
+        off = abs(found["loudness"] - aim)
         if off > LOUDNESS_FILM_OK:
             issues.append(_issue("short", "major" if off > LOUDNESS_FILM_BAD else "minor",
-                                 f"the short version is at {found['loudness']:.1f} LUFS (the aim is "
-                                 f"{film_sound.LUFS_VOICE:.0f})", fix="short_remake" if off > LOUDNESS_FILM_BAD else None))
+                                 f"the short version is at {found['loudness']:.1f} LUFS (the aim is {aim:.0f})",
+                                 fix="short_remake" if off > LOUDNESS_FILM_BAD else None))
     for a, b in found["silences"]:
         if b - a >= 1.0 and b < found["seconds"] - 1.5:
             issues.append(_issue("short", "major", f"{b - a:.1f} s of dead silence in the short version", at=a,
                                  fix="short_remake"))
+    if silent:
+        issues += [{**i, "kind": "short_" + i["kind"], "fix": "short_remake" if i.get("fix") else None}
+                   for i in bubble_checks(short.get("bubbles") or [], found["seconds"], least=4)]
+        return issues, {"seconds": found["seconds"], "loudness": found["loudness"], "match": None, "clarity": []}
     progress("Listening to the narrator in the short version")
     samples = _sound(path)
-    lines = story_film.short_lines(plan["story"])
+    picked = (plan["story"].get("short") or {}).get("shots") or []   # (a narrated short version's lines, before 2026-11-19)
+    lines = [{"text": x.get("line") or (plan["story"].get("closing_line") if j == len(picked) - 1 else ""),
+              "direction": x.get("direction") or "", "shot": j} for j, x in enumerate(picked)]
+    lines = [x for x in lines if x["text"]]
     timing = short.get("lines") or []
     if len(timing) != len(lines):
         timing = timing_by_ear(samples, lines)
@@ -381,6 +398,30 @@ def _short_checks(row: dict, plan: dict, progress=log) -> tuple[list[dict], dict
                              fix="short_reread"))
     return issues, {"seconds": found["seconds"], "loudness": found["loudness"], "match": round(match, 3),
                     "clarity": clarity}
+
+
+BUBBLES_LEAST = 12   # a silent film has at least this many bubbles (its people talk and think)
+
+
+def bubble_checks(bubbles: list[dict], seconds: float, least: int = BUBBLES_LEAST) -> list[dict]:
+    """A silent film's bubbles, measured: enough of them, each on screen long enough to read
+    (silhouette_words.read_seconds), none past the film's end."""
+    import silhouette_words as W
+
+    issues = []
+    if len(bubbles) < least:
+        issues.append(_issue("bubbles", "major", f"only {len(bubbles)} bubbles: the people hardly talk or think",
+                             fix="remake"))
+    for k, b in enumerate(bubbles):
+        need = W.read_seconds(b.get("text") or "", b.get("picture") or "")
+        if b["end"] - b["start"] < need - 0.05:
+            issues.append(_issue("bubble_short", "major", f"bubble {k + 1} (\"{(b.get('text') or b.get('picture') or '')[:30]}\") "
+                                 f"stays {b['end'] - b['start']:.1f} s: it needs {need:.1f} s to be read", at=b["start"],
+                                 fix="remake"))
+        if b["end"] > seconds + 0.1:
+            issues.append(_issue("bubbles", "major", f"bubble {k + 1} runs past the film's end", at=b["start"],
+                                 fix="remake"))
+    return issues
 
 
 def review(row: dict, path: Path | None = None, progress=log) -> dict:
@@ -404,11 +445,13 @@ def review(row: dict, path: Path | None = None, progress=log) -> dict:
         issues.append(_issue("length", "major", f"{found['seconds'] / 60:.1f} minutes, outside {low:g}-{high:g}", fix="remake"))
     elif not low * 60 - 15 <= found["seconds"] <= high * 60 + 20:
         issues.append(_issue("length", "minor", f"{found['seconds'] / 60:.1f} minutes ({low:g}-{high:g} is the aim)"))
+    silent = bool(made.get("silent"))   # (told in bubbles: nothing to listen to, a wordless film's loudness)
+    aim = film_sound.LUFS_TARGET if silent else film_sound.LUFS_VOICE
     if found["loudness"] is not None:
-        off = abs(found["loudness"] - film_sound.LUFS_VOICE)
+        off = abs(found["loudness"] - aim)
         if off > LOUDNESS_FILM_OK:
             issues.append(_issue("loudness", "major" if off > LOUDNESS_FILM_BAD else "minor",
-                                 f"{found['loudness']:.1f} LUFS (the aim is {film_sound.LUFS_VOICE:.0f})",
+                                 f"{found['loudness']:.1f} LUFS (the aim is {aim:.0f})",
                                  fix="remake" if off > LOUDNESS_FILM_BAD else None))
     if found["peak"] is not None and found["peak"] > MAX_PEAK:
         issues.append(_issue("peak", "minor", f"the sound peaks at {found['peak']:.1f} dB and may clip"))
@@ -418,24 +461,28 @@ def review(row: dict, path: Path | None = None, progress=log) -> dict:
     for a, b in found["dark"]:
         if b - a >= 2.0 and a > 1.0:
             issues.append(_issue("dark", "minor", f"a very dark stretch of {b - a:.1f} s", at=a))
-    progress("Listening to the narrator")
-    samples = _sound(path)
-    timing = made.get("lines") or []
-    if len(timing) != len(lines):
-        timing = timing_by_ear(samples, lines)
-    clarity, match = hearing(samples, lines, timing)
-    beds = float((plan.get("fixes") or {}).get("beds") or 0)
-    fix = "beds" if beds > -12 else "reread"  # (drowned out: the sounds under him go down first, then he reads again)
-    if match < MIN_MATCH:
-        issues.append(_issue("unclear", "major", f"only {match:.0%} of the narration can be made out", fix=fix))
-    for k, (line, t, heard) in enumerate(zip(lines, timing, clarity)):
-        if heard < UNCLEAR:
-            issues.append(_issue("unclear", "major" if match >= MIN_MATCH else "minor",
-                                 f"line {k + 1} is hard to make out ({heard:.0%} heard)", k, t["start"], fix))
-    spoken = plan.get("voice") or {}
-    if not animator.is_his({k: v for k, v in spoken.items() if k != "likeness"}) or spoken.get("his") is False:
-        why = (spoken.get("likeness") or {}).get("why") or "another voice"
-        issues.append(_issue("not_narrator", "major", f"it doesn't sound like the narrator ({why})", fix="reread"))
+    if silent:
+        issues += bubble_checks(made.get("bubbles") or [], found["seconds"])
+        clarity, match = [], None   # (nothing to hear)
+    else:
+        progress("Listening to the narrator")
+        samples = _sound(path)
+        timing = made.get("lines") or []
+        if len(timing) != len(lines):
+            timing = timing_by_ear(samples, lines)
+        clarity, match = hearing(samples, lines, timing)
+        beds = float((plan.get("fixes") or {}).get("beds") or 0)
+        fix = "beds" if beds > -12 else "reread"  # (drowned out: the sounds under him go down first, then he reads again)
+        if match < MIN_MATCH:
+            issues.append(_issue("unclear", "major", f"only {match:.0%} of the narration can be made out", fix=fix))
+        for k, (line, t, heard) in enumerate(zip(lines, timing, clarity)):
+            if heard < UNCLEAR:
+                issues.append(_issue("unclear", "major" if match >= MIN_MATCH else "minor",
+                                     f"line {k + 1} is hard to make out ({heard:.0%} heard)", k, t["start"], fix))
+        spoken = plan.get("voice") or {}
+        if not animator.is_his({k: v for k, v in spoken.items() if k != "likeness"}) or spoken.get("his") is False:
+            why = (spoken.get("likeness") or {}).get("why") or "another voice"
+            issues.append(_issue("not_narrator", "major", f"it doesn't sound like the narrator ({why})", fix="reread"))
     progress("The Reviewer is watching the short version")
     heard_short, short_found = _short_checks(row, plan, progress)
     issues += heard_short
@@ -450,11 +497,13 @@ def review(row: dict, path: Path | None = None, progress=log) -> dict:
     history = list(earlier.get("history") or [])
     if earlier.get("issues") is not None and (earlier.get("of"), earlier.get("short_of")) != (made.get("id"), short.get("id")):
         history.append({k: earlier.get(k) for k in ("round", "passed", "at", "issues", "changes")})  # (an earlier version)
-    words = sum(len(line["text"].split()) for line in lines)
+    words = (sum(len((b.get("text") or "").split()) for b in made.get("bubbles") or []) if silent
+             else sum(len(line["text"].split()) for line in lines))
     verdict = {"passed": not major, "round": (plan.get("fixes") or {}).get("round", 0), "of": made.get("id"),
                "short_of": short.get("id"), "checks": CHECKS, "at": db.now_iso(), "issues": issues,
                "changes": (plan.get("fixes") or {}).get("changes") or [], "history": history[-MAX_ROUNDS - 1:],
-               "seconds": found["seconds"], "loudness": found["loudness"], "peak": found["peak"], "match": round(match, 3),
+               "seconds": found["seconds"], "loudness": found["loudness"], "peak": found["peak"],
+               "match": round(match, 3) if match is not None else None,
                "clarity": clarity, "look": score, "words_per_second": round(words / max(found["seconds"], 1), 2),
                "short": short_found, "held": False}
     db.update_video(row["id"], plan={**plan, "review": verdict})

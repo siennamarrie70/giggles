@@ -7,12 +7,16 @@ channel:
 schedule:
   timezone: "Asia/Kolkata"   # the clock the posting time and the morning run are on
   ahead: true                # make the next story as soon as its slot is free (the story before it is public), when the
-                             # free quotas allow (tools/jobs.py quota_short); false: the morning run makes the day's story
+                             # free quotas allow (tools/jobs.py quota_short), between Gemini's daily renewal (13:30 in
+                             # India) and midnight (story_window); false: the morning run makes the day's story
+  stories_ahead: 2           # (ahead on) stories kept ready ahead: 2 = tomorrow's is always made and the next one on its
+                             # way, so one that gets stuck has a spare day before its slot could go empty; 1 = the next one
   make_at: "07:00"           # (ahead off) the morning run that makes the day's story (at least an hour before it goes public)
 
 series:                      # the channel (your idea since 2026-11-15): one 3-4 minute motivation story a day, drawn in code
-                             # in your silhouette look, told by a calm, warm narrator, and its short version: the whole
-                             # story in under a minute for YouTube Shorts and Reels (workflows/produce_long.md)
+                             # in your silhouette look, its people talking and thinking in bubbles (no narrator since
+                             # 2026-11-19), and its short version: the whole story in under a minute for YouTube Shorts
+                             # and Reels (workflows/produce_long.md)
   post_at: "17:30"           # when the day's story goes public (the schedule's time zone)
   short_after_hours: 3       # its short version goes public as a Short this long after it (also its Reel, when Instagram is on)
   minutes: [3, 4]            # how long a story runs (the Story writer aims inside this)
@@ -25,7 +29,8 @@ series:                      # the channel (your idea since 2026-11-15): one 3-4
   category_id: "1"           # Film & Animation
   language: "en"
   hashtags: ["#motivation", "#animation", "#shortfilm"]
-  narrator:                  # the voice that tells every story: Gemini's text-to-speech (free tier), chosen on the Narrator page
+  narrator:                  # (not used since 2026-11-19: the films are silent) the voice that told the stories: Gemini's
+                             # text-to-speech (free tier); kept so going back is easy
     name: "Algieba"          # Algieba, Umbriel, Achird or Sadaltager (your pick, 2026-11-16: Algieba, from style test 2)
     model: "gemini-3.8-flash-lite-tts"  # the model you heard him on (the other one reads him when its readings are used up)
     style: >-
@@ -33,8 +38,8 @@ series:                      # the channel (your idea since 2026-11-15): one 3-4
       with soft natural pauses. Never dramatic, never theatrical, never cheerful.
     deeper: 0                # 0, 1 or 2 semitones lower
 
-# The music: every full-length track in assets/music/full/ (the dashboard's Music page), one a story, silent until the
-# spark, then rising; credited in the description (assets/music/tracks.yaml).
+# The music: every full-length track in assets/music/full/ (the dashboard's Music page), one a story, low from the
+# first second, lifting at his realization; credited in the description (assets/music/tracks.yaml).
 
 instagram:                   # Reels: each story's short version on your Instagram (connect it on the dashboard's Channels page)
   enabled: true              # true: each short version also goes up as a Reel at its time

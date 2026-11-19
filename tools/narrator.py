@@ -103,6 +103,13 @@ def parts(lines: list[dict]) -> list[list[int]]:
     return out
 
 
+def part_names(lines: list[dict], take: int = 0, cfg: dict | None = None) -> list[str]:
+    """Each part's reading as read() keeps it in its folder (part_<key>: .wav, .json, and .steady when it was read the
+    steady way), in order: how a part already read is known (tools/jobs.py keep_videos)."""
+    cfg = voice_cfg(cfg)
+    return [f"part_{_key([lines[k] for k in group], cfg, take)}" for group in parts(lines)]
+
+
 def _key(lines: list[dict], cfg: dict, take: int) -> str:
     said = [[line["text"], line.get("direction", "")] for line in lines]
     return hashlib.sha1(json.dumps([said, [cfg.get(k) for k in ("name", "model", "style", "deeper")], take, KEEP_GAP,

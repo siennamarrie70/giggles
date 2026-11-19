@@ -16,6 +16,7 @@ import math
 import silhouette as S
 from silhouette import clamp, ease_in_out, ik, smooth, spine
 import silhouette_words as W
+import silhouette_habits as H
 
 ACTIONS, ITEMS, PAIRS = W.ACTIONS, W.ITEMS, W.PAIRS   # (the words live in tools/silhouette_words.py)
 
@@ -38,6 +39,7 @@ EYES = {
     "at_window": ("soft", (1.0, -0.15)), "carrying_box": ("tired", (1.0, 0.1)), "holding": ("open", (1.0, 0.1)),
 }
 
+EYES.update(H.EYES)
 WALK_SPEED, RUN_SPEED, BOX_SPEED = 170.0, 520.0, 130.0   # world units a second (tools/silhouette_render.py's)
 
 
@@ -170,6 +172,11 @@ def pose(action: str, mark: dict, t: float, R: float, ground: float, seed: int =
     eyes = {"mood": mood, "look": (lx, ly), "tear": 0.0}
     breath = 0.03 * math.sin(math.tau * 0.24 * t + seed)
     kind = mark.get("kind", "stand")
+
+    if action in H.ACTIONS:   # a habit's exaggerated action (tools/silhouette_habits.py)
+        got = H.pose(action, mark, t, R, ground, f, seed=seed, seconds=seconds)
+        if got is not None:
+            return got
 
     if action in ("walking", "running", "carrying_box") or kind in ("walk", "run"):
         running = action == "running" or kind == "run"
@@ -522,13 +529,12 @@ def pair(action: str, mark: dict, t: float, R: float, R2: float, ground: float, 
             b["hands"] = ["fist", "open"]
         return (a, {"mood": "angry", "look": (1.0, 0.0), "tear": 0.0},
                 b, {"mood": "angry" if seed % 3 else "sad", "look": (1.0, 0.0), "tear": 0.0})
-    # hugging: close, leaning into each other, heads past each other's shoulders, his near arm round their back
-    a = S.pose_stand(x1, gnd, f, R, lift=-0.2 + breath)
-    b = S.pose_stand(x2, gnd, -f, R2, lift=-0.2 + breath)
-    Sx, Sy = a["S"]   # his head up over their shoulder, bowed; theirs lower, against his shoulder
-    a["head"] = (Sx + f * 0.40 * R, Sy - 1.30 * R)
-    Sx, Sy = b["S"]
-    b["head"] = (Sx - f * 0.30 * R2, Sy - 0.80 * R2)
+    # hugging: pressed together, his near arm round their back, each head beside the other's: cheek to cheek, never one
+    # over the other (two black heads on top of each other read as one blob)
+    a = S.pose_stand(x1, gnd, f, R, lift=-0.1 + breath)
+    b = S.pose_stand(x2, gnd, -f, R2, lift=-0.1 + breath)
+    a["head"] = (mark["x"] - f * 0.82 * R, a["head"][1] - 0.04 * R)
+    b["head"] = (mark["x"] + f * 0.82 * R2, b["head"][1] + 0.18 * R2)
     Tb, _ = _uv(b)
     a["near"] = _arm_to(a["near"][0], Tb(-0.55, 0.70), R, f, out=True)
     a["hands"] = ["fist", "open"]

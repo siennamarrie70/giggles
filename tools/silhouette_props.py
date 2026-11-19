@@ -176,7 +176,7 @@ def d_sofa(p, x, b, c):
 
 
 def m_sofa(x, b, c):
-    return {"sofa": mark("sit", x, c, -110, seat=b - 86, f=c.s), "sofa_2": mark("sit", x, c, 110, seat=b - 86, f=-c.s),
+    return {"sofa": mark("sit", x, c, -150, seat=b - 86, f=c.s), "sofa_2": mark("sit", x, c, 150, seat=b - 86, f=-c.s),
             "sofa_lie": mark("lie", x, c, -168, y=b - 128, f=c.s, use=["asleep", "lying_awake"])}
 
 
@@ -970,10 +970,10 @@ def _leafy(c):
 def d_tree(p, x, b, c):
     r = rng("tree", c.seed)
     dark = np.clip(_leafy(c) * 1.0, 0, 1)
-    trunk_top = b - 300 - r.uniform(0, 60)
-    p.poly(rect(x - 12, trunk_top, 24, b - trunk_top), dark)
+    trunk_top = b - 470 - r.uniform(0, 60)   # (the crown above a standing head: lower, it was a dark blob beside faces)
+    p.poly(rect(x - 13, trunk_top, 26, b - trunk_top), dark)
     Tb(p, c, x, [(0, trunk_top + 60), (60, trunk_top - 20)], 10.0, dark)
-    blobs = [(r.uniform(-130, 130), trunk_top - r.uniform(20, 200), r.uniform(70, 120)) for _ in range(8)]
+    blobs = [(r.uniform(-140, 140), trunk_top - r.uniform(10, 190), r.uniform(70, 120)) for _ in range(8)]
     for dx, y, rad in blobs:
         p.circle(c.X(x, dx), y, rad, dark)
     if c.snow:
@@ -1141,16 +1141,17 @@ def m_bus_stop(x, b, c):
 
 def d_bench(p, x, b, c):
     dark = "#150F1A"
-    B(p, c, x, -120, 120, b - 64, b - 54, dark, "#7A6068")
-    B(p, c, x, -120, 120, b - 120, b - 111, dark)
-    for dx in (-110, 100):
+    B(p, c, x, -170, 170, b - 64, b - 54, dark, "#7A6068")
+    B(p, c, x, -170, 170, b - 120, b - 111, dark)
+    for dx in (-158, -5, 148):
         B(p, c, x, dx, dx + 9, b - 120, b, dark)
     if c.snow:
-        B(p, c, x, -118, 118, b - 70, b - 62, "#D8D4E4", a=0.8)
+        B(p, c, x, -168, 168, b - 70, b - 62, "#D8D4E4", a=0.8)
 
 
 def m_bench(x, b, c):
-    return {"bench": mark("sit", x, c, -95, seat=b - 64, f=c.s), "bench_2": mark("sit", x, c, 95, seat=b - 64, f=-c.s)}
+    # (two people face each other from its ends: closer, their knees and feet met in a black knot between them)
+    return {"bench": mark("sit", x, c, -138, seat=b - 64, f=c.s), "bench_2": mark("sit", x, c, 138, seat=b - 64, f=-c.s)}
 
 
 def d_fence(p, x, b, c):
@@ -1516,3 +1517,248 @@ class Thing:
         xa, xb = sorted((self.c.X(self.x, d0), self.c.X(self.x, d1)))
         y = self.b - HANG.get(self.name, 0) if self.layer == "wall" else self.b - h
         return (xa, xb, y)
+
+
+# === a habit's things: what a place looks like when the habit has had it a while (tools/silhouette_words.HABIT_PROPS) =======
+def d_dish_pile(p, x, b, c):
+    """Dirty dishes piled high, leaning, a pan's handle sticking out."""
+    lean = 0.0
+    for k in range(8):
+        w = 52 - (k % 3) * 6
+        lean += (3.0 if k % 2 else -2.0) + 1.2
+        y = b - 9 - k * 9
+        B(p, c, x, lean - w, lean + w, y, y + 8, "#C9C0B8" if k % 2 else "#B3AAB8", r=3, a=0.95)
+        B(p, c, x, lean - w + 6, lean + w - 6, y + 2, y + 4, "#7A6A5A", a=0.6)
+    Tb(p, c, x, [(lean + 10, b - 80), (lean + 70, b - 104)], 7.0, "#2A2430")
+    El(p, c, x, lean - 18, b - 84, 22, 7, "#3A3240")
+    for k in range(3):   # a cup or two balanced on top
+        B(p, c, x, lean - 30 + k * 26, lean - 14 + k * 26, b - 102 - k * 3, b - 84, "#D8D0C8", r=3)
+
+
+def d_clothes_floor(p, x, b, c):
+    r = rng("clothes", c.seed)
+    for k in range(6):
+        dx = -120 + k * 48 + r.uniform(-12, 12)
+        col = FABRICS[k % len(FABRICS)] if k % 2 else ("#5A3A3A", "#2E4A5A", "#4A4A2E")[k % 3]
+        w, h = r.uniform(40, 70), r.uniform(12, 24)
+        P(p, c, x, [(dx - w, b), (dx - w * 0.6, b - h), (dx, b - h * 1.25), (dx + w * 0.7, b - h * 0.8), (dx + w, b)],
+          col, smooth=True)
+        if k % 3 == 0:   # a sleeve flung out
+            Tb(p, c, x, [(dx + w * 0.5, b - h * 0.6), (dx + w * 1.2, b - 4)], 9.0, col)
+
+
+def d_pizza_boxes(p, x, b, c):
+    r = rng("pizza", c.seed)
+    for k in range(5):
+        dx = r.uniform(-14, 14)
+        y = b - (k + 1) * 15
+        B(p, c, x, dx - 68, dx + 68, y, y + 14, "#C9A27A", r=2)
+        B(p, c, x, dx - 68, dx + 68, y, y + 2, "#E2C49E", a=0.8)
+        if k == 4:
+            Ci(p, c, x, dx + 20, y + 7, 6, "#C23A3A")
+    El(p, c, x, 10, b - 40, 18, 6, "#8A5A3A", a=0.6)   # a grease stain
+
+
+def d_overflowing_bin(p, x, b, c):
+    B(p, c, x, -42, 42, b - 110, b, "#2E3440", r=6)
+    B(p, c, x, -48, 48, b - 116, b - 106, "#4A5060", r=3)
+    for k, (dx, dy, rad, col) in enumerate(((-30, 125, 22, "#C9C0B8"), (5, 138, 26, "#3A4A3A"), (32, 124, 20, "#C9A27A"),
+                                            (-8, 150, 18, "#5A3A3A"), (20, 152, 15, "#D8D0C8"))):
+        Ci(p, c, x, dx, b - dy, rad, col)
+    for dx in (-80, 70, 105):   # spilt round it
+        El(p, c, x, dx, b - 6, 18, 6, "#C9C0B8" if dx < 0 else "#C9A27A")
+
+
+def d_cobwebs(p, x, b, c):
+    """Cobwebs in the wall's top corner: threads fanning out, sagging rings between them."""
+    y = b - HANG["cobwebs"]
+    col = c.col("#D8D0E0")
+    rays = [math.radians(a) for a in (0, 22, 45, 68, 90)]
+    for a in rays:
+        p.poly(tube([(c.X(x, -80), y - 60), (c.X(x, -80 + math.cos(a) * 150), y - 60 + math.sin(a) * 150)], 1.4), col, 0.55)
+    for rad in (40, 75, 110, 140):
+        pts = [(c.X(x, -80 + math.cos(a) * rad), y - 60 + math.sin(a) * rad + (6 if 0 < i < 4 else 0))
+               for i, a in enumerate(rays)]
+        p.poly(tube(pts, 1.1), col, 0.45)
+
+
+def d_console(p, x, b, c):
+    B(p, c, x, -45, 45, b - 18, b, "#141018", r=4)
+    B(p, c, x, -40, 10, b - 16, b - 14, "#3A3446", a=0.8)
+    G(p, c, x, 28, b - 9, 12, 6, "#6AB8FF", 0.5)
+    Ci(p, c, x, 28, b - 9, 3, "#9FD0FF")
+    P(p, c, x, [(55, b), (62, b - 14), (98, b - 14), (105, b)], "#1E1A24", smooth=True)   # its controller
+    Tb(p, c, x, [(55, b - 6), (30, b + 2), (-20, b - 1)], 1.8, "#1E1A24")
+
+
+def d_sticky_notes(p, x, b, c):
+    """Notes stuck all over the wall, scrawled with things left for later; one with a big red !."""
+    y = b - HANG["sticky_notes"]
+    r = rng("notes", c.seed)
+    for k in range(9):
+        dx, dy = -95 + (k % 4) * 60 + r.uniform(-10, 10), -50 + (k // 4) * 52 + r.uniform(-8, 8)
+        ang = r.uniform(-0.25, 0.25)
+        col = ("#F2D35A", "#F2A8B8", "#9FD8B0", "#F2D35A")[k % 4]
+        cx, cy = c.X(x, dx), y + dy
+        corners = [(cx + math.cos(ang) * u - math.sin(ang) * v, cy + math.sin(ang) * u + math.cos(ang) * v)
+                   for u, v in ((-22, -22), (22, -22), (22, 22), (-22, 22))]
+        p.poly(np.array(corners), c.col(col))
+        if k == 5:
+            p.poly(tube([(cx, cy - 14), (cx, cy + 4)], 4.5), c.col("#D8322A"))
+            p.circle(cx, cy + 12, 3.2, c.col("#D8322A"))
+        else:
+            for j in range(3):
+                p.poly(tube([(cx - 14, cy - 10 + j * 9), (cx + 12 - 6 * (j == 2), cy - 10 + j * 9 + r.uniform(-2, 2))],
+                            1.6), c.col("#4A3A40"), 0.75)
+
+
+def d_wall_crack(p, x, b, c):
+    """Where a fist went into the wall: a dent and the cracks running from it."""
+    y = b - HANG["wall_crack"]
+    El(p, c, x, 0, y, 26, 22, "#120D16", a=0.85)
+    r = rng("crack", c.seed)
+    for k in range(7):
+        a = k * math.tau / 7 + r.uniform(-0.3, 0.3)
+        pts, d = [(c.X(x, math.cos(a) * 18), y + math.sin(a) * 16)], 18.0
+        for _ in range(3):
+            d += r.uniform(18, 30)
+            a += r.uniform(-0.35, 0.35)
+            pts.append((c.X(x, math.cos(a) * d), y + math.sin(a) * d * 0.9))
+        p.poly(tube(pts, 2.6, 0.8), c.col("#0E0A12"), 0.9)
+
+
+def d_money_pile(p, x, b, c):
+    for k in range(4):
+        B(p, c, x, -60 + k * 6, 40 - k * 4, b - 8 - k * 8, b - 2 - k * 8, "#3E8F64" if k % 2 else "#2E7350", r=2)
+    for k, (dx, dy) in enumerate(((45, 6), (58, 10), (52, 16), (70, 5), (30, 4))):
+        El(p, c, x, dx, b - dy, 8, 4, "#F5C542")
+        El(p, c, x, dx, b - dy - 1, 6, 2, "#FFE38A", a=0.8)
+    G(p, c, x, 40, b - 12, 50, 18, "#F5C542", 0.25)
+
+
+def d_safe(p, x, b, c):
+    B(p, c, x, -62, 62, b - 150, b, "#3A3C48", "#8A8C9A", r=6)
+    B(p, c, x, -52, 52, b - 140, b - 10, "#1A1622", r=3)
+    for k in range(3):   # gold bars stacked inside
+        B(p, c, x, -40 + k * 10, 20 + k * 10, b - 40 - k * 16, b - 26 - k * 16, "#F5C542", "#FFE38A", r=2)
+    G(p, c, x, 0, b - 60, 70, 50, "#F5C542", 0.35)
+    P(p, c, x, [(62, b - 148), (118, b - 160), (118, b + 4), (62, b - 2)], "#4A4C58")   # its door, open
+    Ci(p, c, x, 94, b - 80, 13, "#8A8C9A")
+    Ci(p, c, x, 94, b - 80, 6, "#2A2C36")
+
+
+def d_trophy_shelf(p, x, b, c):
+    y = b - HANG["trophy_shelf"]
+    B(p, c, x, -135, 135, y, y + 10, "#2B1F2E", WOOD_LIT, ea=0.7)
+    for k, (dx, h) in enumerate(((-100, 70), (-40, 92), (25, 62), (90, 80))):
+        B(p, c, x, dx - 14, dx + 14, y - 12, y, "#5A4038")
+        B(p, c, x, dx - 4, dx + 4, y - 26, y - 12, "#F5C542")
+        P(p, c, x, [(dx - 20, y - h), (dx + 20, y - h), (dx + 12, y - 30), (dx - 12, y - 30)], "#F5C542")
+        G(p, c, x, dx, y - h * 0.6, 26, 26, "#FFE38A", 0.18)
+
+
+def d_coin_jar(p, x, b, c):
+    fill = float(c.o.get("fill", 0.6))
+    B(p, c, x, -22, 22, b - 60, b, "#B8C8D8", r=8, a=0.35)
+    for k in range(int(10 * fill)):
+        B(p, c, x, -18 + (k % 2) * 4, 18 - (k % 2) * 4, b - 6 - k * 5, b - 2 - k * 5, "#F5C542" if k % 3 else "#D9A82E", r=2)
+    B(p, c, x, -24, 24, b - 66, b - 58, "#8A7A60", r=2)
+    B(p, c, x, -20, -14, b - 56, b - 6, "#FFFFFF", a=0.25)
+
+
+def d_alarm_clock(p, x, b, c):
+    _alarm(p, c, x, b, 0.0, False)
+
+
+def a_alarm_clock(p, x, b, c, tau):
+    """Ringing (when the shot's alarm goes: options "ringing"): it shakes on its feet, sound lines either side."""
+    if c.o.get("ringing", True):
+        _alarm(p, c, x, b, tau, True)
+
+
+def _alarm(p, c, x, b, tau, ringing):
+    shake = 2.5 * math.sin(tau * 48.0) if ringing else 0.0
+    for side in (-1, 1):
+        Ci(p, c, x, side * 14 + shake, b - 52, 9, "#C9A43A")
+    Ci(p, c, x, shake, b - 30, 24, "#2A1C2C")
+    Ci(p, c, x, shake, b - 30, 19, "#E8E0D8")
+    Tb(p, c, x, [(shake, b - 30), (shake + 9, b - 36)], 2.2, "#1A1420")
+    Tb(p, c, x, [(shake, b - 30), (shake - 2, b - 43)], 1.8, "#1A1420")
+    for side in (-1, 1):
+        Tb(p, c, x, [(side * 14 + shake, b - 8), (side * 18 + shake, b)], 3.0, "#2A1C2C")
+    if ringing:
+        for side in (-1, 1):
+            for k in range(2):
+                a0 = -0.9 + k * 0.5
+                pts = [(c.X(x, side * (34 + k * 9) + shake), b - 52 + a0 * 10), (c.X(x, side * (42 + k * 9) + shake),
+                                                                                b - 60 + a0 * 10)]
+                p.poly(tube(pts, 2.4), c.col("#E8453C"), 0.85)
+
+
+def d_growing_plant(p, x, b, c):
+    _plant_at(p, c, x, b, float(c.o.get("grown", 0.25)))
+
+
+def a_growing_plant(p, x, b, c, tau):
+    """It grows as the shot goes on (a few seconds from a sprout to a leafy plant): patience, small steps adding up."""
+    _plant_at(p, c, x, b, min(1.0, float(c.o.get("grown", 0.25)) + tau * 0.12) - 1e-6, over=True)
+
+
+def _plant_at(p, c, x, b, g, over=False):
+    if over:   # (the still one is drawn under it: cover its stem and leaves with this moment's)
+        pass
+    P(p, c, x, [(-38, b - 70), (38, b - 70), (30, b), (-30, b)], "#8A4A3A")
+    B(p, c, x, -42, 42, b - 78, b - 66, "#A85A44", r=3)
+    h = 30 + 170 * g
+    Tb(p, c, x, [(0, b - 72), (4, b - 72 - h * 0.5), (-2, b - 72 - h)], 5.0, "#3E7A4A")
+    for k in range(int(2 + 8 * g)):
+        side = -1 if k % 2 else 1
+        y = b - 80 - (k + 1) * h / (2 + 8 * g)
+        size = 14 + 16 * g * (1 - k / (2 + 8 * g))
+        p.poly(S.rell(c.X(x, side * size * 0.8), y, size, size * 0.45, -side * 0.5 * c.s), c.col("#4CA86A"))
+
+
+def m_growing_plant(x, b, c):
+    return {"growing_plant": mark("stand", x, c, -120, f=c.s, use=["watering"])}
+
+
+def d_energy_cans(p, x, b, c):
+    for k, (dx, ang) in enumerate(((-28, 0.0), (0, 1.3), (30, 0.0))):
+        if ang:
+            El(p, c, x, dx, b - 9, 22, 9, "#2E9A5A")
+            El(p, c, x, dx - 16, b - 9, 6, 9, "#A8B0B8")
+        else:
+            B(p, c, x, dx - 10, dx + 10, b - 44, b, "#2E9A5A" if k % 2 == 0 else "#2A6ACA", r=3)
+            B(p, c, x, dx - 10, dx + 10, b - 30, b - 24, "#C9F25A")
+            P(p, c, x, [(dx - 10, b - 44), (dx + 10, b - 44), (dx + 6, b - 38), (dx - 8, b - 40)], "#A8B0B8")
+
+
+def d_empty_bottles(p, x, b, c):
+    for k, (dx, lying) in enumerate(((-55, False), (-10, True), (45, False), (80, True))):
+        col = "#2E5A3A" if k % 2 else "#5A3A2A"
+        if lying:
+            B(p, c, x, dx - 30, dx + 22, b - 20, b, col, r=8, a=0.9)
+            B(p, c, x, dx + 22, dx + 38, b - 14, b - 6, col)
+        else:
+            B(p, c, x, dx - 11, dx + 11, b - 62, b, col, r=5, a=0.9)
+            B(p, c, x, dx - 4, dx + 4, b - 86, b - 60, col)
+
+
+def d_checklist(p, x, b, c):
+    """A board with a checklist: the days' tasks, ticked off one by one."""
+    y = b - HANG["checklist"]
+    B(p, c, x, -105, 105, y - 115, y + 115, "#2A2632", r=3)
+    B(p, c, x, -96, 96, y - 106, y + 106, "#E8E2D8")
+    for k in range(5):
+        cy = y - 80 + k * 40
+        B(p, c, x, -80, -58, cy - 11, cy + 11, "#4A4658", a=0.9)
+        B(p, c, x, -76, -62, cy - 7, cy + 7, "#E8E2D8")
+        if k < int(c.o.get("ticked", 3)):
+            Tb(p, c, x, [(-78, cy - 2), (-70, cy + 7), (-54, cy - 12)], 4.0, "#2E9A5A")
+        B(p, c, x, -44, 60 - (k % 2) * 30, cy - 3, cy + 3, "#7A7488", a=0.8)
+
+
+def m_checklist(x, b, c):
+    side = 1 if x < 0 else -1
+    return {"checklist": {"kind": "stand", "x": x + side * 260, "f": -side, "point": (x, b - HANG["checklist"]),
+                          "use": ["ticking", "presenting"]}}

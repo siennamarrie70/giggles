@@ -7,7 +7,7 @@ Tables are created automatically on first use, and new columns are added to old 
 (only ever added, so an older version of the app still works on the same database).
 
 What the agents hand each other lives here: videos (one row a story) whose plan holds the theme and title (Agent 1),
-the screenplay and the narrator's script (Agent 2), the film, its review and the upload (Agents 3, 4 and 5); stats
+the story and its moments with their bubbles (Agent 2), the film, its review and the upload (Agents 3, 4 and 5); stats
 (Agent 6); the themes you ask for (topics); and notes (the playbook, caches, heartbeats). Only rows of FORMAT are the
 stories: rows earlier versions of the channel made share the database and are left alone. (Tables only the
 case-study Shorts used, before 2026-11-16, stay in an old database untouched: nothing reads them.)
@@ -381,6 +381,12 @@ def list_videos(limit: int = 30, parts: tuple[str, ...] | None = None) -> list[d
 def status_counts() -> dict[str, int]:
     with connect() as db:
         return {r["status"]: r["n"] for r in db.query("SELECT status, COUNT(*) AS n FROM videos GROUP BY status")}
+
+
+def get_run(run_id: int) -> dict | None:
+    with connect() as db:
+        rows = db.query("SELECT * FROM runs WHERE id = %s", (run_id,))
+    return rows[0] if rows else None
 
 
 def recent_runs(limit: int = 30) -> list[dict]:

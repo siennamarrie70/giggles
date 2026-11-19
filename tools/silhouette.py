@@ -310,10 +310,12 @@ class Paint:
         self.poly(ell(x, y, r, r, n), color, alpha, soft, add)
 
     def glow(self, x, y, rx, ry, color, strength=1.0, falloff=2.0):
-        """Light: a radial glow added at (x, y), rx by ry world units across its half-width."""
+        """Light: a radial glow added at (x, y), rx by ry world units across its half-width. It fades out to nothing
+        (drawn out to where it's 0.2 % of its peak: cut off sooner, a strong glow shows a hard straight edge)."""
         sx, sy = self.v.pt(x, y)
         h, w = self.buf.shape[:2]
-        Rx, Ry = rx * self.z * 2.2, ry * self.z * 2.2
+        reach = max(2.2, math.sqrt(falloff * 6.2))
+        Rx, Ry = rx * self.z * reach, ry * self.z * reach
         x0, x1 = max(0, int(sx - Rx)), min(w, int(sx + Rx) + 1)
         y0, y1 = max(0, int(sy - Ry)), min(h, int(sy + Ry) + 1)
         if x1 <= x0 or y1 <= y0:
@@ -562,9 +564,9 @@ class Eyes:
     half-lidded, 1 open), how big (1, more when wide), the lids' tilt (+ sad or worried, - determined or angry), smile
     (closed in two happy arcs) and tear (0 none; 0-1 a tear's way down the cheek, under the eye nearer the way he looks)."""
 
-    def __init__(self, look=(0.0, 0.0), open_=1.0, size=1.0, tilt=0.0, gap=0.46, smile=False, tear=0.0):
+    def __init__(self, look=(0.0, 0.0), open_=1.0, size=1.0, tilt=0.0, gap=0.46, smile=False, tear=0.0, shape=""):
         self.look, self.open, self.size, self.tilt, self.gap, self.smile = look, open_, size, tilt, gap, smile
-        self.tear = tear
+        self.tear, self.shape = tear, shape   # shape: "" (the white eyes) or SHAPES' (a habit's exaggerated eyes)
 
     def draw(self, p: Paint, hx, hy, R, turn=0.0):
         """turn: -1..1, the head turned away to a side: the eyes squeeze together on that side. Returns the eyes'
@@ -583,6 +585,11 @@ class Eyes:
                 p.poly(tube(np.stack([ex + np.cos(a) * r, cy + r * 0.35 + np.sin(a) * r * 0.75], 1), r * 0.42, k=3),
                        PAL["eye"], 0.95)
                 continue
+            if self.shape in SHAPED and self.open >= 0.06:   # hearts, dollars, spirals, flames instead of the whites
+                SHAPED[self.shape](p, ex, cy, r, side)
+                continue
+            if self.shape == "furious":   # a red heat round the eyes
+                p.glow(ex, cy, r * 2.2, r * 1.6, hexc("#FF3A2A"), 0.40)
             pts = ell(ex, cy, r, r * 1.05, 40)
             lid = cy - r * 1.05 + (1 - clamp(self.open)) * 2 * r * 1.05
             tilt = self.tilt * side * r * 0.9  # sad: the inner ends of the lids high; determined: low
@@ -592,7 +599,17 @@ class Eyes:
                 line = ell(ex, cy + r * 0.25, r, r * 0.18, 30)
                 p.poly(line, PAL["eye"], 0.9)
                 continue
-            p.poly(pts, PAL["eye"])
+            p.poly(pts, hexc("#FF9A84") if self.shape == "furious" else PAL["eye"])
+            if self.shape == "terrified":   # tiny pupils, staring
+                p.circle(ex + lx * r * 0.30, cy + ly * r * 0.30, r * 0.28, PAL["figure"])
+            if self.shape == "droopy":   # heavy bags under them
+                p.poly(tube([tuple(q) for q in _arc(ex, cy + r * 0.10, r * 1.20, 1, 0.45, math.pi - 0.45, 12)], r * 0.20,
+                            r * 0.20, k=2), hexc("#4A3A58"), 0.9)
+        if self.shape == "sobbing":   # tears running in streams to the chin
+            for ex, ey, _ in out:
+                ys = np.linspace(ey + r * 0.9, ey + R * 0.95, 14)
+                xs = ex + r * 0.10 * np.sin(np.linspace(0, 3.0, 14))
+                p.poly(tube(list(zip(xs, ys)), r * 0.22, r * 0.34, k=2), hexc("#CFE2F6"), 0.85)
         if self.tear > 0:  # a tear sliding down from under the front eye, fading at the end of its way
             side = 1 if lx >= 0 else -1
             ex, ey, _ = out[1 if side > 0 else 0]
@@ -611,14 +628,66 @@ MOODS = {  # the eyes' moods (agents/story.py's vocabulary): open, size, tilt, s
     "closed": (0.0, 1.0, 0.0, False), "sad": (0.40, 1.0, 0.6, False), "determined": (0.75, 1.0, -0.38, False),
     "soft": (0.55, 1.0, 0.18, False), "happy": (0.0, 1.0, 0.0, True),
     "angry": (0.62, 0.98, -0.80, False), "worried": (0.92, 1.06, 0.48, False),
+    # a habit's exaggerated eyes (SHAPES)
+    "hearts": (1.0, 1.25, 0.0, False), "dollars": (1.0, 1.20, 0.0, False), "spirals": (1.0, 1.15, 0.0, False),
+    "droopy": (0.26, 1.05, 0.12, False), "furious": (0.50, 1.02, -1.15, False), "side_eye": (0.40, 1.0, -0.10, False),
+    "smug": (0.34, 1.0, 0.22, False), "sobbing": (0.28, 1.0, 0.72, False), "terrified": (1.0, 1.32, 0.42, False),
+    "fire": (0.80, 1.12, -0.45, False),
 }
+SHAPES = {"hearts": "hearts", "dollars": "dollars", "spirals": "spirals", "droopy": "droopy", "furious": "furious",
+          "side_eye": "side", "smug": "smug", "sobbing": "sobbing", "terrified": "terrified", "fire": "fire"}
 
 
 def eyes_for(mood: str, look=(1.0, 0.0), gap=0.42, blink: float = 1.0, tear: float = 0.0) -> Eyes:
     """Eyes in a mood (MOODS), looking `look`, `blink` 0-1 (1 open as the mood has it, 0 shut), a tear's way down."""
     open_, size, tilt, smile = MOODS.get(mood, MOODS["open"])
+    shape = SHAPES.get(mood, "")
+    if shape == "side":   # looking hard to the side, from under the lids
+        look = (1.7 if look[0] >= 0 else -1.7, 0.12)
+    elif shape == "smug":   # down the nose, the head up
+        look = (look[0] * 0.5, -0.30)
+    elif shape == "droopy":
+        look = (look[0] * 0.6, 0.30)
     return Eyes(look=look, open_=open_ * clamp(blink), size=size, tilt=tilt, gap=gap, smile=smile and blink > 0.3,
-                tear=tear)
+                tear=tear, shape=shape)
+
+
+def _eye_heart(p, ex, ey, r, side):
+    t = np.linspace(0, math.tau, 40, endpoint=False)
+    u, v = 16 * np.sin(t) ** 3 / 17, -(13 * np.cos(t) - 5 * np.cos(2 * t) - 2 * np.cos(3 * t) - np.cos(4 * t)) / 17
+    p.glow(ex, ey, r * 2.0, r * 2.0, hexc("#FF4F7E"), 0.30)
+    p.poly(np.stack([ex + u * r * 1.30, ey + (v + 0.10) * r * 1.30], 1), hexc("#FF4F7E"))
+    p.poly(ell(ex - 0.40 * r, ey - 0.35 * r, 0.20 * r, 0.12 * r, 12), PAL["eye"], 0.6)
+
+
+def _eye_dollar(p, ex, ey, r, side):
+    gold = hexc("#F5C542")
+    p.glow(ex, ey, r * 2.0, r * 2.0, gold, 0.25)
+    curve = spline([(ex + 0.55 * r, ey - 0.60 * r), (ex, ey - 0.78 * r), (ex - 0.58 * r, ey - 0.45 * r),
+                    (ex - 0.30 * r, ey - 0.06 * r), (ex + 0.32 * r, ey + 0.10 * r), (ex + 0.58 * r, ey + 0.48 * r),
+                    (ex, ey + 0.78 * r), (ex - 0.58 * r, ey + 0.58 * r)], False, 8)
+    p.poly(tube([tuple(q) for q in curve], r * 0.30, k=3), gold)
+    p.poly(tube([(ex, ey - 1.10 * r), (ex, ey + 1.10 * r)], r * 0.20, k=2), gold)
+
+
+def _eye_spiral(p, ex, ey, r, side):
+    a = np.linspace(0, 2.6 * math.tau, 90)
+    rad = r * 1.15 * a / a[-1]
+    pts = np.stack([ex + side * np.cos(a) * rad, ey + np.sin(a) * rad], 1)
+    p.poly(ell(ex, ey, r * 1.22, r * 1.22, 36), PAL["eye"])
+    p.poly(tube([tuple(q) for q in pts], r * 0.16, k=2), PAL["figure"])
+
+
+def _eye_fire(p, ex, ey, r, side):
+    p.glow(ex, ey, r * 2.4, r * 2.6, hexc("#FF7A3D"), 0.35)
+    for k, (col, sc) in enumerate((("#FF7A3D", 1.0), ("#FFC25A", 0.62), ("#FFF0C8", 0.30))):
+        flame = spline([(ex, ey - 1.55 * r * sc), (ex + 0.55 * r * sc, ey - 0.20 * r * sc), (ex + 0.70 * r * sc,
+                        ey + 0.45 * r * sc), (ex, ey + 0.85 * r * sc + 0.2 * r * k), (ex - 0.70 * r * sc, ey + 0.45 * r * sc),
+                        (ex - 0.55 * r * sc, ey - 0.20 * r * sc)], True, 8)
+        p.poly(flame, hexc(col))
+
+
+SHAPED = {"hearts": _eye_heart, "dollars": _eye_dollar, "spirals": _eye_spiral, "fire": _eye_fire}
 
 
 class Look:
@@ -844,7 +913,9 @@ def pose_sit(x, seat_y, ground, f, R, slump=0.0, lift=0.0, arms="lap", reach=Non
     reach: where the hands rest for "desk"/"type"/"cup" (a desk's or a table's top)."""
     sl = clamp(slump)
     H = (x, seat_y - 0.12 * R)
-    lean = 0.08 + 0.42 * sl + (0.62 if arms == "head" else 0.0) + (0.12 if arms in ("knees", "phone") else 0.0)
+    lean = 0.08 + 0.42 * sl + (0.12 if arms in ("knees", "phone") else 0.0)
+    if arms == "head":
+        lean = 0.62 + 0.10 * sl
     S = (H[0] + f * math.sin(lean) * 2.55 * R, H[1] - math.cos(lean) * 2.55 * R)
     T, u, v = spine(S, H, f, R)
     knee = (H[0] + f * 1.66 * R, H[1] + 0.04 * R)
@@ -853,11 +924,11 @@ def pose_sit(x, seat_y, ground, f, R, slump=0.0, lift=0.0, arms="lap", reach=Non
             (H, knee, foot)]
     sh = T(0.02, 0.24)
     hold, hands, far = None, ["fist", "fist"], None
-    if arms == "head":  # head in his hands: elbows on his knees, the head sunk into the hands
-        head = (knee[0] - f * 0.50 * R, knee[1] - 1.95 * R)
-        wr = (head[0] + f * 0.58 * R, head[1] + 0.50 * R)
-        el = (knee[0] - f * 0.10 * R, knee[1] - 0.14 * R)
-        near = (el, wr)
+    if arms == "head":  # head in his hands: bowed forward and down in front of his shoulders (behind them, the leaning
+        # torso stuck out past the head like a tilted box), his forearm up to the low front of his face
+        head = T(0.75, 0.30)
+        face = (head[0] + f * 0.55 * R, head[1] + 0.83 * R)
+        near = _reach(sh, face, R, f)
         hands = ["fist", "open"]
     else:
         if arms == "phone":
@@ -957,6 +1028,27 @@ def _arc(cx, cy, rad, f, a0, a1, n=24):
     return np.stack([cx + f * np.cos(a) * rad, cy + np.sin(a) * rad], 1)
 
 
+def _hair(p, hx, hy, R, f, kind: str, color) -> None:
+    """Hair over a head facing f, hugging it (never a loose disc behind it): over the top and the back, down to a
+    hairline round the brow, the ear and the nape. Short hair has soft tufts over the brow and the crown; a bun's and long
+    hair are smooth, swept back off the brow. A few darker strands make it read as hair."""
+    short = kind == "short"
+    a = np.linspace(-0.42 if short else -0.30, -math.pi - 0.92, 44)
+    top = np.clip(-np.sin(a), 0.0, 1.0)
+    rad = R * (1.035 + 0.06 * top ** 2)
+    if short:
+        rad = rad + R * 0.055 * np.clip(np.sin(7.0 * (a + 0.42)), 0.0, 1.0) * (a > -2.3)
+    outer = np.stack([hx + f * np.cos(a) * rad, hy + np.sin(a) * rad], 1)
+    line = ([(-0.58, 0.80), (-0.42, 0.42), (-0.30, 0.16), (-0.14, 0.10), (-0.06, -0.18), (0.16, -0.44), (0.52, -0.56),
+             (0.86, -0.44)] if short else
+            [(-0.60, 0.80), (-0.46, 0.44), (-0.34, 0.12), (-0.16, -0.22), (0.12, -0.54), (0.52, -0.70), (0.93, -0.34)])
+    inner = spline([(hx + f * u * R, hy + v * R) for u, v in line], False, 6)
+    p.poly(np.vstack([outer, inner]), color)
+    shade = np.clip(np.asarray(color, np.float64) * 0.72, 0, 1)
+    for r0, a0, a1 in ((0.80, -1.05, -2.45), (0.62, -1.30, -2.75)):
+        p.poly(tube(_arc(hx, hy, r0 * R, f, a0, a1, 12), R * 0.035), shade, 0.55)
+
+
 def _slab(cx, cy, length, thick, ang):
     """A thin flat thing (a book, a sheet, a blade) centred at (cx, cy), along the angle ang."""
     c, s = math.cos(ang), math.sin(ang)
@@ -985,6 +1077,13 @@ def _h_phone(p, h, R, f, pose):
     px_, py_ = h["at"]
     up = h["kind"] == "phone_up"
     ear = h["kind"] == "phone_ear"
+    if h.get("screen") and not ear:   # its screen turned to us: what he's looking at (tools/silhouette_icons.SCREENS)
+        import silhouette_icons as I
+        cx, cy = px_ + f * 0.12 * R, py_ - (0.05 if up else 0.12) * R
+        hw, hh = 0.30 * R, 0.52 * R
+        p.poly(rr(cx - hw - 0.06 * R, cy - hh - 0.07 * R, 2 * hw + 0.12 * R, 2 * hh + 0.14 * R, 0.10 * R), hexc("#141018"))
+        I.screen(p, h["screen"], cx, cy, hw, hh, h.get("t", 0.0))
+        return (cx, cy)
     ang = 0.0 if up else (-1.35 * f if ear else -0.5 * f)
     p.poly(rell(px_, py_, 0.17 * R, 0.09 * R, ang + (math.pi / 2 if up else 0.0)), hexc("#141018"))
     if ear:   # held to the ear: only its edge's faint glow shows, nothing lights his face
@@ -1202,10 +1301,10 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
     lying = pose.get("lying")
     hood_up = pose.get("hood_up") and look.hood
     out = {"head": (hx, hy), "glow": None}
-    # long hair falls behind the torso
+    # long hair falls behind the shoulders (its top, over the head, is drawn with the head)
     if look.hair == "long" and not lying:
-        p.poly(tube([(hx - f * 0.30 * R, hy - 0.55 * R), (hx - f * 0.78 * R, hy + 0.45 * R),
-                     (hx - f * 0.62 * R, hy + 1.70 * R)], 1.00 * R, 0.62 * R), look.hair_color)
+        p.poly(tube([(hx - f * 0.50 * R, hy - 0.30 * R), (hx - f * 0.84 * R, hy + 0.50 * R),
+                     (hx - f * 0.74 * R, hy + 1.60 * R)], 0.78 * R, 0.46 * R), look.hair_color)
     # the far arm (with what its hand holds) and the legs (behind the torso: its hem covers their tops)
     if pose.get("far"):
         sh, el, wr = pose["far"]
@@ -1291,12 +1390,12 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
         got = draw_hold[0](p, hold, R, f, pose)
         if hold["kind"] in ("phone", "phone_up", "phone_ear"):
             out["glow"] = got
-    # the head: hair behind it, the hood when it's up, the face, the eyes
-    if look.hair == "bun" and not lying:
-        p.circle(hx - f * 1.02 * R, hy - 0.30 * R, 0.40 * R, look.hair_color)
-        p.poly(ell(hx - f * 0.28 * R, hy - 0.22 * R, 1.06 * R, 1.03 * R, 56), look.hair_color)
-    if look.hair == "long" and not lying:
-        p.poly(ell(hx - f * 0.16 * R, hy - 0.12 * R, 1.10 * R, 1.08 * R, 56), look.hair_color)
+            if hold.get("screen"):   # (the colour its screen casts)
+                import silhouette_icons as I
+                out["glow_color"] = I.screen_light(hold["screen"])
+    # the head: a bun's knot behind it, the hood when it's up, the face, the hair over it, the eyes
+    if look.hair == "bun" and not lying:   # (up at the back, standing well out of the head's round)
+        p.circle(hx - f * 0.78 * R, hy - 0.77 * R, 0.40 * R, look.hair_color)
     if hood_up:
         p.poly(tube([(hx - f * 0.55 * R, hy + 0.55 * R), T(-0.35, 0.15)], R * 0.85, R * 0.75), cloth)
         p.poly(ell(hx - f * 0.15 * R, hy - 0.03 * R, 1.16 * R, 1.13 * R, 64), cloth)
@@ -1305,11 +1404,8 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
         p.circle(hx + f * 0.06 * R, hy + 0.05 * R, 0.90 * R, body)
     else:
         p.circle(hx, hy, R, body)
-    if look.hair == "short" and not hood_up:   # over the top and the back, down to a hairline at the forehead and ear
-        outer = _arc(hx - f * 0.05 * R, hy - 0.04 * R, 1.06 * R, f, -0.55, -math.pi - 0.70, 30)
-        line = [(hx - f * 0.62 * R, hy + 0.52 * R), (hx - f * 0.30 * R, hy + 0.06 * R), (hx - f * 0.04 * R, hy - 0.32 * R),
-                (hx + f * 0.42 * R, hy - 0.56 * R)]
-        p.poly(np.vstack([outer, line]), look.hair_color)
+    if look.hair and not hood_up and (look.hair == "short" or not lying):
+        _hair(p, hx, hy, R, f, look.hair, look.hair_color)
     if look.beard is not None and not lying:   # the jaw and the chin, a sideburn, a moustache: never round the back
         outer = _arc(hx, hy + 0.02 * R, 1.05 * R, f, 0.38, math.pi / 2 + 0.50, 22)
         line = [(hx - f * 0.40 * R, hy + 0.55 * R), (hx - f * 0.30 * R, hy + 0.10 * R), (hx - f * 0.18 * R, hy + 0.12 * R),
@@ -1325,6 +1421,9 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
         p.poly(rr(hx - (1.25 * R if f > 0 else 1.45 * R), hy - 0.40 * R, 2.70 * R, 0.15 * R, 0.07 * R), look.helmet)
         p.poly(tube(_arc(hx - f * 0.02 * R, hy - 0.30 * R, 1.06 * R, f, -0.9, -2.3, 12), R * 0.05),
                np.clip(look.helmet * 1.35, 0, 1), 0.7)
+    if pose.get("blanket"):   # hiding under it: pulled up to the eyes
+        p.poly(spline(pose["blanket"], True, 6), hexc("#5A5078"))
+        p.poly(tube(spline(pose["blanket"], True, 6)[:12].tolist(), R * 0.05), hexc("#7A6EA0"), 0.8)
     if eyes is not None and not pose.get("face_hidden"):
         lift = pose.get("lift", 0.0)
         ex, ey = (hx + f * 0.06 * R, hy + 0.04 * R) if hood_up else (hx, hy)
@@ -1338,8 +1437,20 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
             back = spots[0] if f > 0 else spots[1]
             p.poly(tube([(back[0] - f * back[2] * 1.45, back[1] - back[2] * 0.3), (hx - f * 0.70 * R, hy - 0.10 * R)],
                         R * 0.03), rim_c, 0.7)
-    if pose.get("face_hidden"):  # his hand over his face: the near hand drawn again on top
-        p.poly(rell(wr[0], wr[1], 0.19 * R, 0.14 * R, 0.6 * f), body)
+    if pose.get("front_slab"):   # peeking round a doorway: its edge in front of him, his fingers round it
+        x0, y0, x1, y1 = pose["front_slab"]
+        p.poly(rect(x0, y0, x1 - x0, y1 - y0), PAL["frame"])
+        if pose.get("grip"):
+            gx, gy = pose["grip"]
+            for k in range(3):
+                p.poly(rell(gx, gy + k * 0.13 * R, 0.10 * R, 0.06 * R, 0.0), body)
+    if pose.get("face_hidden"):  # his hand over his face, drawn again on top: the forearm's end and the hand in its
+        # sleeve's colour (black on his black head, it couldn't be seen)
+        mid = (el[0] * 0.45 + wr[0] * 0.55, el[1] * 0.45 + wr[1] * 0.55)
+        p.poly(tube([mid, wr], R * 0.46, R * 0.40), fold, 0.55, soft=R * 0.02)
+        p.poly(tube([mid, wr], R * 0.40, R * 0.34), coat)
+        ang = math.atan2(hy - wr[1], hx - wr[0])
+        p.poly(rell(wr[0] + math.cos(ang) * 0.16 * R, wr[1] + math.sin(ang) * 0.16 * R, 0.24 * R, 0.17 * R, ang), coat)
     return out
 
 

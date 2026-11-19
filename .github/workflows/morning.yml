@@ -1,13 +1,12 @@
 # The autopilot in the cloud. Every hour (at :35 India time) GitHub starts a Linux machine (free for public
 # repositories: 4 cores, 16 GB) that first checks, with only the dashboard's packages installed, whether there's anything
 # to do (python tools/jobs.py due): a story whose slot is due (as soon as the story before it is public: schedule.ahead
-# in config/channel.yaml) and whose free quotas are all there (the narrator's readings for all of it, his voice not
-# resting, YouTube's room for its uploads), or the day's numbers. Most hours there's nothing, and the run ends in about a
-# minute. When there is, it installs the video-making packages and makes the story (python tools/jobs.py morning):
-# Agent 1 picks the theme, Agent 2 writes the story, Agent 3 has the narrator read it and draws the film and its short
-# version, Agent 4 reviews them, and Agent 5 uploads the film scheduled for its slot (17:30, series.post_at), its short
-# version as a Short 3 hours later; then it stops. So the story after one that went public at 17:30 is made within the
-# hour, and one waiting for the narrator's free readings is made in the hour after they renew (13:30 India time).
+# in config/channel.yaml) and that YouTube has room to upload, or the day's numbers. Most hours there's nothing, and the
+# run ends in about a minute. When there is, it installs the video-making packages and makes the story (python
+# tools/jobs.py morning): Agent 1 picks the theme, Agent 2 writes the story and its moments with their bubbles (the films
+# are silent since 2026-11-19: no narrator), Agent 3 draws the film and its short version, Agent 4 reviews them, and
+# Agent 5 uploads the film scheduled for its slot (17:30, series.post_at), its short version as a Short 3 hours later;
+# then it stops. So the story after one that went public at 17:30 is made within the hour.
 # "Run workflow" on the Actions tab starts it by hand (no check first); with "test" it writes, makes and reviews one
 # story and uploads nothing.
 # Keys come from the repository's secrets (Settings -> Secrets and variables -> Actions), each given only to the steps
@@ -77,37 +76,6 @@ jobs:
         if: ${{ steps.due.outputs.work == 'true' }}
         timeout-minutes: 20
         run: pip install -r requirements-worker.txt
-
-      - name: Restore the model (whisper, about 250 MB, kept between runs)
-        id: models
-        if: ${{ steps.due.outputs.work == 'true' }}
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
-        with:
-          path: .tmp/models
-          key: models-v3  # (v2 held the case-study Shorts' models too, 1.2 GB: not restored any more)
-
-      - name: The model on this machine (it downloads once)
-        if: ${{ steps.due.outputs.work == 'true' }}
-        working-directory: tools
-        run: python -c "import narration; narration._model()"
-
-      - name: Keep the model for the next run
-        if: ${{ steps.due.outputs.work == 'true' && steps.models.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
-        with:
-          path: .tmp/models
-          key: models-v3
-
-      - name: ffmpeg with the rubberband filter (it makes his voice deeper)
-        if: ${{ steps.due.outputs.work == 'true' }}
-        run: |
-          if python -c "import imageio_ffmpeg, subprocess, sys; sys.exit(0 if 'rubberband' in subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-filters'], capture_output=True, text=True).stdout else 1)"; then
-            echo "The bundled ffmpeg has rubberband"
-          else
-            echo "The bundled ffmpeg has no rubberband: using Ubuntu's"
-            sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-            echo "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" >> "$GITHUB_ENV"
-          fi
 
       - name: Test (one story written, made and reviewed, nothing uploaded)
         if: ${{ inputs.test }}

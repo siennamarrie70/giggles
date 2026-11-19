@@ -1,15 +1,17 @@
 """
 The channel: one 3-4 minute motivation story a day (your idea since 2026-11-15), drawn in code in your silhouette look
 (an ordinary man's habit ruins his life, something wakes him, he works on himself, reaches the life he wanted and calmly
-turns down what turned him down), told by a calm, warm narrator, and its short version: the same story in under a minute
-for YouTube Shorts and Instagram Reels (your choice, 2026-11-16: it replaced the teaser). Six agents make it:
+turns down what turned him down), told without a narrator (since 2026-11-19: its people talk and think in bubbles),
+and its short version: the same story in under a minute for YouTube Shorts and Instagram Reels (your choice,
+2026-11-16: it replaced the teaser). Six agents make it:
 
-  1 theme       the day's theme (a vice or a virtue, alternating) and the title named from it (agents/theme.py)
-  2 story       the screenplay, shot by shot, with its sounds, the narrator's script, and the short version's script
+  1 theme       the day's theme (a vice or a virtue, alternating) and the brief for your script writer (agents/theme.py)
+  2 story       the story (your script writer's prompt), its moments with their bubbles, and the short version's
                 (agents/story.py)
-  3 animator    has the narrator read, times every shot to the voice and draws the film in code with the music from the
-                spark, the thumbnail, then the short version upright (tools/story_film.py, tools/silhouette_render.py)
-  4 reviewer    watches and listens to the film and its short version; a failure is fixed or made again by itself
+  3 animator    storyboards it, times every shot to its bubbles' reading and draws the film in code with the music, the
+                thumbnail, then the short version upright (agents/storyboard.py, tools/story_film.py,
+                tools/silhouette_render.py)
+  4 reviewer    watches the film and its short version; a failure is fixed or made again by itself
                 (agents/reviewer.py)
   5 publisher   uploads the film into its slot and its short version as a Short a few hours later, and the short version
                 as a Reel (agents/publisher.py)

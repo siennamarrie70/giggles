@@ -106,7 +106,7 @@ def backdrop(story, shot, at, dim=0.50, blur=1.8, sat=0.70):
         obj = SC.build(p["spec"], (W, H), p["light"], p["weather"], tuple(p["effects"]), center=p["center"],
                        seed=p["seed"], height=p["height"])
         obj.finish.bar = 0
-        st = SB.state(p, obj, at, {"t0": 0.0, "no_label": True})
+        st = SB.state(p, obj, at, {"t0": 0.0, "no_label": True, "no_bubbles": True})   # (never a bubble on a thumbnail)
         if p["people"] and p["people"][-1]["who"] == "him":
             st["actors"] = st["actors"][:-1]
         frame = obj.frame(idx, st)

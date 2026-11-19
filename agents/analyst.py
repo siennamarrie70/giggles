@@ -7,7 +7,8 @@ subscribers gained from YouTube Analytics, which lags about two days) and marks 
 Once a week (or when asked), with at least MIN_SAMPLES films that are two days old or more, it works out what does better
 than usual. Long films live by watch time, so each film's score is its views times the share watched (watch time), set
 against the channel's median, grouped by theme, vice or virtue, the title's shape, the story's motif, length, the
-narrator's voice, whether the Reviewer passed it at first look, and posting hour. A group needs MIN_SAMPLES films before
+narrator's voice (or none: the films are told in bubbles since 2026-11-19), whether the Reviewer passed it at first look,
+and posting hour. A group needs MIN_SAMPLES films before
 it counts. Gemini then writes a few plain lessons from the same table, and lessons for each agent (LEARNERS), with the
 Reviewer's recurring problems beside them; it sees public counts only, never the private analytics (the privacy page
 promises that).
@@ -40,8 +41,9 @@ MIN_AGE = timedelta(days=2)
 LEARN_EVERY = timedelta(days=7)
 LEARNERS = {  # each agent, and what its lessons may be about
     "theme": "which themes (vices or virtues) and which kinds of title to choose",
-    "story": "how the stories open, their parts and pace, the narrator's lines, the places and lights, the closing line",
-    "animator": "the film's look, the camera, the narrator's delivery and the sound under him",
+    "story": "how the stories open, their parts and pace, the moments and their bubbles, the places and lights, the "
+             "closing line",
+    "animator": "the film's look, the camera, how long the bubbles stay, the music and the sounds",
     "reviewer": "what to be stricter or more relaxed about when checking a film",
     "publisher": "posting: the hour, titles and descriptions as they appear, hashtags, the short version",
 }
@@ -87,7 +89,8 @@ def traits(video: dict, sched: dict) -> dict[str, list[str]]:
         "title_pattern": [title_pattern((plan.get("metadata") or {}).get("title") or "")],
         "motif": [(plan.get("story") or {}).get("motif") or "none"],
         "length": [_minutes((plan.get("render") or {}).get("seconds"))],
-        "voice": [(plan.get("voice") or {}).get("voice", "unknown").split(" (")[0]],
+        "voice": [SILENT if (plan.get("render") or {}).get("silent")
+                  else (plan.get("voice") or {}).get("voice", "unknown").split(" (")[0]],
         "hashtag": sorted({t.lower() for t in (plan.get("metadata") or {}).get("hashtags") or []}),
         "review": ["passed at first look" if not review.get("history") else "fixed by the Animator"] if review else [],
         "hour": [slots.clock(slots.parse(at), sched)] if at else [],
@@ -95,7 +98,8 @@ def traits(video: dict, sched: dict) -> dict[str, list[str]]:
 
 
 # The parts of a story its traits are read from (db.LIGHT: not the screenplay or the render's shots).
-TRAIT_PARTS = ("brief", "metadata", "voice", "render.seconds", "review", "story.motif")
+TRAIT_PARTS = ("brief", "metadata", "voice", "render.seconds", "render.silent", "review", "story.motif")
+SILENT = "none: told in bubbles"   # a silent film's "voice" (since 2026-11-19)
 
 
 def rows(min_age: timedelta = MIN_AGE, with_traits: bool = True) -> list[dict]:
@@ -168,10 +172,11 @@ def learn(progress=log) -> dict:
 each with a short version of under a minute (a YouTube Short and an Instagram Reel). Each film is an animated story
 drawn in one look (black silhouettes with a thin red rim of
 light and two white eyes, film light, letterbox bars) about an ordinary man whose habit ruins his life, until something
-wakes him, he works on himself, reaches the life he wanted and calmly turns down what once turned him down. A calm, warm
-narrator tells it. Six agents make each film: Theme picks the day's vice or virtue and names it, Story writes the
-screenplay and the narrator's script, an Animator draws the film, a Reviewer checks it, a Publisher posts it, and you
-read the results. Long films live by watch time, so lessons about holding viewers matter most.
+wakes him, he works on himself, reaches the life he wanted and calmly turns down what once turned him down. Since
+2026-11-19 there's no narrator: the people talk and think in speech and thought bubbles (earlier films had a calm, warm
+narrator: their "voice" is his name; a silent film's is "none: told in bubbles"). Six agents make each film: Theme picks
+the day's vice or virtue and names it, Story writes the screenplay and its moments with their bubbles, an Animator draws
+the film, a Reviewer checks it, a Publisher posts it, and you read the results. Long films live by watch time, so lessons about holding viewers matter most.
 Give 3-6 concrete, testable lessons about which themes, titles, openings, motifs, lengths and posting times do better or
 worse. Then, for each agent, 0-3 short lessons it can act on next time, only about its own work:
 """ + "\n".join(f"- {k}: {v}" for k, v in LEARNERS.items()) + """

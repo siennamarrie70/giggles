@@ -1,125 +1,128 @@
 """
-The film of Agent 2's story (agents/story.py): the narrator's lines laid over their shots, the film drawn in
-the silhouette look (tools/silhouette_render.py: everything in code, no AI pictures), its short version drawn upright,
-the thumbnail, and a still of every scene. Agent 3 (agents/animator.py) runs it.
+The film of Agent 2's story (agents/story.py): its moments' shots, their bubbles over the speakers' heads (no narrator:
+your choice, 2026-11-19), drawn in the silhouette look (tools/silhouette_render.py: everything in code, no AI pictures),
+its short version drawn upright, the thumbnail, and a still of every scene. Agent 3 (agents/animator.py) runs it.
 
-Timing (timeline): the narrator leads. A shot with a line starts its line LEAD seconds in and lasts at least until TAIL
-after the line ends (longer if planned so); a shot without one keeps its planned length. Lines never overlap. The film is
-then kept inside series.minutes by stretching or shortening the silent shots. The closing line is said over the last shot
-and stays on screen CLOSING_HOLD after he finishes.
+Timing (timeline): the bubbles lead. A shot with bubbles starts its first LEAD seconds in; each bubble stays for an average
+reader (tools/silhouette_words.read_seconds: a second to find it, then 2.5 words a second, 2.5 s at least), the next one
+starting where it was read, the earlier one staying (dimmed) until its reply is read: never more than two at once. The
+shot lasts until TAIL after its last bubble is read. There's no title in the picture (your choice, 2026-11-20): the film
+begins straight with the story, its first bubble OPENING seconds after the picture fades in; its last shot shows the
+closing line after its bubbles, long enough to read it and CLOSING_HOLD more. A shot
+without bubbles keeps its planned length; the film is kept inside series.minutes by stretching or shortening those.
 
 Music (music_for): one of the full-length tracks in the music library (assets/music/full/, the dashboard's Music page;
-CC BY, incompetech.com, credited in the description), chosen from the story's title, silent until the spark and rising
-from it to the end.
+CC BY, incompetech.com, credited in the description), chosen from the story's title: low from the first second, lifting
+at his realization (tools/silhouette_render.music_spec).
 
-The short version (make_short; your choice, 2026-11-16: it replaced the teaser): the whole story told again in under a
-minute for YouTube Shorts and Instagram Reels. Agent 2 picks 8-14 of the film's shots (in its order, every part of the
-story) and writes the narrator's new lines over them (story["short"]); short_story() makes that a story of its own, each
-shot drawn as in the film (its seed) but upright, 1080x1920, framed on him. Timed like the film (short_timeline: tighter
-gaps between lines, fitted inside SHORT_SECONDS, never SHORT_MOST or more), the title at the top for its first seconds,
-the closing line at its end, its own sounds, and the music silent until its spark, then rising.
+The short version (make_short): the whole story told again in under a minute for YouTube Shorts and Instagram Reels.
+Agent 2 picks 8-12 of the film's shots (in its order, every stage) with shorter bubbles (story["short"]); short_story()
+makes that a story of its own, each shot drawn as in the film (its seed) but upright, 1080x1920, framed on him. Timed like
+the film (short_timeline: inside SHORT_SECONDS, never SHORT_MOST or more), beginning straight with the story (no title
+in the picture), the closing line at its end.
 
 Usage:
-    python tools/story_film.py story.json out.mp4      # a story (agents/story.py --out) made into a film, no narrator
+    python tools/story_film.py story.json out.mp4      # a storyboarded story (agents/storyboard.py --out) made into a film
 """
 
 import argparse
 import hashlib
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 import series
+import silhouette_words as W
 
-LEAD, TAIL = 0.30, 0.45            # seconds of a shot before its line, and after it (agents/story.py estimates with these)
-FLOW_LEAD, FLOW_TAIL = 0.06, 0.10  # ...when a sentence goes on into the next shot (its line was cut at a comma)
-PARAGRAPH = 0.35                   # a new paragraph's extra breath before its first line
-CLOSING_HOLD = 3.0                 # the closing line stays this long after he's said it
-SILENT_SHORTEST, SILENT_LONGEST = 2.5, 8.0  # a shot without a line, when the film's length is fitted
+LEAD, TAIL = 0.5, 0.8              # seconds of a shot before its first bubble, and after its last is read
+OPENING = 1.0                      # the film's first shot: its picture fades in before the first bubble (no title)
+CLOSING_HOLD = 2.5                 # the closing line stays this long after it's read
+LAST_BREATH = 0.3                  # a shot's last bubble stays this long after it's read
+SILENT_SHORTEST, SILENT_LONGEST = 2.5, 8.0  # a shot without bubbles, when the film's length is fitted
 
 # The short version (Shorts and Reels): under a minute, your choice (2026-11-16)
 SHORT_SECONDS = (45.0, 58.0)       # what its timing aims for
 SHORT_MOST = 59.5                  # never this long or more (YouTube blocks a Short over a minute that gets a claim)
-SHORT_LEAD, SHORT_TAIL = 0.35, 0.5  # a Short's pace: a little less air around each line than the film's
-SHORT_CLOSING_HOLD = 2.2
-SHORT_SILENT = (1.8, 4.5)          # one of its shots without a line
-SHORT_EVENT_SHORTEST = 2.6         # ...one whose event (a head turn, the clock's flip) needs the time to happen
-SHORT_FIRST_SHORTEST = 3.6         # its first shot: the title at the top must be read
-SHORT_COVER_AT = 2.0               # the Reel's cover: the title at the top, fully in
+SHORT_LEAD, SHORT_TAIL = 0.35, 0.5  # a Short's pace: a little less air round each shot's bubbles than the film's
+SHORT_OPENING = 0.5                # its first shot: the picture fades in, then the hook's bubble (no title)
+SHORT_CLOSING_HOLD = 1.6
+SHORT_SILENT = (1.8, 4.5)          # one of its shots without bubbles
+SHORT_EVENT_SHORTEST = 2.6         # ...one whose event (a head turn) needs the time to happen
+SHORT_COVER_AT = 2.0               # the Reel's cover: a moment of its first shot, the hook's bubble in
 
 
 # --- timing ------------------------------------------------------------------------------------------------------------------
-def timeline(story: dict, spoken: list[dict] | None = None, bounds: tuple[float, float] | None = None,
-             lead: float = LEAD, tail: float = TAIL, hold: float = CLOSING_HOLD,
-             silences: tuple[float, float] = (SILENT_SHORTEST, SILENT_LONGEST), event_shortest: float = 0.0) -> list[dict]:
-    """Each shot's start and length, and its line's start and length (spoken: the narrator's lines in order, with their
-    real lengths; without them, estimated). Fitted inside `bounds` (seconds; the film's: series.minutes) by the silent
-    shots, each kept between `silences` (and at least `event_shortest` when something happens in it, or its own planned
-    "shortest")."""
-    import narrator
+def bubble_times(bubbles: list[dict], lead: float) -> tuple[list[dict], float]:
+    """A shot's bubbles with their times in it (seconds from its start): each starts where the one before was read and
+    stays until its reply is read (the last, LAST_BREATH after it's read). Returns them and when the last is read."""
+    reads = [W.read_seconds(b.get("text") or "", b.get("picture") or "") for b in bubbles]
+    starts, t = [], lead
+    for r in reads:
+        starts.append(t)
+        t += r
+    out = []
+    for k, b in enumerate(bubbles):
+        end = starts[k + 1] + reads[k + 1] if k + 1 < len(bubbles) else starts[k] + reads[k] + LAST_BREATH
+        out.append({**b, "start": round(starts[k], 3), "end": round(end, 3)})
+    return out, t
 
-    lines = iter(spoken or [])
+
+def timeline(story: dict, bounds: tuple[float, float] | None = None, lead: float = LEAD, tail: float = TAIL,
+             hold: float = CLOSING_HOLD, silences: tuple[float, float] = (SILENT_SHORTEST, SILENT_LONGEST),
+             event_shortest: float = 0.0, opening: float = OPENING) -> list[dict]:
+    """Each shot's start and length, its bubbles' times in it ("bubbles"), when its first bubble comes ("line_at", in
+    the film) and, the last shot's, when the closing line comes in it ("closing_at"). Fitted inside `bounds` (seconds;
+    the film's: series.minutes) by the shots without bubbles, each kept between `silences` (and at least
+    `event_shortest` when something happens in it, or its own planned "shortest")."""
+    closing = story.get("closing_line") or ""
+    n = len(story["shots"])
     times = []
-    said = [k for k, s in enumerate(story["shots"]) if s.get("line")]
-    flows = {a for a, b in zip(said, said[1:]) if b == a + 1 and _goes_on(story["shots"][a]["line"])}
-    paras = {k for k in said[1:] if _new_paragraph(story, story["shots"][k])}
     for k, shot in enumerate(story["shots"]):
-        line_s = None
-        if shot.get("line"):
-            got = next(lines, None)
-            line_s = float(got["seconds"]) if got else narrator.estimate_seconds(shot["line"])
-        last = k == len(story["shots"]) - 1
-        own_lead = FLOW_LEAD if k - 1 in flows else lead + (PARAGRAPH if k in paras else 0.0)
-        own_tail = FLOW_TAIL if k in flows else tail
-        need = own_lead + line_s + (hold if last else own_tail) if line_s is not None else 0.0
+        first, last = k == 0, k == n - 1
+        bubbles = shot.get("bubbles") or []
+        own_lead = lead + (opening if first else 0.0)
+        timed, read = bubble_times(bubbles, own_lead) if bubbles else ([], own_lead)
+        need = read + tail if bubbles else 0.0
+        if first:
+            need = max(need, opening + 1.0)
+        closing_at = None
+        if last:
+            closing_at = read + LAST_BREATH if bubbles else 0.8
+            need = max(need, closing_at + W.read_seconds(closing) + hold)
         own = float(shot.get("shortest") or 0.0)
-        floor = max(need, own) if line_s is not None else max(
+        fixed = bool(bubbles) or first or last
+        floor = max(need, own) if fixed else max(
             silences[0], own, event_shortest if (shot.get("event") or "none") != "none" else 0.0)
-        times.append({"planned": float(shot["seconds"]), "need": need, "line_seconds": line_s, "floor": floor,
-                      "seconds": floor if line_s is not None and shot.get("stage") else max(float(shot["seconds"]), floor),
-                      "lead": own_lead})   # (a storyboard shot with a line lasts what its line needs: the lines flow)
+        planned = float(shot.get("seconds") or silences[0])
+        seconds = floor if fixed and shot.get("stage") else max(planned, floor)   # (a storyboard shot with bubbles lasts
+        times.append({"planned": planned, "need": need, "floor": floor, "seconds": seconds, "bubbles": timed,   # what they need)
+                      "line_seconds": (read - own_lead) if bubbles else None, "first_at": own_lead if bubbles else None,
+                      "closing_at": closing_at, "fixed": fixed})
     low, high = bounds or tuple(m * 60 for m in series.minutes())
     longest = silences[1]
     total = sum(t["seconds"] for t in times)
-    silent = [t for t in times if t["line_seconds"] is None]
-    if total > high and silent:  # shorter silences (never under their floor), then lines' shots to what they need
-        spare = sum(t["seconds"] - t["floor"] for t in silent)
+    free = [t for t in times if not t["fixed"]]
+    if total > high and free:  # shorter silent shots, never under their floor
+        spare = sum(t["seconds"] - t["floor"] for t in free)
         cut = min(spare, total - high)
-        for t in silent:
+        for t in free:
             t["seconds"] -= cut * (t["seconds"] - t["floor"]) / max(spare, 1e-6)
-        total = sum(t["seconds"] for t in times)
-        if total > high:
-            for t in times:
-                if t["line_seconds"] is not None:
-                    t["seconds"] = max(t["floor"], min(t["seconds"], t["need"] + 0.2))
-    elif total < low and silent:  # longer silences, up to the longest
-        room = sum(longest - t["seconds"] for t in silent if t["seconds"] < longest)
+    elif total < low and free:  # longer silent shots, up to the longest
+        room = sum(longest - t["seconds"] for t in free if t["seconds"] < longest)
         add = min(room, low - total)
-        for t in silent:
+        for t in free:
             if t["seconds"] < longest:
                 t["seconds"] += add * (longest - t["seconds"]) / max(room, 1e-6)
     at = 0.0
     for t in times:
         t["seconds"] = round(t["seconds"], 3)
         t["start"] = round(at, 3)
-        t["line_at"] = round(at + t.pop("lead"), 3) if t["line_seconds"] is not None else None
+        t["line_at"] = round(at + t.pop("first_at"), 3) if t["first_at"] is not None else None
+        t.pop("first_at", None)
+        t.pop("fixed", None)
         at += t["seconds"]
-        t.pop("lead", None)
     return times
-
-
-def _goes_on(line: str) -> bool:
-    """Does a line go on into the next one (a sentence cut where it breathes, not at its end)?"""
-    return not re.search(r"[.!?…][\"”’)\]]*$", str(line).strip())
-
-
-def _new_paragraph(story: dict, shot: dict) -> bool:
-    """Is a shot's line the first of a paragraph of the script (a little more breath before it)?"""
-    i = shot.get("line_index")
-    lines = story.get("lines") or []
-    return i is not None and 0 < i < len(lines) and bool(lines[i].get("para"))
 
 
 def chapters(story: dict, times: list[dict]) -> list[dict]:
@@ -142,19 +145,6 @@ def clock(seconds: float) -> str:
     return f"{s // 60}:{s % 60:02d}"
 
 
-def voice_cues(times: list[dict], spoken: list[dict]) -> list[dict]:
-    """Where each of the narrator's lines starts in the film: [{"wav", "at", "seconds", "words", "from"}] (the last
-    three time the subtitles: tools/subtitles.py)."""
-    cues, lines = [], iter(spoken)
-    for t in times:
-        if t["line_at"] is not None:
-            got = next(lines, None)
-            if got:
-                cues.append({"wav": got["wav"], "at": t["line_at"], "seconds": got.get("seconds"),
-                             "words": got.get("words") or [], "from": got.get("from")})
-    return cues
-
-
 def music_for(story: dict) -> str | None:
     """The story's music (a full-length track of the library: tools/media.py), chosen from its title so a story keeps
     its track when it's made again."""
@@ -168,15 +158,14 @@ def music_for(story: dict) -> str | None:
 
 
 # --- the film ----------------------------------------------------------------------------------------------------------------
-def make(story: dict, spoken: list[dict] | None, out: Path, progress=print, beds: float = 0.0) -> dict:
-    """The film: drawn, timed to the narrator's lines (`spoken`, in order), with his voice and the music from the spark.
-    Returns its timing and chapters."""
+def make(story: dict, out: Path, progress=print, beds: float = 0.0) -> dict:
+    """The film: drawn, its bubbles timed for reading, the place's sounds and the music. Returns its timing and
+    chapters."""
     import silhouette_render
 
-    times = timeline(story, spoken)
+    times = timeline(story)
     story = {**story, "music": music_for(story)}
-    silhouette_render.render(story, times, Path(out), voice=voice_cues(times, spoken) if spoken else None,
-                             progress=progress, beds_db=beds)
+    silhouette_render.render(story, times, Path(out), progress=progress, beds_db=beds)
     return {"times": times, "seconds": round(sum(t["seconds"] for t in times), 2), "chapters": chapters(story, times),
             "music": story["music"]}
 
@@ -184,9 +173,8 @@ def make(story: dict, spoken: list[dict] | None, out: Path, progress=print, beds
 # --- the short version -------------------------------------------------------------------------------------------------------
 def short_story(story: dict, short: dict | None = None) -> dict:
     """The short version as a story of its own: the film's shots Agent 2 picked (story["short"], or `short`), each drawn
-    as in the film (its seed: "film_shot" says which it is) with the short script's line over it; the last one's line is
-    always the closing line. Its first shot fades in; a light switching off between two of the film's shots isn't
-    between these two, so it's a fade."""
+    as in the film (its seed: "film_shot" says which it is) with the short version's bubbles. Its first shot fades in; a
+    light switching off between two of the film's shots isn't between these two, so it's a fade."""
     picked = (short if short is not None else story.get("short") or {}).get("shots") or []
     shots = []
     for j, s in enumerate(picked):
@@ -195,53 +183,37 @@ def short_story(story: dict, short: dict | None = None) -> dict:
             continue
         base = story["shots"][k]
         enter = "fade" if j == 0 or base.get("enter") == "lights_out" else (base.get("enter") or "cut")
-        shots.append({**base, "line": s.get("line") or "", "direction": s.get("direction") or "",
-                      "seconds": float(s.get("seconds") or SHORT_SILENT[0]), "enter": enter, "seed": k * 101 + 7,
-                      "film_shot": k + 1, "shortest": SHORT_FIRST_SHORTEST if j == 0 else 0.0})
-    if shots and story.get("closing_line"):
-        shots[-1]["line"] = story["closing_line"]
-        shots[-1]["direction"] = shots[-1]["direction"] or "slow, warm, final"
-    for s in shots:   # (its own lines: no paragraph of the film's script)
+        bubbles = [dict(b) for b in s.get("bubbles") or [] if b.get("kind") in W.BUBBLE_KINDS]
+        shots.append({**base, "bubbles": bubbles, "line": "", "enter": enter, "seed": k * 101 + 7, "film_shot": k + 1,
+                      "seconds": float(base.get("seconds") or SHORT_SILENT[0]) if not bubbles else 0.0,
+                      "shortest": 0.0})
+    for s in shots:
         s.pop("line_index", None)
     out = {"title": story.get("title") or "", "theme": story.get("theme"), "closing_line": story.get("closing_line") or "",
            "music": story.get("music"), "music_from": story.get("music_from"), "shots": shots,
            "places": story.get("places") or [], "cast": story.get("cast") or []}
-    if story.get("realization") is not None:   # (the music starts at the first of its shots from his realization on)
+    if story.get("realization") is not None:   # (the music lifts at the first of its shots from his realization on)
         out["realization"] = next((j for j, s in enumerate(shots) if s["film_shot"] - 1 >= int(story["realization"])),
                                   None)
     return out
 
 
-def short_lines(story: dict, short: dict | None = None) -> list[dict]:
-    """The short version's script for the narrator: each line with its direction and its shot (in the short)."""
-    return [{"text": s["line"], "direction": s.get("direction") or "", "shot": j}
-            for j, s in enumerate(short_story(story, short)["shots"]) if s.get("line")]
+def short_timeline(short: dict) -> list[dict]:
+    """timeline() for the short version (short_story's): tighter, fitted inside SHORT_SECONDS."""
+    return timeline(short, bounds=SHORT_SECONDS, lead=SHORT_LEAD, tail=SHORT_TAIL, hold=SHORT_CLOSING_HOLD,
+                    silences=SHORT_SILENT, event_shortest=SHORT_EVENT_SHORTEST, opening=SHORT_OPENING)
 
 
-def short_timeline(short: dict, spoken: list[dict] | None = None) -> list[dict]:
-    """timeline() for the short version (short_story's): tighter gaps, fitted inside SHORT_SECONDS."""
-    return timeline(short, spoken, bounds=SHORT_SECONDS, lead=SHORT_LEAD, tail=SHORT_TAIL, hold=SHORT_CLOSING_HOLD,
-                    silences=SHORT_SILENT, event_shortest=SHORT_EVENT_SHORTEST)
-
-
-def short_need(times: list[dict]) -> float:
-    """The least the short version can run with these lines (every shot at its floor: a line's shot as long as its line
-    needs, a silent one at its shortest)."""
-    return round(sum(t["floor"] for t in times), 2)
-
-
-def make_short(story: dict, spoken: list[dict] | None, out: Path, progress=print, beds: float = 0.0) -> dict:
-    """The short version (1080x1920): the film's shots Agent 2 picked, drawn upright and timed to the narrator's reading
-    of its own lines (`spoken`, in order), with his voice, each place's sounds and the music from its spark. Returns its
-    timing and the film's shots it shows."""
+def make_short(story: dict, out: Path, progress=print, beds: float = 0.0) -> dict:
+    """The short version (1080x1920): the film's shots Agent 2 picked, drawn upright with its bubbles, each place's
+    sounds and the music. Returns its timing and the film's shots it shows."""
     import silhouette_render
 
     short = {**short_story(story), "music": music_for(story)}
     if not short["shots"]:
         raise RuntimeError("the story has no short version to make")
-    times = short_timeline(short, spoken)
-    silhouette_render.render(short, times, Path(out), voice=voice_cues(times, spoken) if spoken else None,
-                             progress=progress, beds_db=beds, upright=True)
+    times = short_timeline(short)
+    silhouette_render.render(short, times, Path(out), progress=progress, beds_db=beds, upright=True)
     return {"times": times, "seconds": round(sum(t["seconds"] for t in times), 2), "music": short["music"],
             "film_shots": [s["film_shot"] for s in short["shots"]]}
 
@@ -278,12 +250,12 @@ def story_key(story: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    parser.add_argument("story", help="agents/story.py --out's JSON (or {\"story\": ...})")
+    parser.add_argument("story", help="a storyboarded story's JSON (or {\"story\": ...})")
     parser.add_argument("out")
     args = parser.parse_args()
     data = json.loads(Path(args.story).read_text(encoding="utf-8"))
     story = data.get("story") or data
-    made = make(story, None, Path(args.out))
+    made = make(story, Path(args.out))
     print(json.dumps({k: v for k, v in made.items() if k != "times"}, indent=1))
     return 0
 

@@ -1,7 +1,7 @@
 """
 The dashboard: serves the page (index.html, app.css, app.js in this folder) and the JSON API it calls: the six agents'
-pages for the daily motivation story (Themes, Stories, the Studio, Review, Schedule, Results), the Music and Narrator
-pages, the channels, the settings and the activity.
+pages for the daily motivation story (Themes, Stories, the Studio, Review, Schedule, Results), the Music page and The
+look, the channels, the settings and the activity.
 
 Locally it's at http://localhost:8000 and answers only on this computer (asked by its own name, from its own
 address: started on every address by mistake, it still refuses the rest of the network). On Vercel it's
@@ -302,10 +302,14 @@ async def _body_upto(request: Request, most: int, too_big: str) -> bytes:
     return body
 
 
+JSON_MOST = 256 * 1024   # bytes: the largest JSON body a page sends is a few kilobytes
+
+
 async def _json(request: Request) -> dict:
-    """The request's JSON object (422 if it isn't one, instead of an error)."""
+    """The request's JSON object (422 if it isn't one, instead of an error), read only up to JSON_MOST."""
+    raw = await _body_upto(request, JSON_MOST, "The request is too big.")
     try:
-        body = json.loads(await request.body() or b"{}")
+        body = json.loads(raw or b"{}")
     except ValueError:
         raise HTTPException(422, "The request isn't JSON.") from None
     if not isinstance(body, dict):
@@ -379,6 +383,9 @@ def _start_task(kind: str, label: str, work, video_id: int | None = None) -> dic
     rest (a morning run takes a while), one of each at a time. Nothing starts on old code (code_changed)."""
     if code_changed():
         raise HTTPException(409, STALE_CODE)
+    if kind in CLOUD_WAITS and _cloud_going():
+        raise HTTPException(409, "The autopilot's run is making a story on GitHub right now, with the same free quotas "
+                                 "and YouTube uploads: try again when it's done (the bar at the top follows it).")
     side = kind in SIDE_TASKS
     with _tasks_lock:
         busy = next((t for t in _tasks.values() if t["status"] == "running"
@@ -550,9 +557,14 @@ def _slot_video(v: dict | None, live: dict | None = None) -> dict | None:
     if not v:
         return None
     meta = v["plan"].get("metadata", {})
-    return {"id": v["id"], "status": v["status"], "title": meta.get("title") or v["theme"],
+    return {"id": v["id"], "status": v["status"], "title": meta.get("title") or _draft_title(v) or v["theme"],
             "theme": (v["plan"].get("brief") or {}).get("theme") or v["theme"], "youtube_id": v["youtube_id"],
             "publish_at": v["publish_at"], "slot": v["slot"], "platforms": publisher.platforms(v, live)}
+
+
+def _draft_title(v: dict) -> str | None:
+    """The title of a story being made whose script is written but not yet storyboarded (jobs._draft_saved)."""
+    return (v["plan"].get("draft") or {}).get("title")
 
 
 def _autopilot_state(cfg: dict) -> dict:
@@ -561,24 +573,69 @@ def _autopilot_state(cfg: dict) -> dict:
     shown = slots.shown_day(now, sched)
     day = slots.day_slots(shown, sched)
     board = jobs.slot_board(day[0], day[-1], sched, now)
-    last = db.last_run("morning")
+    last = db.last_run("morning", ok=None)  # (the latest run however it went: one still going, or one stopped early)
+    going = _going(last, now)
     upcoming = jobs.slot_board(now, now + timedelta(days=2), sched, now)
     try:
         next_open = slots.iso(jobs.next_open_slot(jobs.MANUAL_LEAD, now, sched))
     except RuntimeError:
         next_open = None
+    here = autopilot_here()
     return {
-        "here": autopilot_here(),
-        "schedule": {k: sched[k] for k in ("timezone", "post_at", "make_at", "ahead")},
+        "here": here,
+        "schedule": {k: sched[k] for k in ("timezone", "post_at", "make_at", "ahead", "stories_ahead")},
         "check": db.latest_note("autopilot:check"),  # (the last check's verdict: is a story being made, or what it waits for)
         "run": {"starts": slots.iso(slots.opens(day[0], sched)), "slots": len(board),  # (when its story could start)
                 "scheduled": sum(1 for s in board if s["state"] in ("scheduled", "posted")),
-                "running": bool(last and not last["finished_at"]), "last": _run_json(last)},
+                "running": going, "last": _run_json(last)},
+        # (the run going in the cloud, as the progress bar's task; on a PC that runs the autopilot itself, it's its own)
+        "cloud": _cloud_task(last) if going and not here else None,
         "slots": [{"at": slots.iso(s["slot"]), "state": s["state"], "video": _slot_video(s["video"])} for s in board],
         "next": upcoming and {"at": slots.iso(upcoming[0]["slot"]), "state": upcoming[0]["state"]},
         "next_open": next_open,
         "last_check": db.last_beat("autopilot"),
     }
+
+
+def _going(run: dict | None, now: datetime | None = None) -> bool:
+    """Is this run still going? One cut off without finishing (by GitHub's 6-hour limit, or a closed laptop) isn't."""
+    now = now or datetime.now(timezone.utc)
+    return bool(run and not run["finished_at"]
+                and now - slots.parse(run["started_at"]) < jobs.RUN_LIMIT + timedelta(minutes=20))
+
+
+CLOUD_LABEL = "The autopilot's run on GitHub"
+# What waits while the autopilot's run is going in the cloud: what makes a film (the same free quotas) or uploads.
+CLOUD_WAITS = ("autopilot", "render", "publish", "short", "narrator-sample", "remake")
+
+
+def _cloud_task(run: dict | None) -> dict | None:
+    """The autopilot's run started outside this dashboard (GitHub's: tools/jobs.py morning) as a task for the progress
+    bar at the top: the steps it keeps as it goes (note run:live, jobs.LiveSteps) and how it ended. A run from before
+    it kept them shows without its steps."""
+    if not run:
+        return None
+    note = db.latest_note(jobs.LIVE_NOTE) or {}
+    try:  # (the note is this run's: it's started just before the run's row)
+        if abs(slots.parse(note["started"]) - slots.parse(run["started_at"])) > timedelta(minutes=2):
+            note = {}
+    except (KeyError, TypeError, ValueError):
+        note = {}
+    detail = _run_json(run)["detail"]
+    status = "running" if _going(run) else "done" if run["ok"] else "error"
+    error = None
+    if status == "error":
+        error = detail.get("error") or ("it was cut off before it finished" if not run["finished_at"]
+                                        else "it stopped without saying why")
+    return {"id": f"cloud-{run['id']}", "kind": "cloud", "label": CLOUD_LABEL, "status": status,
+            "steps": note.get("steps") or [], "result": detail if status == "done" else None, "error": error,
+            "started": run["started_at"], "finished": run["finished_at"], "video_id": None, "cloud": True,
+            "url": note.get("url")}
+
+
+def _cloud_going() -> bool:
+    """Is the autopilot's run going in the cloud (not this PC's own)?"""
+    return not autopilot_here() and _going(db.last_run("morning", ok=None))
 
 
 def _run_json(r: dict | None) -> dict | None:
@@ -613,6 +670,15 @@ def _agents(planned: list[dict]) -> list[dict]:
              "what": metric[agent["key"]][1]} for agent in AGENTS]
 
 
+def _story_hours() -> dict:
+    """The hours stories are made in (jobs.story_window: after Gemini's free allowance renews, until midnight): open
+    now, and when they open and close on the schedule's clock (the page asks before a story is made outside them)."""
+    sched = slots.plan()
+    opens, closes = jobs.story_window(sched=sched)
+    now = datetime.now(timezone.utc)
+    return {"open": opens <= now < closes, "opens": slots.clock(opens, sched), "closes": slots.clock(closes, sched)}
+
+
 def _youtube_limit() -> dict | None:
     """While YouTube's daily upload limit holds: when it should take the channel's next upload (tools/jobs.py)."""
     room = jobs.upload_room_at()
@@ -625,6 +691,7 @@ def _youtube_limit() -> dict | None:
 def state():
     cfg = load_config()
     planned = db.planned_videos(parts=QUEUE_PARTS)
+    autopilot = _autopilot_state(cfg)
     return {
         "channel": cfg["channel"]["name"],
         "local": not ON_VERCEL,
@@ -641,27 +708,27 @@ def state():
             "instagram": {"connected": instagram.is_configured(), "on": publisher.reels_on(),
                           "username": env("INSTAGRAM_USERNAME"), "down": publisher.instagram_down()},
         },
-        "autopilot": _autopilot_state(cfg),
+        "autopilot": autopilot,
         "counts": db.status_counts(),
         "agents": _agents(planned),
         "held": sum(1 for v in planned if (v["plan"].get("review") or {}).get("held")),
         "ready": sum(1 for v in planned if db.ready(v)),
         "requests": len(db.list_topics("waiting")),
-        "narrator": {"name": series.narrator()["name"], **_voice_state()},
         "series": _series_state(),
+        "gemini": _story_hours(),
         "youtube_limit": _youtube_limit(),
         # Google's page waiting for you comes first, then a Reel you're posting: the dashboard follows it, then the run
         "task": next((_public(t) for t in sorted(_tasks.values(), key=lambda t: (t["kind"] != "connect", t["kind"] != "reel"))
-                      if t["status"] == "running"), None),
+                      if t["status"] == "running"), None) or autopilot["cloud"],  # (else the autopilot's run on GitHub)
     }
 
 
 def _series_state() -> dict:
-    """The stories' settings, for every page (the Overview, the Studio, the Narrator page)."""
+    """The stories' settings, for every page (the Overview, the Studio, the Stories page)."""
     cfg = series.settings()
     return {"post_at": cfg.get("post_at"), "short_after_hours": series.short_after_hours(),
             "short_seconds": list(story_film.SHORT_SECONDS), "minutes": list(series.minutes()),
-            "narrator": cfg["narrator"].get("name"), "themes": series.themes()}
+            "themes": series.themes()}
 
 
 @router.post("/api/pause")
@@ -690,7 +757,7 @@ def _video_json(v: dict) -> dict:
         "slot": v["slot"], "error": v["error"], "youtube_id": v["youtube_id"],
         "studio_url": f"https://studio.youtube.com/video/{v['youtube_id']}/edit" if v["youtube_id"] else None,
         "legacy": None if series.is_story(v) else LEGACY.get(v["format"], "Cute-animal version"),
-        "title": meta.get("title") or v["theme"], "description": meta.get("description"),
+        "title": meta.get("title") or _draft_title(v) or v["theme"], "description": meta.get("description"),
         "hashtags": meta.get("hashtags") or [], "duration": (plan.get("render") or {}).get("seconds"),
         "music": (plan.get("render") or {}).get("music"),
         "preview": f"/media/preview/{v['id']}.mp4{_stamp(preview)}" if preview.exists() else None,
@@ -698,13 +765,22 @@ def _video_json(v: dict) -> dict:
         "platforms": publisher.platforms(v) if v["status"] in ("making", "scheduled") else None,
     }
     if out["legacy"] or not plan.get("story"):
-        return out
+        return {**out, "draft": plan.get("draft")} if plan.get("draft") else out  # (a story being made: its script)
     return {**out, **_story_json(v)}
+
+
+def _bubbles_of(shot: dict, when: list) -> list[dict]:
+    """A shot's bubbles as the Studio shows them: who, the kind (say, think, shout, picture), the words, the picture,
+    and the second each comes (`when`, once its film is made)."""
+    return [{"who": b.get("who") or "him", "kind": b.get("kind") or "say", "text": b.get("text") or "",
+             "picture": b.get("picture") or "", "at": when[i] if i < len(when) else None}
+            for i, b in enumerate(shot.get("bubbles") or [])]
 
 
 def _short_json(v: dict) -> dict | None:
     """A story's short version as the Studio shows it: its video (when it's made from the film as it is), its length,
-    and its script (each line with the film's scene it's over and the second it starts in the short version)."""
+    and its shots (each with the film's scene it shows, its bubbles, and the second it starts in the short version; a
+    narrated one's line, from before 2026-11-19)."""
     plan = v["plan"]
     story = plan["story"]
     if not story.get("short"):
@@ -712,32 +788,45 @@ def _short_json(v: dict) -> dict | None:
     made = plan.get("short_render") or {}
     path = animator.short_path(v["id"])
     ready = animator.short_made(v)
-    times = iter(made.get("lines") or []) if ready else iter(())
-    lines = []
-    for s in story_film.short_story(story)["shots"]:
-        if s.get("line"):
-            t = next(times, None)
-            lines.append({"text": s["line"], "direction": s.get("direction") or "", "shot": s["film_shot"],
-                          "act": s.get("act"), "at": t["start"] if t else None})
+    spans = [(t.get("start") or 0.0, t.get("end") or 0.0) for t in made.get("shots") or []] if ready else []
+    came = {}
+    for b in made.get("bubbles") or [] if ready else []:   # (the short version's bubbles, by the shot they're in)
+        j = next((j for j, (a, e) in enumerate(spans) if a <= b.get("start", -1) < e), None)
+        if j is not None:
+            came.setdefault(j, []).append(b["start"])
+    said = {int(x.get("shot") or 0): x.get("line") or "" for x in story["short"].get("shots") or []}
+    shots = [{"shot": x["film_shot"], "act": x.get("act"), "at": spans[j][0] if j < len(spans) else None,
+              "bubbles": _bubbles_of(x, came.get(j, [])), "line": said.get(x["film_shot"], "")}
+             for j, x in enumerate(story_film.short_story(story)["shots"])]
+    words = sum(len(b["text"].split()) for x in shots for b in x["bubbles"])
     return {"video": f"/media/short/{v['id']}.mp4{_stamp(path)}" if ready else None,
             "seconds": made.get("seconds") if ready else None, "estimate": story["short"].get("estimate"),
-            "scenes": len(story["short"].get("shots") or []), "words": story["short"].get("words"), "lines": lines,
+            "scenes": len(shots), "words": words or story["short"].get("words"), "shots": shots,
             "voice": (made.get("voice") or {}).get("voice") if ready else None}
 
 
 def _story_json(v: dict) -> dict:
-    """A story as the Studio shows it: its film and its short version, the narrator's lines (with the shot and the
-    second each starts), its scenes, its chapters and the Reviewer's verdict."""
+    """A story as the Studio shows it: its film and its short version, every shot with what it shows and its bubbles
+    (with the second each comes; a narrated film's line, from before 2026-11-19), its scenes, its chapters and the
+    Reviewer's verdict."""
     plan = v["plan"]
     story, brief, meta = plan["story"], plan.get("brief") or {}, plan.get("metadata") or {}
     made = plan.get("render") or {}
-    times = iter(made.get("lines") or [])
-    lines = []
+    starts = [x.get("start") for x in made.get("shots") or []]
+    came = {}
+    for b in made.get("bubbles") or []:
+        came.setdefault(int(b.get("shot") or 0) - 1, []).append(b.get("start"))
+    times = iter(made.get("lines") or [])   # (a narrated film's lines)
+    moments = []
     for k, shot in enumerate(story["shots"]):
+        line_at = None
         if shot.get("line"):
             t = next(times, None)
-            lines.append({"text": shot["line"], "direction": shot.get("direction") or "", "shot": k + 1,
-                          "act": shot.get("act"), "plate": shot.get("plate"), "at": t["start"] if t else None})
+            line_at = t["start"] if t else None
+        moments.append({"shot": k + 1, "act": shot.get("act"), "plate": shot.get("plate"),
+                        "shows": shot.get("shows") or "", "quiet": shot.get("line_index") is None,
+                        "at": starts[k] if k < len(starts) else line_at, "line": shot.get("line") or "",
+                        "bubbles": _bubbles_of(shot, came.get(k, []))})
     drawn = plan.get("plates") or {}
     plates = [{"id": pl["id"], "scene": pl["scene"], "him": pl.get("him"), "light": pl.get("light"),
                "redraws": int(pl.get("redraws") or 0),
@@ -761,7 +850,8 @@ def _story_json(v: dict) -> dict:
         "stage_names": story.get("chapters") if isinstance(story.get("chapters"), dict) else {},
         "logline": story.get("logline") or story.get("core_message"), "closing_line": story.get("closing_line"),
         "chapters": chapters,
-        "lines": lines, "plates": plates, "shot_count": len(story["shots"]), "words": story.get("words"),
+        "moments": moments, "plates": plates, "shot_count": len(story["shots"]), "words": story.get("words"),
+        "bubble_count": sum(len(m["bubbles"]) for m in moments), "silent": animator.silent(story),
         "estimate": story.get("estimate"), "notes": story.get("notes") or [],
         "current": series.current(v),
         "short": _short_json(v), "short_upload": plan.get("short_upload"),
@@ -852,8 +942,8 @@ def videos(limit: int = 60):
 
 @router.patch("/api/videos/{video_id}")
 async def edit_video(video_id: int, request: Request):
-    """Your changes to a waiting story's words (its title, the narrator's lines and their directions, the closing line):
-    its film is made again, and only the changed parts are read again."""
+    """Your changes to a waiting story's words (its title, a bubble's words, the closing line): its film is made
+    again."""
     video = _planned_or_409(video_id)
     if not series.current(video):
         raise HTTPException(409, "This was made by an earlier version of the channel: it can't be edited here.")
@@ -1080,7 +1170,8 @@ def review_page():
     low, high = series.minutes()
     return {"history": [{**h, "title": titles.get(h["video_id"])} for h in history], "held": held,
             "lessons": learned, "max_rounds": reviewer.MAX_ROUNDS,
-            "checks": {"min_match": reviewer.MIN_MATCH, "his_pitch": voiceprint.PITCH, "loudness": film_sound.LUFS_VOICE,
+            "checks": {"min_match": reviewer.MIN_MATCH, "his_pitch": voiceprint.PITCH, "loudness": film_sound.LUFS_TARGET,
+                       "bubbles_least": reviewer.BUBBLES_LEAST,
                        "minutes": [low, high], "short_seconds": list(story_film.SHORT_SECONDS),
                        "short_least": reviewer.SHORT_LEAST, "short_most": story_film.SHORT_MOST,
                        "frames": reviewer.MAX_STORY_FRAMES, "recurring": reviewer.RECURRING,
@@ -1455,6 +1546,9 @@ async def start_task(kind: str, request: Request):
 
 @router.get("/api/tasks/{task_id}")
 def task_status(task_id: str):
+    if task_id.startswith("cloud-") and task_id[6:].isdigit():  # (the autopilot's run on GitHub: _cloud_task)
+        if cloud := _cloud_task(db.get_run(int(task_id[6:]))):
+            return cloud
     task = _tasks.get(task_id)
     if not task:
         raise HTTPException(404, "Task not found (the server may have restarted).")
@@ -1639,7 +1733,8 @@ def music_file(name: str):
 @router.get("/api/settings")
 def get_settings():
     cfg = load_config()
-    return {"channel": cfg.get("channel") or {}, "schedule": {"ahead": True, **(cfg.get("schedule") or {})},
+    return {"channel": cfg.get("channel") or {},
+            "schedule": {"ahead": True, "stories_ahead": slots.STORIES_AHEAD_DEFAULT, **(cfg.get("schedule") or {})},
             "series": series.settings(), "instagram": cfg.get("instagram") or {}, "editable": not ON_VERCEL}
 
 
@@ -1686,5 +1781,6 @@ async def save_settings(request: Request):
         for key in ("timezone", "make_at"):
             data.setdefault("schedule", {})[key] = Q(v["schedule"][key])
         data["schedule"]["ahead"] = bool(v["schedule"]["ahead"])
+        data["schedule"]["stories_ahead"] = int(v["schedule"]["stories_ahead"])
     update_config(change)
     return get_settings()

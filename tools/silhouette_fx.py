@@ -18,6 +18,7 @@ import numpy as np
 import silhouette as S
 from silhouette import PAL, Dynamic, Paint, hexc, spline, tube
 from silhouette_sets import rng
+import silhouette_icons as I
 import silhouette_words as W
 
 EFFECTS = W.EFFECTS   # (the words live in tools/silhouette_words.py)
@@ -320,8 +321,232 @@ class Spotlight(Effect):
         self.light.composite(frame, p)
 
 
+# --- a habit's effects: how the whole picture feels (tools/silhouette_words.HABIT_EFFECTS) ----------------------------------
+def _edges(size, inner=0.35, power=1.2):
+    """0 in the frame's middle .. 1 at its edges (an oval)."""
+    W, H = size
+    ys, xs = np.mgrid[0:H, 0:W].astype(np.float32)
+    d = np.sqrt(((xs - W / 2) / (W * 0.55)) ** 2 + ((ys - H / 2) / (H * 0.55)) ** 2)
+    return (np.clip(d - inner, 0, 1) ** power)[..., None].astype(np.float32)
+
+
+def _heartbeat(tau, period=0.95):
+    """A heartbeat's two thumps (lub, dub) each period: 0..1."""
+    u = (tau % period) / period
+    return float(min(1.0, math.exp(-((u - 0.02) / 0.06) ** 2) + 0.7 * math.exp(-((u - 0.30) / 0.06) ** 2) +
+                     math.exp(-((u - 1.02) / 0.06) ** 2)))
+
+
+class _Screen:
+    """A layer drawn in the frame's own pixels (cards popping up, shadows creeping in from the edges)."""
+
+    def __init__(self, size):
+        self.buf = S.blank(size)
+        self.view = S.View(0, 0, 1.0, 0, 0)
+
+    def paint(self):
+        return Paint(self.buf, self.view)
+
+    def composite(self, frame, p, darken=False):
+        if p.dirty is None:
+            return
+        x0, y0, x1, y1 = p.dirty
+        part = self.buf[y0:y1, x0:x1]
+        if darken:   # (the layer's alpha darkens what's under it)
+            frame[y0:y1, x0:x1] *= 1 - part[..., 3:4]
+        else:
+            S.over(frame[y0:y1, x0:x1], part)
+        self.buf[y0:y1, x0:x1] = 0
+
+
+class RedPulse(Effect):
+    """Rage: the picture's edges flush red with his heartbeat, thumping."""
+    stages = ("front",)
+
+    def __init__(self, place, strength=1.0):
+        super().__init__(place)
+        self.edge = _edges(place.size, 0.30)
+        self.strength = strength
+
+    def draw(self, stage, frame, at, tau):
+        k = self.strength * (0.30 + 0.55 * _heartbeat(tau))
+        frame *= 1 - 0.22 * self.edge * k
+        frame += np.array([0.95, 0.08, 0.05], np.float32) * self.edge * (0.42 * k)
+        frame[..., 0] *= 1.0 + 0.06 * k
+
+
+class PinkHaze(Effect):
+    """Lust: a pink haze over the picture, breathing slowly, pinker at the edges."""
+    stages = ("front",)
+
+    def __init__(self, place, strength=1.0):
+        super().__init__(place)
+        self.edge = _edges(place.size, 0.20, 1.0)
+        self.strength = strength
+
+    def draw(self, stage, frame, at, tau):
+        k = self.strength * (0.75 + 0.25 * math.sin(tau * math.tau / 3.2))
+        frame *= np.array([1.06, 0.92, 1.03], np.float32)
+        frame += np.array([1.0, 0.30, 0.62], np.float32) * self.edge * (0.16 * k)
+
+
+class GreenTint(Effect):
+    """Envy: the picture turned sickly green, the edges greenest."""
+    stages = ("front",)
+
+    def __init__(self, place, strength=1.0):
+        super().__init__(place)
+        self.edge = _edges(place.size, 0.25, 1.1)
+        self.strength = strength
+
+    def draw(self, stage, frame, at, tau):
+        k = self.strength * (0.8 + 0.2 * math.sin(tau * math.tau / 4.0))
+        frame *= np.array([0.86, 1.06, 0.88], np.float32)
+        frame += np.array([0.22, 0.85, 0.40], np.float32) * self.edge * (0.13 * k)
+
+
+class GreyDrain(Effect):
+    """Self-pity, a day gone grey: the colour drained out of the picture, a little darker."""
+    stages = ("front",)
+
+    def __init__(self, place, keep=0.25):
+        super().__init__(place)
+        self.keep = keep
+
+    def draw(self, stage, frame, at, tau):
+        lum = frame[..., :1] * 0.30 + frame[..., 1:2] * 0.59 + frame[..., 2:3] * 0.11
+        frame -= (frame - lum) * (1 - self.keep)
+        frame *= 0.92
+
+
+class Tunnel(Effect):
+    """Tunnel vision: the dark closing in on the middle (on him), breathing slowly: focus, or a craving's grip."""
+    stages = ("front",)
+
+    def __init__(self, place):
+        super().__init__(place)
+        W, H = place.size
+        ys, xs = np.mgrid[0:H, 0:W].astype(np.float32)
+        self.d = np.sqrt(((xs - W / 2) / (W * 0.5)) ** 2 + ((ys - H / 2) / (H * 0.5)) ** 2)[..., None]
+
+    def draw(self, stage, frame, at, tau):
+        r0 = 0.62 - 0.05 * math.sin(tau * math.tau / 2.6)
+        frame *= 1 - 0.93 * np.clip((self.d - r0) / 0.32, 0, 1)
+
+
+class Shake(Effect):
+    """The camera shaking (rage, panic, a blow): tools/silhouette_board.camera shakes it; nothing to draw."""
+    stages = ()
+
+
+class Timelapse(Effect):
+    """No sense of time: the light racing from day to night and back, a patch of sun sweeping over the wall, a wall
+    clock's hands spinning round."""
+    stages = ("back", "front")
+
+    def __init__(self, place, period=2.4):
+        super().__init__(place)
+        self.period = period
+        self.light = Dynamic(place.cam, 0.62, add=True)
+        self.layer = Dynamic(place.cam, 0.66)
+        things = list(getattr(place, "wall_things", []) or [])
+        self.clock = next((t for t in things if t.name == "clock"), None)
+        win = getattr(place, "WINDOW", None)
+        self.x = (win[0] + win[2]) / 2 if win else 0.0
+        self.floor = float(getattr(place, "FLOOR", 300.0))
+
+    def draw(self, stage, frame, at, tau):
+        u = (tau % self.period) / self.period
+        day = 0.5 - 0.5 * math.cos(math.tau * u)   # 0 night .. 1 noon
+        if stage == "back":
+            p = self.light.paint(at)
+            sx = self.x - 900 + 1800 * u   # the sun's patch crossing the room
+            p.poly(np.array([(sx - 120, -380.0), (sx + 60, -380.0), (sx + 340, self.floor), (sx + 80, self.floor)]),
+                   PAL["lamp"] * (0.22 * day), soft=60)
+            self.light.composite(frame, p)
+            if self.clock is not None:
+                p = self.layer.paint(at)
+                cx, cy = self.clock.x, self.clock.b - W.HANG["clock"]
+                p.circle(cx, cy, 40, hexc("#1A1420"))
+                p.circle(cx, cy, 34, hexc("#C9BFC6"))
+                for ang, ln, wd in ((tau * 1.4, 18, 3.5), (tau * 16.0, 27, 2.5)):
+                    p.poly(tube([(cx, cy), (cx + math.sin(ang) * ln, cy - math.cos(ang) * ln)], wd), hexc("#1A1420"))
+                self.layer.composite(frame, p)
+            return
+        frame *= np.array([0.70 + 0.40 * day, 0.68 + 0.36 * day, 0.80 + 0.22 * day], np.float32)
+
+
+class Notifications(Effect):
+    """The phone's pull: notifications popping up all round the picture, one after another, then gone."""
+    stages = ("front",)
+
+    def __init__(self, place, n=7, seed="notify"):
+        super().__init__(place)
+        self.screen = _Screen(place.size)
+        W, H = place.size
+        r = rng(seed)
+        self.cards = []
+        for k in range(n):
+            side = k % 4
+            x = r.uniform(0.06, 0.26) * W if side in (0, 2) else r.uniform(0.74, 0.94) * W
+            y = r.uniform(0.14, 0.40) * H if side in (0, 1) else r.uniform(0.58, 0.82) * H
+            self.cards.append((x, y, k / n, ("heart", "dot", "likes", "notifications", "heart", "dot", "likes")[k % 7]))
+        self.u = min(W, H) / 1080.0
+
+    def draw(self, stage, frame, at, tau):
+        p = self.screen.paint()
+        s = self.u
+        for x, y, phase, icon in self.cards:
+            v = ((tau / 2.8) + phase) % 1.0
+            if v > 0.55:
+                continue
+            q = S.spring(min(1.0, v / 0.12)) * (1 - S.smooth((v - 0.42) / 0.13))
+            if q <= 0.02:
+                continue
+            w, h = 230 * s * q, 64 * s * q
+            p.poly(S.rr(x - w / 2, y - h / 2, w, h, 16 * s * q), hexc("#F4F1EA"), 0.95)
+            I.draw(p, icon, x - w / 2 + 34 * s * q, y, 20 * s * q, "cream", tau)
+            for j in range(2):
+                p.poly(S.rr(x - w / 2 + 64 * s * q, y - 14 * s * q + j * 18 * s * q, (110 - 40 * j) * s * q, 8 * s * q,
+                            4 * s * q), hexc("#9A94A8"), 0.9)
+        self.screen.composite(frame, p)
+
+
+class Shadows(Effect):
+    """Fear: dark shapes creeping in from the picture's edges, reaching for the middle, then drawing back."""
+    stages = ("back",)
+
+    def __init__(self, place, seed="shadows"):
+        super().__init__(place)
+        self.screen = _Screen(place.size)
+        self.size = place.size
+        r = rng(seed)
+        self.arms = [(r.uniform(0.15, 0.85), r.uniform(0, math.tau), side) for side in (-1, 1) for _ in range(3)]
+
+    def draw(self, stage, frame, at, tau):
+        W, H = self.size
+        p = self.screen.paint()
+        reach = 0.20 + 0.14 * (0.5 - 0.5 * math.cos(tau * math.tau / 6.0))
+        for v, ph, side in self.arms:
+            y = v * H
+            x0 = 0.0 if side < 0 else W
+            L = (reach + 0.05 * math.sin(tau * 0.9 + ph)) * W
+            wob = 0.04 * H * math.sin(tau * 1.3 + ph)
+            tip = (x0 - side * L, y + wob)
+            body = [(x0, y - 0.11 * H), (x0 - side * L * 0.55, y - 0.05 * H + wob * 0.5), tip,
+                    (x0 - side * L * 0.55, y + 0.06 * H + wob * 0.5), (x0, y + 0.12 * H)]
+            p.poly(spline(body, True, 8), hexc("#000000"), 0.62)
+            for k in (-1, 0, 1):   # the fingers
+                p.poly(tube([(tip[0] + side * 0.02 * W, tip[1] + k * 0.02 * H),
+                             (tip[0] - side * 0.05 * W, tip[1] + k * 0.035 * H - 0.01 * H)], 0.012 * H, 0.002 * H),
+                       hexc("#000000"), 0.62)
+        self.screen.composite(frame, p, darken=True)
+
+
 def make(name: str, place, **kw) -> Effect:
     """An effect by its storyboard name (EFFECTS), placed by the place (tools/silhouette_scene.py gives kw)."""
     cls = {"fire": Fire, "smoke": Smoke, "emergency": Emergency, "snow": Snow, "fog": Fog, "party": PartyLights,
-           "spotlight": Spotlight}[name]
+           "spotlight": Spotlight, "red_pulse": RedPulse, "pink_haze": PinkHaze, "green_tint": GreenTint,
+           "grey_drain": GreyDrain, "tunnel": Tunnel, "shake": Shake, "timelapse": Timelapse,
+           "notifications": Notifications, "shadows": Shadows}[name]
     return cls(place, **kw)

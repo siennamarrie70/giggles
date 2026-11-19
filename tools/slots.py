@@ -3,9 +3,12 @@ The posting timetable: one story a day, public at `series.post_at` (17:30) on th
 (config/channel.yaml), its short version as a Short series.short_after_hours later. The moment a story goes public is
 its "slot".
 
-When a slot needs its story (opens): with `schedule.ahead` (on, your choice of 2026-11-19), the moment the story before it
-goes public, so the next story is made as soon as its slot is free, when the free quotas allow (tools/jobs.py
-quota_short); the cloud looks every hour. Without it, in the morning run of its own day, from `schedule.make_at` (07:00).
+When a slot needs its story (opens): with `schedule.ahead` (on, your choice of 2026-11-19), `schedule.stories_ahead` slots
+before it goes public: with 2 (your choice of 2026-11-19, the default), the moment the story two before it goes public,
+so tomorrow's story is always made and the next one on its way: one that gets stuck (his voice, Gemini, GitHub's late
+checks) has a spare day before its slot could go empty; with 1, the moment the story before it goes public. Made when
+the free quotas allow (tools/jobs.py quota_short); the cloud looks every hour. Without `ahead`, in the morning run of
+its own day, from `schedule.make_at` (07:00).
 
 Usage:
     python tools/slots.py            # today's and tomorrow's slots, in the schedule's time and UTC
@@ -23,6 +26,8 @@ ISO = "%Y-%m-%dT%H:%M:%SZ"
 CLOCK = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 MIN_LEAD = timedelta(minutes=60)  # the morning run starts at least this long before the story goes public (a story takes
                                   # 15-30 minutes to make on GitHub's machine)
+STORIES_AHEAD = (1, 3)            # stories kept ready ahead with `ahead`, fewest and most
+STORIES_AHEAD_DEFAULT = 2         # tomorrow's made, the next on its way: a spare day (your choice of 2026-11-19)
 
 
 def iso(moment: datetime) -> str:
@@ -57,7 +62,14 @@ def validate(raw: dict, post_at: str) -> dict:
     ahead = raw.get("ahead", True)
     if not isinstance(ahead, bool):
         ahead = str(ahead).strip().lower() in ("true", "1", "yes", "on")
-    return {"timezone": zone, "post_at": post_at, "make_at": make, "ahead": ahead}
+    ready = raw.get("stories_ahead", STORIES_AHEAD_DEFAULT)
+    try:
+        ready = int(str(ready).strip())
+    except ValueError:
+        raise ValueError(f"Stories ready ahead: a number, {STORIES_AHEAD[0]} to {STORIES_AHEAD[1]}.")
+    if not STORIES_AHEAD[0] <= ready <= STORIES_AHEAD[1]:
+        raise ValueError(f"Stories ready ahead: {STORIES_AHEAD[0]} to {STORIES_AHEAD[1]}.")
+    return {"timezone": zone, "post_at": post_at, "make_at": make, "ahead": ahead, "stories_ahead": ready}
 
 
 def plan(cfg: dict | None = None) -> dict:
@@ -92,10 +104,10 @@ def run_starts(day: date, sched: dict) -> datetime:
 
 
 def opens(slot: datetime, sched: dict) -> datetime:
-    """When a slot starts needing its story: with `ahead`, the moment the slot before it comes (that story goes public);
-    without, its posting day's morning run (make_at)."""
+    """When a slot starts needing its story: with `ahead`, the moment the slot `stories_ahead` before it comes (that story
+    goes public: with 2, the one two before it); without, its posting day's morning run (make_at)."""
     if sched.get("ahead"):
-        return slot - sched["every"]
+        return slot - int(sched.get("stories_ahead") or 1) * sched["every"]
     return run_starts(posting_day(slot, sched), sched)
 
 

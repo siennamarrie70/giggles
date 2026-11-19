@@ -20,6 +20,7 @@ import math
 import numpy as np
 
 import silhouette as S
+import silhouette_marks as MK
 from silhouette import PAL, Dynamic, Paint, ell, hexc, rect, rr, spline, tube
 from silhouette_sets import Rain, Stage, falling, flat, gradient, rng
 
@@ -141,6 +142,7 @@ class Room(Stage):
         self.glows = self.static(0.72, self._glows, add=True, blur=2.5)
         self.cone = self.static(0.70, self._cone, add=True, blur=2.0) if self.lamp_on else None
         self.light_fx = Dynamic(self.cam, 0.72, add=True)
+        self.marks_layer = Dynamic(self.cam, 0.72)
         self.dust = Dynamic(self.cam, 0.70, add=True) if self.lamp_on else None
         self.wet = Dynamic(self.cam, 0.60, add=True) if self.rain and self.WINDOW else None
         self.plant = (self.static(1.7, self._plant, blur=6.0 * self.k,
@@ -155,9 +157,12 @@ class Room(Stage):
                       "r": r.uniform(1.2, 3.0, 70)}
 
     def _make_view(self):
-        """What the window shows: the sky, the far city, the near city (tools/silhouette_scene.py's vehicles scroll it)."""
-        return [self.static(0.10, self._sky, blur=1.2), self.static(0.20, self._far, blur=1.4),
-                self.static(0.32, self._near, blur=0.8)]
+        """What the window shows: the sky, the far city, the near city (tools/silhouette_scene.py's vehicles scroll it).
+        A closer framing sees it softer, as a lens focused on him would: magnified sharp, its blocks of buildings read as
+        squares in the sky."""
+        soft = 1.0 + 1.5 * max(0.0, getattr(self, "ZOOM", 1.0) - 1.0)
+        return [self.static(0.10, self._sky, blur=1.2 * soft), self.static(0.20, self._far, blur=1.4 * soft),
+                self.static(0.32, self._near, blur=0.8 * soft)]
 
     def fx(self, frame, at, tau, stage):
         """A place's moving parts and effects at a stage of the frame (tools/silhouette_fx.py): "view" (beyond the
@@ -289,19 +294,43 @@ class Room(Stage):
         return (d, -0.40)
 
     def draw_people(self, frame, at, st, slot):
+        """A slot's people painted and laid down at once; returns where their phones' screens glow."""
+        p, glows = self.paint_people(at, st, slot)
+        self.put_people(frame, at, st, slot, p)
+        return glows
+
+    def paint_people(self, at, st, slot):
+        """A slot's people painted on their layer (not laid down yet): (the paint or None, where screens glow)."""
         acts = [a for a in st.get("actors") or [] if a.get("slot", "main") == slot]
         if not acts:
-            return []
-        layer = self.people[slot]
-        p = layer.paint(at)
+            return None, []
+        p = self.people[slot].paint(at)
         glows = []
         for a in acts:
             got = S.draw_person(p, a["pose"], a["look"], a.get("eyes"))
             if got.get("glow"):
-                glows.append((got["glow"], a["pose"]["R"], got["head"]))
-        x = acts[0]["pose"]["head"][0]
-        layer.composite(frame, p, rim_light=self.rim_at(0.72, at, self.rim_dir(x), strength=0.95))
-        return glows
+                glows.append((got["glow"], a["pose"]["R"], got["head"], got.get("glow_color")))
+        return p, glows
+
+    def draw_marks(self, frame, at, st):
+        """The comic marks round people's heads (tools/silhouette_marks.py), over them."""
+        acts = [a for a in st.get("actors") or [] if any(m not in MK.AURAS for m in a.get("marks") or ())]
+        if not acts:
+            return
+        mp = self.marks_layer.paint(at)
+        for k, a in enumerate(acts):
+            for m in a["marks"]:
+                if m not in MK.AURAS:
+                    MK.draw(mp, m, a["pose"]["head"], a["pose"]["R"], a["pose"]["f"], st.get("tau", 0.0), seed=k * 17)
+        self.marks_layer.composite(frame, mp)
+
+    def put_people(self, frame, at, st, slot, p):
+        """Lays a slot's painted people down, with their rim."""
+        if p is None:
+            return
+        acts = [a for a in st.get("actors") or [] if a.get("slot", "main") == slot]
+        x = acts[0]["pose"]["head"][0] if acts else 0.0
+        self.people[slot].composite(frame, p, rim_light=self.rim_at(0.72, at, self.rim_dir(x), strength=0.95))
 
     def _draw_dust(self, p: Paint, tau: float):
         x, y = self.LAMP
@@ -351,21 +380,35 @@ class Room(Stage):
             self.lamp_shape.composite(frame, at)
         self.mid.composite(frame, at)
         self.fx(frame, at, tau, "back")
-        glows = self.draw_people(frame, at, st, "bed")
-        self.front.composite(frame, at)
-        glows += self.draw_people(frame, at, st, "main")
+        bed, glows = self.paint_people(at, st, "bed")
+        main, more = self.paint_people(at, st, "main")
+        glows += more
+        # the light falls behind the people: the room's glows, the lamp's cone and its dust, a screen's light on the
+        # room round it. Over a figure they turned his black head grey and see-through.
         self.glows.composite(frame, at)
         if self.cone is not None:
             self.cone.composite(frame, at, gain=lamp)
-        fx = self.light_fx.paint(at)
-        for (gx, gy), R, (hx, hy) in glows:
-            fx.glow(gx, gy, 0.9 * R, 0.9 * R, PAL["screen"], 0.55)
-            fx.glow(hx, hy, 1.0 * R, 0.9 * R, PAL["screen"], 0.12)
-        self.light_fx.composite(frame, fx)
         if self.dust is not None and lamp > 0.5:
             dp = self.dust.paint(at)
             self._draw_dust(dp, st.get("dust", tau))
             self.dust.composite(frame, dp)
+        auras = [(a, m) for a in st.get("actors") or [] for m in a.get("marks") or () if m in MK.AURAS]
+        if glows or auras:
+            fx = self.light_fx.paint(at)
+            for (gx, gy), R, _, col in glows:
+                fx.glow(gx, gy, 1.6 * R, 1.4 * R, PAL["screen"] if col is None else col, 0.32)
+            for a, m in auras:
+                MK.behind(fx, m, a["pose"], st.get("tau", 0.0))
+            self.light_fx.composite(frame, fx)
+        self.put_people(frame, at, st, "bed", bed)
+        self.front.composite(frame, at)
+        self.put_people(frame, at, st, "main", main)
+        if glows:   # the screen's own small bloom, over the hand holding it
+            fx = self.light_fx.paint(at)
+            for (gx, gy), R, _, col in glows:
+                fx.glow(gx, gy, 0.42 * R, 0.42 * R, PAL["screen"] if col is None else col, 0.40)
+            self.light_fx.composite(frame, fx)
+        self.draw_marks(frame, at, st)
         self.fx(frame, at, tau, "front")
         if self.plant is not None:
             self.plant.composite(frame, at)
@@ -377,6 +420,8 @@ class Outdoor(Stage):
     """A place outdoors seen from the side: the sky down to HORIZON, the far city, what stands behind (_backdrop:
     buildings, trees), the ground (_ground), street lamps (LAMPS: their poles' x; lit at dusk and night), things beside
     the people (_props), and rain. Subclasses draw the rest."""
+
+    draw_marks = Room.draw_marks   # (the comic marks round people's heads, as in a room)
 
     GROUND = 300.0
     HORIZON = 150.0
@@ -402,6 +447,7 @@ class Outdoor(Stage):
         self.props = self.static(0.70, self._props)
         self.people = {"main": Dynamic(self.cam, 0.70)}
         self.glow_fx = Dynamic(self.cam, 0.70, add=True)
+        self.marks_layer = Dynamic(self.cam, 0.70)
         self.rainfx = Rain(size, seed=type(self).__name__) if self.rain else None
         self.fore = None   # things out of focus in front of the lens (tools/silhouette_scene.py)
 
@@ -488,14 +534,22 @@ class Outdoor(Stage):
             for a in acts:
                 got = S.draw_person(p, a["pose"], a["look"], a.get("eyes"))
                 if got.get("glow"):
-                    glows.append((got["glow"], a["pose"]["R"], got["head"]))
-            layer.composite(frame, p, rim_light=self.rim_at(0.70, at, self.rim_dir(acts[0]["pose"]["head"][0])))
-            if glows:
-                fx = self.glow_fx.paint(at)
-                for (gx, gy), R, (hx, hy) in glows:
-                    fx.glow(gx, gy, 0.9 * R, 0.9 * R, PAL["screen"], 0.55)
-                    fx.glow(hx, hy, 1.0 * R, 0.9 * R, PAL["screen"], 0.12)
+                    glows.append((got["glow"], a["pose"]["R"], got["head"], got.get("glow_color")))
+            auras = [(a, m) for a in acts for m in a.get("marks") or () if m in MK.AURAS]
+            if glows or auras:   # a screen's light on what's round it, an aura: behind the people (over them, a light
+                fx = self.glow_fx.paint(at)   # greys the head)
+                for (gx, gy), R, _, col in glows:
+                    fx.glow(gx, gy, 1.6 * R, 1.4 * R, PAL["screen"] if col is None else col, 0.32)
+                for a, m in auras:
+                    MK.behind(fx, m, a["pose"], st.get("tau", 0.0))
                 self.glow_fx.composite(frame, fx)
+            layer.composite(frame, p, rim_light=self.rim_at(0.70, at, self.rim_dir(acts[0]["pose"]["head"][0])))
+            if glows:   # the screen's own small bloom, over the hand holding it
+                fx = self.glow_fx.paint(at)
+                for (gx, gy), R, _, col in glows:
+                    fx.glow(gx, gy, 0.42 * R, 0.42 * R, PAL["screen"] if col is None else col, 0.40)
+                self.glow_fx.composite(frame, fx)
+            self.draw_marks(frame, at, st)
         self.fx(frame, at, tau, "front")
         if self.fore is not None:
             self.fore.composite(frame, at)

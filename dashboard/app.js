@@ -17,14 +17,31 @@ const SLOT = { posted: ["Posted", "ok"], scheduled: ["Scheduled", "run"], making
                late: ["Late · going out", "warn"], due: ["In today's run", "accent"], open: ["Next run", "idle"],
                missed: ["No post", "idle"], paused: ["Paused", "warn"] };
 /** What a slot says. With the next story made as soon as its slot is free (schedule.ahead), a due slot's story is
- *  being made, or waits for the free quotas (the last hourly check, autopilot.check, says which). */
+ *  being made, waits for the free quotas, or is started by the next hourly check (slotDue). */
 function slotLabel(s, a) {
   if (a.paused && ["due", "late"].includes(s.state)) return SLOT.paused;
   if (a.autopilot.schedule.ahead !== false) {
-    if (s.state === "due") return recentCheck(a.autopilot)?.waits ? ["Waits for free quotas", "warn"] : ["Up next · being made", "accent"];
+    if (s.state === "due") return slotDue(a.autopilot);
     if (s.state === "open") return ["After the next one", "idle"];
   }
   return SLOT[s.state] || [s.state, "idle"];
+}
+/** A due slot's story: "Being made" only while a run is going (or the last check has just started one, before its run
+ *  begins), "Waits for free quotas" when the last check said so, else it's for the next hourly check to start. */
+function slotDue(ap) {
+  if (ap.run.running || checkStarting(ap)) return ["Being made", "run"];
+  if (recentCheck(ap)?.waits) return ["Waits for free quotas", "warn"];
+  return ["Up next · at the next check", "accent"];
+}
+/** The last check has just started a run: its packages install for a few minutes before the run itself begins. */
+function checkStarting(ap) {
+  const c = recentCheck(ap);
+  return Boolean(c && c.work && !c.waits && Date.now() - Date.parse(c.at) < 20 * 60 * 1000);
+}
+/** How far ahead the stories are made, in words (schedule.ahead on: schedule.stories_ahead). */
+function aheadWords(sch) {
+  const n = Number(sch.stories_ahead || 1);
+  return n > 1 ? `kept ${n} days ahead` : "made as soon as its slot is free";
 }
 /** The cloud's last hourly check (tools/jobs.py due), if it's from the last 90 minutes. */
 function recentCheck(ap) {
@@ -214,7 +231,7 @@ async function instagramAction(v, action) {
   if (action === "schedule") {
     const when = reel.at && new Date(reel.at) > new Date() ? `at ${onClock(reel.at)}` : "as soon as it's made (its time has passed)";
     if (!confirm(`Schedule “${v.title}” for Instagram?\n\nIt went up while Reels were off, so its short version wasn't `
-                 + "kept: it's made again (a few minutes: the same short version, read again by the narrator), then its "
+                 + "kept: it's made again (a few minutes: the same short version, drawn again), then its "
                  + `Reel goes on Instagram ${when}.`)) return;
     try {
       watchTask(await api(`/api/videos/${v.id}/instagram`, { method: "POST", json: { action } }));
@@ -311,9 +328,12 @@ function empty(title, text) {
   return h("div", { class: "card" }, h("div", { class: "empty" }, h("h3", {}, title), text && h("p", {}, text)));
 }
 
+// What stays usable while the autopilot's run goes on GitHub: it doesn't draw a film or upload.
+const CLOUD_OK = ["prepare", "stats"];
+
 function taskButton(kind, label, { primary = false, sm = false, title, videoId, confirmText } = {}) {
   return h("button", { class: `btn${primary ? " btn-primary" : ""}${sm ? " btn-sm" : ""}`, type: "button",
-                       "data-needs-idle": true, title,
+                       "data-needs-idle": true, title, dataset: { cloudOk: CLOUD_OK.includes(kind) ? "1" : "0" },
                        onclick: () => { if (!confirmText || confirm(confirmText)) runTask(kind, videoId); } }, label);
 }
 
@@ -327,11 +347,12 @@ function makeButton({ primary = false, sm = false, short = false } = {}) {
     title: !a.services.youtube ? "Connect YouTube first" : !nextOpen ? "No free slot in the next week"
          : "Takes the oldest story that's ready (or writes one), makes its film and its short version and uploads them for that slot",
     onclick: () => {
+      if (!storyHoursOk("autopilot")) return;
       const when = nextOpen ? `${clockIn(nextOpen, scheduleTz())} (${fromNow(nextOpen)})` : "the next free slot";
       if (confirm(`Make the story for ${when} now?\n\nAgent 5 takes the oldest story that's ready (Agents 1 and 2 write one `
-          + "if none is waiting), Agent 3 has the narrator read it and draws the film and its short version, Agent 4 "
+          + "if none is waiting), Agent 3 draws the film and its short version, Agent 4 "
           + "reviews them, and the film is uploaded as private; YouTube makes it public at that time, and its short "
-          + `version as a Short ${a.series.short_after_hours} hours later.`)) runTask("autopilot");
+          + `version as a Short ${a.series.short_after_hours} hours later.`)) runTask("autopilot", undefined, {}, true);
     } }, short ? "Make it now" : nextOpen ? `Make the ${clockIn(nextOpen, scheduleTz())} video now` : "Make the next video now");
 }
 
@@ -401,8 +422,8 @@ function renderShell() {
   $("#autopost").checked = on;
   $("#autopost-label").textContent = on ? "Autopilot on" : "Autopilot paused";
   $("#autopost-sub").textContent = !on ? "The agents wait for you"
-    : `One story a day at ${ap.schedule.post_at}, made ${ap.schedule.ahead !== false ? "as soon as its slot is free"
-       : `from ${ap.schedule.make_at}`}${ap.here ? "" : " on GitHub"}`;
+    : `One story a day at ${ap.schedule.post_at}, ${ap.schedule.ahead !== false ? aheadWords(ap.schedule)
+       : `made from ${ap.schedule.make_at}`}${ap.here ? "" : " on GitHub"}`;
   $("#pause-switch").title = "Off stops the autopilot and all automatic work, here and in the cloud "
                              + "(your own buttons keep working)";
   $("#stale").replaceChildren(a.stale ? h("div", { class: "callout banner", dataset: { tone: "warn" }, role: "status" },
@@ -414,12 +435,30 @@ function renderShell() {
 }
 
 function syncButtons() {
-  const busy = state.task?.status === "running";
+  const going = state.task?.status === "running" ? state.task : null;
   const local = state.app?.local !== false;  // in the cloud the scheduled jobs do the work
-  for (const b of $$("[data-needs-idle]")) b.disabled = busy || !local || b.dataset.blocked === "1";
+  for (const b of $$("[data-needs-idle]")) {
+    // (the autopilot's run on GitHub: what would draw a film or upload waits for it)
+    const waits = Boolean(going) && (!going.cloud || b.dataset.cloudOk !== "1");
+    b.disabled = waits || !local || b.dataset.blocked === "1";
+  }
 }
 
-async function runTask(kind, videoId, extra = {}) {
+// Tasks that write or make a story with Gemini. Stories are made after Gemini's free allowance renews (13:30 in India)
+// until midnight, so its stronger models write them (your choice, 2026-11-20): outside those hours the page asks first.
+const STORY_TASKS = ["prepare", "render", "autopilot"];
+
+/** May a story be written or made now? Inside its hours, yes; outside them, you're asked. */
+function storyHoursOk(kind) {
+  const g = state.app?.gemini;
+  if (!STORY_TASKS.includes(kind) || !g || g.open) return true;
+  return confirm(`Stories are made between ${g.opens} and ${g.closes}, after Gemini's free allowance renews, so its `
+    + "stronger models write them.\n\nMade now, those models may be used up for today: then a lighter model writes it, "
+    + "slowly (it can take half an hour or more) and less well.\n\nMake it now anyway?");
+}
+
+async function runTask(kind, videoId, extra = {}, asked = false) {
+  if (!asked && !storyHoursOk(kind)) return;
   try {
     watchTask(await api(`/api/tasks/${kind}`, { method: "POST", json: { ...(videoId ? { video_id: videoId } : {}), ...extra } }));
   } catch (e) {
@@ -440,19 +479,24 @@ function watchTask(task, after) {
       state.task = { ...state.task, status: "error", error: e.message };
     }
     renderTask();
-    if (state.task.status === "running") return setTimeout(poll, 1000);
+    if (state.task.status === "running") return setTimeout(poll, task.cloud ? 10000 : 1000);
     const finished = state.task;  // (finishTask reloads the state, which may follow another task that's going)
     state.watching = null;
     syncButtons();
     await finishTask(finished);
     after?.(finished);
   };
-  setTimeout(poll, 700);
+  setTimeout(poll, task.cloud ? 10000 : 700);
 }
 
 function taskSummary(t) {
   const r = t.result || {};
   if (typeof r.skipped === "string") return `Nothing to do: ${r.skipped}.`;
+  if (t.kind === "cloud") {  // (the autopilot's run on GitHub)
+    if (r.made) return `The autopilot's run is done: ${plural(r.made, "story")} made and scheduled.`;
+    if (r.stopped) return `The autopilot's run stopped: ${r.stopped}.`;
+    return "The autopilot's run is done.";
+  }
   if (t.kind === "prepare") {
     const p = r.planned?.[0];
     return p ? `New story: ${p.title}` : "Done.";
@@ -496,14 +540,17 @@ function renderTask() {
   const steps = h("ol", { class: "task-steps", hidden: true },
     t.steps.map(s => h("li", {}, h("span", { class: "t" }, `${Math.round(s.at)}s`), h("span", {}, s.text))),
     t.error && h("li", {}, h("span", { class: "t" }, "!"), h("span", { class: "err" }, t.error)),
-    !t.steps.length && !t.error && h("li", {}, h("span", { class: "t" }, "0s"), h("span", {}, "Starting…")));
+    !t.steps.length && !t.error && h("li", {}, h("span", { class: "t" }, "0s"),
+      h("span", {}, t.cloud ? "This run doesn't report its steps here: they're on its GitHub page." : "Starting…")));
   box.replaceChildren(
     h("div", { class: "task-chip", dataset: { status: t.status } },
       running ? h("span", { class: "spinner", "aria-hidden": "true" })
               : h("span", { class: "task-mark", "aria-hidden": "true" }, t.status === "done" ? "✓" : "!"),
       h("span", { class: "task-text" },
         h("b", {}, running ? `${t.label}…` : t.status === "done" ? `${t.label}: done` : `${t.label}: didn't work`),
-        h("small", {}, t.error ? t.error : last ? last.text : "Starting…")),
+        h("small", {}, t.error ? t.error : last ? last.text : t.cloud ? "Working…" : "Starting…")),
+      t.cloud && t.url && h("a", { class: "btn btn-sm btn-ghost", href: t.url, target: "_blank", rel: "noopener",
+                                   title: "The run's page on GitHub, with its whole log" }, "GitHub ↗"),
       h("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: () => { steps.hidden = !steps.hidden; } }, "Steps"),
       !running && h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-label": "Dismiss",
                                 onclick: () => { state.task = null; renderTask(); } }, "✕")),
@@ -639,9 +686,12 @@ function overviewLede(a) {
   const rhythm = `one story a day, public at ${sch.post_at} (${sch.timezone}), its short version as a Short `
     + `${a.series.short_after_hours} hours later`;
   const made = (sch.ahead !== false
-      ? "each story is made as soon as its slot is free (the one before it is public), when the free quotas allow: "
+      ? (Number(sch.stories_ahead || 1) > 1
+        ? `the stories are kept ${sch.stories_ahead} days ahead (when one goes public, the next is started), when the free quotas allow: `
+        : `each story is made as soon as its slot is free (the one before it is public), between ${a.gemini?.opens || "13:30"} and `
+          + `${a.gemini?.closes || "00:00"} (after Gemini's free allowance renews), when the free quotas allow: `)
       : `the morning run makes it from ${sch.make_at}: `)
-    + "the theme, the story, the narrator, the film drawn in your look and its short version";
+    + "the theme, the story told in bubbles, the film drawn in your look and its short version";
   if (a.paused) return `The autopilot is paused, so the agents wait for you. Switch it on (top right) for ${rhythm}; ${made}.`;
   if (!a.services.youtube) return "The autopilot is on, but YouTube isn't connected yet, so nothing can be posted.";
   return `The autopilot is on: ${rhythm}; ${made}${a.autopilot.here ? "" : " (on GitHub)"}.`;
@@ -656,26 +706,21 @@ async function loadOverview() {
   const ranToday = run.last && run.last.at >= run.starts;  // (a run since the day's slot opened)
   const ahead = ap.schedule.ahead !== false;
   const runNote = run.running ? "running now"
+    : ahead && !run.scheduled && checkStarting(ap) ? "starting now"
     : ahead && !run.scheduled && recentCheck(ap)?.waits ? "waits for the free quotas (Schedule page)"
     : ranToday && run.last.finished ? (run.last.ok ? `done at ${clockIn(run.last.finished, scheduleTz())}` : "stopped early: see Activity")
     : ahead ? "at the next hourly check" : `starts at ${clockIn(run.starts, scheduleTz())}`;
   const root = $("#view-overview");
   const today = new Date(ap.slots[0].at).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", timeZone: scheduleTz() });
-  const n = a.narrator || {};
 
   root.replaceChildren(...[
     pageHead({ eyebrow: `00 · ${today}`, title: "Overview", lede: overviewLede(a),
       actions: [caseButton(), makeButton({ primary: true })] }),
     a.held > 0 && h("div", { class: "callout banner" },
       h("b", {}, `The Reviewer turned down ${plural(a.held, "story")} after the Animator's fixes. `),
-      "Each is being made again by itself (the scenes it named drawn again, or a new reading, later a new story) until "
+      "Each is being made again by itself (the scenes it named drawn again, later a new story) until "
       + "the Reviewer passes it; nothing waits for you. ",
       h("a", { href: "#review" }, "Review page →")),
-    n.resting && h("div", { class: "callout banner", dataset: { tone: "warn" } },
-      h("b", {}, "The narrator's voice is resting. "),
-      (n.used_up ? `Today's ${n.daily} free readings are used up; they renew at ${n.resting}. `
-                 : `Gemini's free voice didn't answer, so it's asked again at ${n.resting}. `)
-      + "Until then the stories wait for it: no other voice tells them. ", h("a", { href: "#host" }, "Narrator page →")),
     instagramDown(a),
     youtubeLimit(a),
     kpis([
@@ -684,8 +729,8 @@ async function loadOverview() {
         note: next ? `${fromNow(next.at)} · ${nyTime(next.at)} in New York` : "" },
       { label: "Today's run", value: run.scheduled ? "Scheduled" : "–", note: runNote,
         tone: ranToday && !run.running && run.last.ok === 0 ? "warn" : null },
-      { label: "Narrator's readings", value: n.left ?? "–", unit: `/ ${n.daily ?? 20} left`,
-        note: `a story takes about 8-10; renewed at ${n.renews || "13:30"}` },
+      { label: "Stories ready", value: a.ready ?? "–",
+        note: a.held ? `${plural(a.held, "story")} being made again` : "waiting for their slots" },
       { label: "Autopilot", value: a.paused ? "Paused" : "On", tone: a.paused ? "warn" : "ok",
         note: ap.here ? "checks every minute on this PC" : `checks hourly on GitHub${ap.last_check ? `, last ${fromNow(ap.last_check)}` : ""}` },
     ]),
@@ -806,13 +851,15 @@ function leaveDirty(id, go) {
 // ------------------------------------------------------------------ 03 studio (Agent 3)
 
 const STUDIO_FILTERS = [
-  ["planned", "Waiting", v => v.status === "planned"],
-  ["coming", "Coming up", v => v.status === "making" || shownStatus(v) === "scheduled"],
+  ["planned", "Waiting", v => v.status === "planned" || beingMade(v)],
+  ["coming", "Coming up", v => (v.status === "making" && !beingMade(v)) || shownStatus(v) === "scheduled"],
   ["published", "Published", v => shownStatus(v) === "live"],
   ["stopped", "Stopped", v => ["failed", "vetoed", "discarded", "skipped", "stopped", "deleted"].includes(v.status)],
 ];
+/** A story the autopilot's run is making that isn't storyboarded yet (being written, or Agent 3 designing it). */
+const beingMade = v => v.status === "making" && !v.story && !v.youtube_id && !v.legacy;
 const STUDIO_TEXT = {
-  planned: "Written stories. Their films are made and reviewed ahead; watch one before its turn.",
+  planned: "Written stories, and the one the autopilot is making. Their films are made and reviewed ahead; watch one before its turn.",
   coming: "Uploaded as private. Each goes public at its slot, its short version later; delete it in YouTube Studio before then to veto it.",
   published: "Public on YouTube.",
   stopped: "Stories that failed, were stopped or deleted on YouTube, vetoed or discarded.",
@@ -848,12 +895,13 @@ function renderStudio() {
 
   root.replaceChildren(
     pageHead({ eyebrow: "03 · Agent 3 · Animator", agent: "animator", title: "Studio",
-      lede: `Agent 3 first storyboards each story: its own places, the people around him and a shot for every line. Then `
-        + `it has the narrator read it (${state.app.series.narrator}, Gemini's voice, free), times every shot `
-        + "to his lines and draws the film in code in your silhouette look (no AI pictures), with the music rising from his "
-        + "realization, its thumbnail and a still of every scene. Then its short version: the whole story in under a minute for "
-        + "YouTube Shorts and Instagram Reels, Agent 2's own script read by the narrator over the film's scenes drawn "
-        + "upright. Agent 4 then watches and listens to both; one that fails comes back here with notes and is fixed.",
+      lede: "Agent 3 first storyboards each story: its own places, the people around him and a shot for every moment, "
+        + "with the habit the story is about shown big. Then it draws the film in code in your silhouette look (no AI "
+        + "pictures, no narrator): what the people say and think in bubbles over their heads, each held long enough to "
+        + "read, the music low from the start and lifting at his realization, its thumbnail and a still of every scene. "
+        + "Then its short version: the whole story in under a minute for YouTube Shorts and Instagram Reels, the film's "
+        + "scenes drawn upright with Agent 2's shorter bubbles. Agent 4 then checks both; one that fails comes back here "
+        + "with notes and is fixed.",
       actions: [makeButton()] }),
     kpis([
       { label: "Made", value: waiting.filter(v => v.preview).length, unit: `/ ${waiting.length}`, note: "waiting stories ready to watch" },
@@ -875,7 +923,7 @@ function renderStudio() {
                 h("button", { class: "vrow", type: "button", "aria-current": String(v.id === state.studio.selected),
                               onclick: () => { state.studio.selected = v.id; renderStudio(); } },
                   h("span", { class: "vid" }, `#${v.id}`),
-                  h("span", { class: "vtitle" }, v.title || "A story"),
+                  h("span", { class: "vtitle" }, v.title || (beingMade(v) ? "A new story, being written" : "A story")),
                   h("span", { class: "vmeta" }, statusPill(v),
                     v.legacy ? h("span", { class: "tag" }, v.legacy)
                       : h("span", { class: "tag" }, `${cap(v.theme || "")}${v.kind ? ` · ${v.kind}` : ""}`),
@@ -939,7 +987,7 @@ function reviewBox(v) {
       h("span", { class: "muted" }, `look ${r.round + 1} of up to ${r.max_rounds + 1}${r.at ? ` · ${fromNow(r.at)}` : ""}`)),
     r.held && r.held_because && h("p", {}, r.held_because),
     r.held && h("p", {}, `The Animator makes it again by itself${r.remake_at ? ` at about ${r.remake_at}` : ""} `
-      + `(${r.remakes ? `time ${r.remakes + 1}: ` : ""}the scenes it named drawn again, or a new reading; from the third time a new story), `
+      + `(${r.remakes ? `time ${r.remakes + 1}: ` : ""}the scenes it named drawn again; from the third time a new story), `
       + "over and over until the Reviewer passes it. Nothing for you to do."),
     h("div", { class: "measures" },
       r.match != null && h("span", { title: "How much of the narration faster-whisper made out in the final mix" }, `voice ${Math.round(r.match * 100)}%`),
@@ -1006,8 +1054,39 @@ async function answerReviewer(v, action) {
 }
 
 function studioDetail(v) {
+  if (beingMade(v)) return makingDetail(v);
   if (v.legacy || !v.story) return legacyDetail(v);
   return storyDetail(v);
+}
+
+/** A story the autopilot's run is making: where the run is (the bar at the top has every step), and its script as soon
+ *  as your script writer has written it; its storyboard, film and short version follow here as each is made. */
+function makingDetail(v) {
+  const d = v.draft;
+  const cloud = state.app.autopilot.cloud;
+  const now = cloud?.steps?.length ? cloud.steps[cloud.steps.length - 1].text : null;
+  const where = cloud ? ["The autopilot's run is making it ",
+    cloud.url ? h("a", { href: cloud.url, target: "_blank", rel: "noopener" }, "on GitHub ↗") : "on GitHub", ". "]
+    : ["The autopilot is making it. "];
+  return h("article", { class: "card" },
+    h("div", { class: "detail-head" },
+      h("div", { class: "row" }, d?.theme && h("span", { class: "tag" }, cap(d.theme)), statusPill(v),
+        h("span", { class: "muted small" }, [`#${v.id}`, v.slot && `for ${fmtWhen(v.slot)}`,
+          d?.words && `${d.words} words`, d?.estimate && `~${Math.round(d.estimate / 6) / 10} min`].filter(Boolean).join(" · "))),
+      h("h2", {}, d?.title || "A new story"),
+      d?.core_message && h("p", { class: "angle" }, d.core_message),
+      d?.brief && h("p", { class: "muted small" }, h("b", {}, "The brief: "), d.brief)),
+    h("div", { class: "detail-body" },
+      h("div", { class: "phone" }, h("div", { class: "phone-blank" },
+        d ? "Written. Its moments and bubbles come next, then Agent 3's pictures, then the film."
+          : "Being made: its script first, then its moments and bubbles, Agent 3's pictures and the film.")),
+      h("div", {},
+        h("div", { class: "callout" }, ...where, d ? "Its storyboard, film and short version show here as each is made."
+          : "Its script shows here once it's written.", " The bar at the top of the page follows every step."),
+        now && h("p", { class: "small" }, h("b", {}, "Now: "), now),
+        d?.closing_line && h("p", { class: "muted small" }, "Closing line: ", h("b", {}, d.closing_line)),
+        d?.script && h("details", { class: "more", open: true }, h("summary", {}, "The script, as your script writer wrote it"),
+          h("p", { class: "desc-ro" }, d.script)))));
 }
 
 /** A video made by an earlier version of the channel: shown as it is; the agents don't make or post this kind any more. */
@@ -1065,8 +1144,8 @@ function stageName(v, act) {
   return `${ACT_NAMES[act] || cap(act || "")}${own ? ` · “${own}”` : ""}`;
 }
 
-/** A story in the Studio: its film and its short version, the Reviewer's verdict, the narrator's lines (the film's and
- *  the short version's), the scenes, the thumbnail. */
+/** A story in the Studio: its film and its short version, the Reviewer's verdict, every shot with its bubbles (the
+ *  film's and the short version's), the scenes, the thumbnail. */
 function storyDetail(v) {
   const editable = v.status === "planned" && v.current;
   const s = state.app.services;
@@ -1074,7 +1153,6 @@ function storyDetail(v) {
   const blocked = !s.youtube || !nextOpen;
   const notMade = !editable ? "Uploaded: the film is on YouTube."
     : v.review?.held ? `Turned down by the Reviewer: the Animator makes it again by itself${v.review.remake_at ? ` at about ${v.review.remake_at}` : ""}.`
-    : state.app.narrator?.resting ? `Not made yet: the Animator makes it when the narrator's voice is back (${state.app.narrator.resting}).`
     : state.app.paused ? "Not made yet. Press “Make it now” (about 15-20 minutes), or switch the autopilot on and the Animator makes it by itself."
     : "Not made yet: the Animator makes it by itself, review included (or press “Make it now”).";
   const film = h("div", { class: "screen" }, v.preview
@@ -1121,10 +1199,10 @@ function storyDetail(v) {
         v.error && h("div", { class: "callout", dataset: { tone: "bad" } }, v.error),
         v.notes?.length > 0 && editable && h("details", { class: "more" }, h("summary", {}, "The Story writer's notes"),
           h("ul", { class: "issues" }, v.notes.map(n => h("li", {}, n)))),
-        h("p", { class: "sub-head" }, "The narrator's script"),
-        storyLines(v),
-        h("p", { class: "sub-head" }, "The short version's script"),
-        shortLines(v),
+        h("p", { class: "sub-head" }, v.silent === false ? "The narrator's script" : "The film, shot by shot"),
+        storyMoments(v),
+        h("p", { class: "sub-head" }, "The short version, shot by shot"),
+        shortMoments(v),
         boardPanel(v, editable),
         h("p", { class: "sub-head" }, "The scenes"),
         platesGrid(v),
@@ -1138,13 +1216,13 @@ function storyDetail(v) {
                                       onclick: () => answerReviewer(v, "post") }, "Post it anyway"),
       v.preview ? !v.review?.held && h("button", { class: "btn btn-sm", type: "button", onclick: () => answerReviewer(v, "remake") }, "Make it again")
         : h("button", { class: "btn btn-sm btn-primary", type: "button", "data-needs-idle": true, onclick: () => runTask("render", v.id),
-                        title: "Has the narrator read it, draws the film and its short version, and the Reviewer checks them (nothing is uploaded)" },
+                        title: "Draws the film and its short version, and the Reviewer checks them (nothing is uploaded)" },
             "Make it now"),
       v.preview && !v.short?.video && !v.review?.held && h("button", { class: "btn btn-sm btn-primary", type: "button",
         "data-needs-idle": true, onclick: () => runTask("render", v.id),
-        title: "Agent 2 writes its short version if it has none, the narrator reads it, Agent 3 draws it upright and the Reviewer checks it (the film stays as it is)" },
+        title: "Agent 2 writes its short version if it has none, Agent 3 draws it upright and the Reviewer checks it (the film stays as it is)" },
         "Make the short version"),
-      h("a", { class: "btn btn-sm", href: `#scripts/${v.id}` }, "Edit the narration"),
+      h("a", { class: "btn btn-sm", href: `#scripts/${v.id}` }, "Edit the words"),
       h("button", { class: "btn btn-sm", type: "button", "data-needs-idle": true, dataset: { blocked: blocked ? "1" : "0" },
         title: !s.youtube ? "Connect YouTube first" : !nextOpen ? "No free slot in the next week"
              : `The Reviewer checks it first, then the film goes up as private for the next free slot (${clockIn(nextOpen, scheduleTz())}) and its short version after it`,
@@ -1165,37 +1243,54 @@ function shortBox(v) {
       onclick: () => runTask("short", v.id) }, "Send the short version")));
 }
 
-/** The short version's lines, each with the film's shot it's over and its second in the short version. */
-function shortLines(v) {
-  const sv = v.short;
-  if (!sv?.lines?.length) return h("p", { class: "muted" }, "Agent 2 writes it from the finished film, the first time the "
-    + "Animator makes it: some of the film's scenes and new lines over them, the whole story in under a minute.");
+const BUBBLE_VERBS = { say: "says", think: "thinks", shout: "shouts", picture: "pictures" };
+
+/** A shot's bubbles: who, how (says, thinks, shouts, pictures), the words (a picture's name in brackets) and the second
+ *  each comes. */
+function bubbleList(bubbles) {
+  return h("ul", { class: "bubbles" }, bubbles.map(b => h("li", { dataset: { kind: b.kind } },
+    h("span", { class: "bubble-who" }, `${b.who} ${BUBBLE_VERBS[b.kind] || b.kind}`),
+    h("span", { class: "bubble-said" }, b.kind === "picture"
+      ? `[${String(b.picture || "").replace(/_/g, " ")}]${b.text ? ` “${b.text}”` : ""}` : `“${b.text}”`),
+    b.at != null && h("small", { class: "muted" }, mmss(b.at)))));
+}
+
+/** One shot of the film or its short version: its stage (on its first shot), its number, its second, what it shows and
+ *  its bubbles (a narrated film's line, from before 2026-11-19). */
+function momentItem(v, m, k, first, { last = false, film = true } = {}) {
+  return h("li", { class: last ? "punch" : "" },
+    h("span", { class: "beat-k" }, k + 1),
+    h("div", {},
+      h("span", { class: "who" }, first ? (film ? stageName(v, m.act) : (ACT_NAMES[m.act] || cap(m.act || ""))) : "", first && " · ",
+        h("small", { class: "muted" }, [`${film ? "shot" : "scene"} ${m.shot}`, m.at != null && mmss(m.at),
+                                         m.quiet && "quiet"].filter(Boolean).join(" · "))),
+      m.shows && h("p", { class: "muted small" }, m.shows),
+      m.line && h("p", { class: "line" }, m.line),
+      m.bubbles?.length > 0 && bubbleList(m.bubbles)));
+}
+
+/** The film shot by shot: what each shows, and what its people say and think. */
+function storyMoments(v) {
+  const list = v.moments || [];
+  if (!list.length) return h("p", { class: "muted" }, v.status === "making" ? "Agents 1 and 2 are still writing it." : "No shots yet.");
   let act = null;
-  return h("ol", { class: "script" }, sv.lines.map((l, k) => {
-    const first = l.act !== act;
-    act = l.act;
-    return h("li", { class: k === sv.lines.length - 1 ? "punch" : "" },
-      h("span", { class: "beat-k" }, k + 1),
-      h("div", {},
-        h("span", { class: "who" }, first ? (ACT_NAMES[l.act] || cap(l.act || "")) : "", first && " · ",
-          h("small", { class: "muted" }, `scene ${l.shot}${l.at != null ? ` · ${mmss(l.at)}` : ""}${l.direction ? ` · ${l.direction}` : ""}`)),
-        h("p", { class: "line" }, l.text)));
+  return h("ol", { class: "script" }, list.map((m, k) => {
+    const first = m.act !== act;
+    act = m.act;
+    return momentItem(v, m, k, first, { last: k === list.length - 1 });
   }));
 }
 
-/** The narrator's lines, each with its shot, its act and its second in the film. */
-function storyLines(v) {
-  if (!v.lines?.length) return h("p", { class: "muted" }, v.status === "making" ? "Agents 1 and 2 are still writing it." : "No lines.");
+/** The short version shot by shot: the film's scene each shows, with its own shorter bubbles. */
+function shortMoments(v) {
+  const list = v.short?.shots || [];
+  if (!list.length) return h("p", { class: "muted" }, "Agent 2 writes it from the finished film, the first time the "
+    + "Animator makes it: some of the film's scenes with shorter bubbles, the whole story in under a minute.");
   let act = null;
-  return h("ol", { class: "script" }, v.lines.map((l, k) => {
-    const first = l.act !== act;
-    act = l.act;
-    return h("li", { class: k === v.lines.length - 1 ? "punch" : "" },
-      h("span", { class: "beat-k" }, k + 1),
-      h("div", {},
-        h("span", { class: "who" }, first ? stageName(v, l.act) : "", first && " · ",
-          h("small", { class: "muted" }, `shot ${l.shot}${l.at != null ? ` · ${mmss(l.at)}` : ""}${l.direction ? ` · ${l.direction}` : ""}`)),
-        h("p", { class: "line" }, l.text)));
+  return h("ol", { class: "script" }, list.map((m, k) => {
+    const first = m.act !== act;
+    act = m.act;
+    return momentItem(v, m, k, first, { last: k === list.length - 1, film: false });
   }));
 }
 
@@ -1236,14 +1331,15 @@ function renderStories(root, list, selected) {
     pageHead({ eyebrow: "02 · Agent 2 · Story", agent: "story", title: "Stories",
       lede: "Agent 2 is your script writer: your own prompt, word for word, writes each day's story from Agent 1's brief, "
         + "in its six stages (the hook, the major incident, the collapse, rock bottom, the transformation, the dream life), "
-        + "with its title, its core message and its closing line. Code cuts it into the narrator's lines without changing a "
-        + "word and checks the channel's rules (adults only, nothing explicit, no gore, no brands, the length). Change any "
-        + "line before it's made: only the changed parts are read again.",
+        + "with its title, its core message and its closing line. There's no narrator: Agent 2 then turns the story into "
+        + "moments, what we see and what the people say and think in bubbles, and code checks the channel's rules (adults "
+        + "only, nothing explicit, no gore, no brands, the length). Change any bubble's words before the film is made.",
       actions: [caseButton({ primary: true })] }),
     kpis([
       { label: "Waiting", value: list.length, note: "written, not posted yet", tone: list.length ? null : "warn" },
       { label: "Average length", value: avg ? (Math.round(avg / 6) / 10) : "–", unit: avg ? "min" : "", note: "estimated from the words" },
-      { label: "Narrator", value: state.app.series.narrator, note: "Gemini's voice, free" },
+      { label: "Bubbles", value: list.length ? Math.round(list.reduce((n, v) => n + (v.bubble_count || 0), 0) / list.length) : "–",
+        note: "in a story, on average: what its people say and think" },
       { label: "Posting", value: state.app.series.post_at, note: `its short version ${state.app.series.short_after_hours} h later` },
     ]),
     section({ num: "2.1", title: "Stories waiting", text: "The autopilot posts the ready ones oldest first, one a day.",
@@ -1256,109 +1352,88 @@ function renderStories(root, list, selected) {
   syncButtons();
 }
 
-/** The story's words to edit: its title, every narrator's line and its direction, and the closing line. */
+/** The story's words to edit: its title, every bubble's words, and the closing line (the end quote). */
 function storyEditor(v) {
   const dirty = () => state.dirty.add(v.id);
   const title = h("input", { class: "input", value: v.title || "", maxlength: 60, oninput: dirty, "aria-label": "The title" });
-  const closing = h("input", { class: "input", value: v.closing_line || "", maxlength: 60, oninput: dirty, "aria-label": "The closing line" });
-  const rows = v.lines.slice(0, -1).map(l => {
-    const text = h("textarea", { class: "input", rows: 2, maxlength: 200, oninput: dirty, "aria-label": `Shot ${l.shot}'s line` });
-    text.value = l.text;
-    const direction = h("input", { class: "input", value: l.direction || "", maxlength: 80, oninput: dirty,
-                                   placeholder: "how he says it", "aria-label": `Shot ${l.shot}'s direction` });
-    return { l, text, direction };
-  });
+  const closing = h("input", { class: "input", value: v.closing_line || "", maxlength: 200, oninput: dirty, "aria-label": "The closing line" });
+  const shots = (v.moments || []).filter(m => m.bubbles?.length).map(m => ({ m, inputs: m.bubbles.map((b, i) => {
+    const text = h("input", { class: "input", value: b.text || "", maxlength: 90, oninput: dirty,
+                              placeholder: b.kind === "picture" ? "a few words with the picture (optional)" : "",
+                              "aria-label": `Shot ${m.shot}, bubble ${i + 1}` });
+    return { b, i, text };
+  }) }));
   const save = async () => {
+    const bubbles = shots.flatMap(({ m, inputs }) => inputs.filter(x => x.text.value.trim() !== (x.b.text || "").trim())
+      .map(x => ({ shot: m.shot, bubble: x.i + 1, text: x.text.value })));
     try {
       const updated = await api(`/api/videos/${v.id}`, { method: "PATCH", json: {
-        title: title.value, closing_line: closing.value,
-        lines: rows.map(r => ({ shot: r.l.shot, text: r.text.value, direction: r.direction.value })) } });
+        title: title.value, closing_line: closing.value, bubbles } });
       state.dirty.delete(v.id);
       Object.assign(v, updated);
-      toast("Saved. The Animator makes the film again; only the changed lines are read again.", "ok");
+      toast("Saved. The Animator makes the film again with the new words.", "ok");
       renderScripts();
     } catch (e) {
       toast(e.message, "error", 8000);
     }
   };
+  const who = b => `${b.who} ${BUBBLE_VERBS[b.kind] || b.kind}${b.kind === "picture" ? ` [${String(b.picture || "").replace(/_/g, " ")}]` : ""}`;
   return h("article", { class: "card" },
     h("div", { class: "detail-head" },
       h("div", { class: "row" }, h("span", { class: "tag" }, `${cap(v.theme || "")} · ${v.kind || ""}`), statusPill(v),
-        h("span", { class: "muted small" }, `#${v.id} · ${v.words || 0} words · ~${Math.round((v.estimate || 0) / 6) / 10} min`)),
+        h("span", { class: "muted small" }, `#${v.id} · ${v.bubble_count || 0} bubbles · ~${Math.round((v.estimate || 0) / 6) / 10} min`)),
       h("h2", {}, v.title), h("p", { class: "angle" }, v.logline)),
     h("div", { class: "detail-body single" }, h("div", {},
       h("label", { class: "label" }, "Title"), title,
-      h("p", { class: "sub-head" }, "The narrator's lines"),
-      h("ol", { class: "script" }, rows.map(({ l, text, direction }) => h("li", {},
-        h("span", { class: "beat-k" }, l.shot),
+      h("p", { class: "sub-head" }, "The bubbles"),
+      shots.length ? h("ol", { class: "script" }, shots.map(({ m, inputs }) => h("li", {},
+        h("span", { class: "beat-k" }, m.shot),
         h("div", { style: "display:grid;gap:6px" },
-          h("span", { class: "who" }, ACT_NAMES[l.act] || cap(l.act || ""), h("small", { class: "muted" }, ` · shot ${l.shot}`)),
-          text, direction)))),
-      h("label", { class: "label", style: "margin-top:12px" }, "Closing line (said over the sunrise and shown on screen; at most 8 words)"),
+          h("span", { class: "who" }, stageName(v, m.act), h("small", { class: "muted" }, ` · shot ${m.shot}`)),
+          m.shows && h("p", { class: "muted small" }, m.shows),
+          inputs.map(({ b, text }) => h("label", { class: "bubble-edit", dataset: { kind: b.kind } },
+            h("span", { class: "bubble-who" }, who(b)), text))))))
+        : h("p", { class: "muted" }, "Its bubbles come with its storyboard, when the Animator makes the film; then their "
+            + "words can be changed here."),
+      h("label", { class: "label", style: "margin-top:12px" }, "Closing line (the end quote: shown on screen at the end)"),
       closing)),
     h("div", { class: "detail-actions" },
       h("button", { class: "btn btn-sm btn-primary", type: "button", onclick: save }, "Save"),
       h("a", { class: "btn btn-sm", href: `#studio/${v.id}` }, "Open in the Studio")));
 }
 
-// ------------------------------------------------------------------ L2 the narrator
+// ------------------------------------------------------------------ L2 the look
 
-async function loadNarrator() {
-  const d = await api("/api/narrator");
-  const ro = !state.app.local;
-  const v = d.voice;
-  const field = (label, control, note) => h("label", { class: "field" }, h("span", {}, label), control, note && h("small", { class: "muted" }, note));
-  const deeper = h("select", { class: "input", disabled: ro, "aria-label": "How much deeper" },
-    DEEPER.map(([n, text]) => h("option", { value: n, selected: n === v.deeper }, text)));
-  const style = h("textarea", { class: "input", rows: 4, disabled: ro, maxlength: LIMITS.style, "aria-label": "His persona" });
-  style.value = v.style;
-  const save = async changes => {
-    try {
-      await api("/api/narrator", { method: "PATCH", json: changes });
-      toast("Saved. The next stories use it.", "ok");
-      await loadState();
-      loadNarrator();
-    } catch (e) {
-      toast(e.message, "error", 7000);
-    }
-  };
-  const voiceRows = d.voices.map(x => h("tr", { class: x.name === v.name ? "current" : "" },
-    h("td", { class: "title-cell" }, h("b", {}, x.name), h("small", {}, x.label)),
-    h("td", {}, x.sample ? h("audio", { src: x.sample, controls: true, preload: "none" })
-      : h("button", { class: "btn btn-sm", type: "button", "data-needs-idle": true, disabled: ro,
-                      onclick: () => runTask("narrator-sample", null, { voice: x.name }) }, "Record a sample")),
-    h("td", { class: "col-actions" }, x.name === v.name ? pill("The narrator", "ok")
-      : h("button", { class: "btn btn-sm btn-ghost", type: "button", disabled: ro, onclick: () => save({ voice: x.name }) }, "Use"))));
-  $("#view-host").replaceChildren(...[
-    pageHead({ eyebrow: "L2 · Library", title: "Narrator",
-      lede: "The voice that tells every story: one of Gemini's voices (free), read in a calm, warm persona, like a kind "
-        + "mentor late at night. The same voice every day: each reading is measured against his sample, and a story waits "
-        + "rather than go out in another voice." }),
-    d.resting && h("div", { class: "callout banner", dataset: { tone: "warn" } },
-      h("b", {}, "His voice is resting. "), (d.used_up
-        ? `Today's ${d.daily} free readings are used up; they renew at ${d.resting}. `
-        : `Gemini's free voice didn't answer, so it's asked again at ${d.resting}. `)
-      + "Until then the stories wait for it."),
-    kpis([
-      { label: "Narrator", value: v.name, note: (d.voices.find(x => x.name === v.name) || {}).label || "" },
-      { label: "Readings left today", value: d.left, unit: `of ${d.daily}`, note: `a story takes 3-4; renewed at ${d.renews}` },
-      { label: "Deeper", value: v.deeper, unit: v.deeper === 1 ? "semitone" : "semitones", note: "his persona already reads him low" },
-    ]),
-    section({ num: "L2.1", title: "His voice", text: "Each sample says the same lines in the narrator's persona (style test 2's). Listen, then pick one: the next stories use it.",
-      body: [
-        table(["Voice", "Sample", ["", { class: "col-actions" }]], voiceRows),
-        h("div", { class: "card", style: "margin-top:14px" }, h("div", { class: "card-body" },
-          h("p", { class: "muted small" }, "The samples say: ", d.lines.map(l => `“${l.text}”`).join(" ")),
-          h("div", { class: "inline-fields" }, field("Deeper", deeper, "a gentle pitch drop; his words keep their timing")),
-          field("His persona", style, "how Gemini reads every line; each line adds its own direction"),
-          h("div", { class: "row", style: "margin-top:10px" },
-            h("button", { class: "btn btn-sm btn-primary", type: "button", disabled: ro,
-                          onclick: () => save({ deeper: Number(deeper.value), style: style.value }) }, "Save"),
-            h("span", { class: "note" }, "A new depth or persona needs new samples (one free reading each)."))))
-      ] }),
-    section({ num: "L2.2", title: "The look", text: "Every story is drawn in code in your own look (your description, kept word for word and encrypted): black silhouettes with a thin red rim, two white eyes, his teal hoodie, film light, letterbox bars and grain.",
-      body: h("p", {}, h("a", { href: "/style-test" }, "See the style tests →")) })
-  ].filter(Boolean));
+/** The look every story is drawn in: the silhouettes, the bubbles its people talk and think in, its habit shown big. */
+function loadLook() {
+  const item = (head, text) => h("li", {}, h("b", {}, head), text);
+  $("#view-host").replaceChildren(
+    pageHead({ eyebrow: "L2 · Library", title: "The look",
+      lede: "Every story is drawn in code in your own look (your description, kept word for word and encrypted): black "
+        + "silhouettes with a thin red rim, two white eyes, his teal hoodie, film light, letterbox bars and grain. There's "
+        + "no narrator: the people talk and think in bubbles, and the habit each story is about is shown big." }),
+    section({ num: "L2.1", title: "The bubbles", text: "What the people say and think, drawn over their heads in the same look.",
+      body: h("div", { class: "card card-pad" }, h("ul", { class: "lessons" },
+        item("Four kinds: ", "a rounded speech bubble when people talk to each other, a thought cloud when he's alone, a "
+          + "spiky burst for a shout (swearing only as “#@%!”), and a cloud with a small picture in it."),
+        item("How they look: ", "a cream fill, the thin coral-red rim and dark plum letters; at most 12 words and 3 rows."),
+        item("Time to read: ", "1 second to find a bubble, then 2.5 words a second (at least 2.5 seconds; a picture 2.5 "
+          + "seconds, 1 more with words). In a conversation the earlier bubble stays, dimmed, until the reply is read: at "
+          + "most two on screen."),
+        item("The end quote: ", "the closing line is shown on screen at the end, as before."))) }),
+    section({ num: "L2.2", title: "The habit, shown big", text: "Each story's own habit, exaggerated like a cartoon. No piece "
+      + "belongs to a topic: the storyboard picks what fits the story.",
+      body: h("div", { class: "card card-pad" }, h("ul", { class: "lessons" },
+        item("Eyes: ", "hearts, dollar signs, spirals, droopy, furious, side-eye, smug, sobbing, terrified, on fire."),
+        item("Marks round the head: ", "steam, a throbbing vein, sweat, drool, Zzz, hearts, $, a rain cloud, flies, dizzy "
+          + "stars, a jolt, trembling, “?”, “!”, sparkles, auras, notification dots."),
+        item("Actions, things and effects: ", "31 exaggerated actions, 17 things that overdo a place, 9 effects (the room "
+          + "flushing red, the colours draining, time racing by, the camera shaking...), a phone seen face-on with 8 "
+          + "screens, and 66 small pictures for the bubbles."),
+        item("Always used: ", "code checks that every storyboard shows its habit big in at least 6 shots of his fall (a "
+          + "virtue: 4 before his realization and 2 after), and adds it itself when one falls short."))) }),
+    section({ num: "L2.3", title: "Tests", text: "The look's tests, made on this computer.",
+      body: h("p", {}, h("a", { href: "/style-test" }, "See the style tests →")) }));
   syncButtons();
 }
 
@@ -1395,7 +1470,8 @@ function seriesCard(s) {
   return h("div", { class: "card", id: "set-series" },
     h("div", { class: "card-head" }, h("h3", {}, h("span", { class: "muted", style: "font-family:var(--font-mono);font-weight:500;margin-right:8px" }, "S2.1"), "The stories")),
     row("Goes public at", `Every day, on the schedule's clock (${s.schedule?.timezone}). ${s.schedule?.ahead !== false
-      ? "The next story is made as soon as the one before it is public (S2.3)." : `It's made by the morning run (${s.schedule?.make_at}).`}`, postAt),
+      ? (Number(s.schedule?.stories_ahead || 1) > 1 ? `The stories are kept ${s.schedule.stories_ahead} days ahead (S2.3).`
+        : "The next story is made as soon as the one before it is public (S2.3).") : `It's made by the morning run (${s.schedule?.make_at}).`}`, postAt),
     row("Short version", "Hours after the film it goes public as a Short (the whole story in under a minute); it's also the Reel when Instagram is on.", after),
     row("Length", "Minutes, shortest and longest.", h("div", { class: "inline-fields" }, low, high)),
     row("Vices", "Agent 1 alternates a vice and a virtue. Commas between themes.", vices),
@@ -1409,7 +1485,10 @@ function seriesCard(s) {
 
 const ISSUE_KINDS = { too_dark: "Too dark to see", hard_to_read: "Hard to read", mismatch: "Doesn't show the shot",
                       broken_picture: "Broken picture", unsuitable: "Unsuitable", off_look: "Outside the look",
-                      text_unreadable: "Title hard to read", unclear: "Narrator unclear", not_narrator: "Not the narrator's voice",
+                      text_unreadable: "Text hard to read", unclear: "Narrator unclear", not_narrator: "Not the narrator's voice",
+                      bubbles: "Bubbles", bubble_short: "A bubble too short to read", bubble_wrong: "A bubble misplaced",
+                      habit_not_shown: "The habit not shown big", short_bubbles: "Short version: bubbles",
+                      short_bubble_short: "Short version: a bubble too short to read",
                       short: "Short version", short_length: "Short version's length",
                       short_unclear: "Short version: narrator unclear", short_voice: "Short version: not his voice",
                       length: "Length", loudness: "Loudness", silence: "Silence", size: "Wrong size",
@@ -1427,7 +1506,7 @@ async function loadReview() {
   const names = Object.fromEntries(state.app.agents.map(a => [a.key, `${a.number} ${a.name}`]));
   $("#view-review").replaceChildren(...[
     pageHead({ eyebrow: "04 · Agent 4 · Reviewer", agent: "reviewer", title: "Review",
-      lede: "Agent 4 watches and listens to every film and its short version before the Publisher may post them. One that "
+      lede: "Agent 4 watches every film and its short version before the Publisher may post them. One that "
             + `fails goes back to the Animator with notes, at most ${plural(r.max_rounds, "time")} (only the short version is `
             + "made again when only it failed); one that still fails is made again by itself, until it passes. "
             + "Problems that keep coming back become lessons the other agents apply from then on." }),
@@ -1439,7 +1518,7 @@ async function loadReview() {
       { label: "Lessons taught", value: Object.values(taught).reduce((n, t) => n + (t.advice?.length || 0), 0),
         note: r.lessons.updated_at ? `updated ${fromNow(r.lessons.updated_at)}` : "none yet" },
     ]),
-    r.held.length > 0 && section({ num: "4.1", title: "Being made again", text: "Turned down after the Animator's fixes: each is made again by itself (the scenes it named drawn again, or a new reading; from the third time a new story), until the Reviewer passes it. Nothing for you to do.",
+    r.held.length > 0 && section({ num: "4.1", title: "Being made again", text: "Turned down after the Animator's fixes: each is made again by itself (the scenes it named drawn again; from the third time a new story), until the Reviewer passes it. Nothing for you to do.",
       body: table(["Story", "Why it was turned down", "Next making"], r.held.map(x => h("tr", {},
         h("td", { class: "title-cell" }, h("a", { href: `#studio/${x.id}` }, h("b", {}, x.title || `Story #${x.id}`))),
         h("td", { class: "small" }, x.because || ""),
@@ -1448,12 +1527,12 @@ async function loadReview() {
       body: h("div", { class: "card card-pad" }, h("ul", { class: "lessons" },
         h("li", {}, h("b", {}, "Size and length: "), `the film 1920×1080, ${c.minutes[0]}-${c.minutes[1]} minutes; the short version 1080×1920, `
           + `under a minute (${c.short_seconds[0]}-${c.short_seconds[1]} seconds is the aim; under ${c.short_least} or ${c.short_most} and over fails), with sound.`),
-        h("li", {}, h("b", {}, "The short version: "), "its own narration heard line by line and measured as his voice, like the "
-          + "film's, and 4 of its frames in the look below (its title at the top, two scenes, its closing line). A problem only "
-          + "it has is fixed in it alone: the sounds under him, a new reading, or a new script from Agent 2."),
+        h("li", {}, h("b", {}, "The short version: "), "its bubbles measured like the film's, and 4 of its frames in the "
+          + "look below (its first shot, two scenes, its closing line). A problem only it has is fixed in it alone: "
+          + "the sounds under it, or a new script from Agent 2."),
         h("li", {}, h("b", {}, "Sound: "), `loudness near ${c.loudness} LUFS, no clipping, no dead silence.`),
-        h("li", {}, h("b", {}, "His words: "), `faster-whisper hears every line on its own through the rain and the steps; at least ${Math.round(c.min_match * 100)}% of the narration must come through, and every line clearly.`),
-        h("li", {}, h("b", {}, "That it's him: "), `read by a model that takes his persona, and measured against his sample on the Narrator page: pitch within ${-c.his_pitch[0]} semitones below and ${c.his_pitch[1]} above, the same timbre. One that isn't him is read again.`),
+        h("li", {}, h("b", {}, "The bubbles: "), `at least ${c.bubbles_least} in a film (its people talk and think), each on screen long enough to read (1 second to find it, then 2.5 words a second), none past the end; in the frames, none over a face, cut off or pointing at the wrong person.`),
+        h("li", {}, h("b", {}, "The habit: "), "shown big where the story needs it, in his fall: exaggerated eyes, marks round his head, exaggerated actions."),
         h("li", {}, h("b", {}, "The look: "), `Gemini looks at a frame of every scene (up to ${c.frames}), the title and the closing line, against what each should show and your look description: too dark, unreadable, broken, unsuitable or outside the look sends that scene back to be drawn again.`))) }),
     section({ num: "4.3", title: "Lessons it has taught", text: `A problem in ${c.recurring} of the last ${c.lookback} first looks becomes a standing fix or advice.`,
       body: Object.keys(taught).length
@@ -1605,7 +1684,7 @@ async function loadSchedule() {
       h("b", {}, "YouTube didn't say how they stand just now "), `(${data.youtube.error}). The YouTube side shows what `
       + "the dashboard knows; it asks again in 2 minutes."),
     section({ num: "5.1", title: "Today's story", text: `One story a day at ${ap.schedule.post_at} (${scheduleTz()}), ${ap.schedule.ahead !== false
-      ? "made as soon as its slot is free, when the free quotas allow" : `made in the morning run from ${ap.schedule.make_at}`}.${checkNote(ap)}`,
+      ? `${aheadWords(ap.schedule)}, when the free quotas allow` : `made in the morning run from ${ap.schedule.make_at}`}.${checkNote(ap)}`,
       body: table([["Time", { class: "col-time" }], ["New York", { class: "col-time" }], "Story",
                    partHead("ic-youtube", "YouTube"), partHead("ic-instagram", "Instagram")],
                   data.slots.map(scheduleRow), "schedule") }),
@@ -1706,8 +1785,8 @@ async function loadMusic() {
 
   $("#view-music").replaceChildren(
     pageHead({ eyebrow: "L1 · Library", title: "Music",
-      lede: "The stories' music: each film gets one of these tracks, chosen from its title. It's silent until the spark, "
-        + "then rises to the end, dipping under the narrator's voice." }),
+      lede: "The stories' music: each film gets one of these tracks, chosen from its title. It plays low from the first "
+        + "second, lifts at his realization and swells to the end." }),
     kpis([
       { label: "Tracks", value: tracks.length, tone: tracks.length ? null : "warn", note: tracks.length ? "one per story" : "the films have no music" },
       { label: "With a credit line", value: tracks.filter(t => t.credit).length, note: "added to the description at upload" },
@@ -1947,14 +2026,21 @@ async function loadSettings() {
     card("schedule", "S2.3", "The clock",
       row("Time zone", "The posting time and the morning run are on this clock.",
           select("timezone", zones.map(z => [z, z === browserZone ? `${z} (this device)` : z]), sch.timezone), "s-timezone"),
-      row("Next story", "Made as soon as its slot is free (the story before it is public), when the narrator's free "
-            + "readings for all of it and YouTube's uploads are there; otherwise when they renew (13:30 in India). Off: "
-            + "the morning run below makes the day's story.",
+      row("Next story", "Made as soon as its slot is free (the story before it is public), between "
+            + `${state.app.gemini?.opens || "13:30"} and ${state.app.gemini?.closes || "00:00"} (after Gemini's free `
+            + "allowance renews, so its stronger models write it), when YouTube can take its uploads. Off: the morning run "
+            + "below makes the day's story.",
           h("label", { class: "switch", style: "margin-left:0;width:fit-content" },
             h("input", { type: "checkbox", id: "s-ahead", name: "ahead", role: "switch", checked: sch.ahead !== false, disabled: ro }),
             h("span", { class: "switch-track", "aria-hidden": "true" }, h("span", { class: "switch-thumb" })),
             h("span", { class: "switch-text" }, h("b", {}, "As soon as its slot is free"))), "s-ahead"),
-      row("Morning run", `With the switch above off: when the day's story is made, at least an hour before it goes public (${s.series.post_at}).`,
+      row("Stories ready ahead", "With the switch on. 2: tomorrow's story is always made and the next one on its way, so "
+            + "one that gets stuck (Gemini, GitHub's late checks) has a whole spare day before a slot could go "
+            + "empty. The first day makes the extra one, then one a day as before. 1: only the next one.",
+          select("stories_ahead", [[1, "1 · the next story"], [2, "2 · a spare day"], [3, "3 · two spare days"]],
+                 sch.stories_ahead ?? 2), "s-stories_ahead"),
+      row("Morning run", `With the switch above off: when the day's story is made, at least an hour before it goes public (${s.series.post_at}); `
+            + `never before Gemini's free allowance renews (${state.app.gemini?.opens || "13:30"}).`,
           h("input", { class: "input", type: "time", id: "s-make_at", name: "make_at", value: sch.make_at || "07:00", disabled: ro }), "s-make_at")),
     h("div", { class: "savebar" },
       h("p", { class: "note" }, ro ? "Settings can only be changed on your computer." : "Saved to config/channel.yaml."),
@@ -1975,7 +2061,8 @@ async function saveSettings(event) {
   const f = new FormData(event.target);
   const body = {
     channel: { name: f.get("name"), contact_email: f.get("contact_email") },
-    schedule: { timezone: f.get("timezone"), make_at: f.get("make_at"), ahead: f.get("ahead") === "on" },
+    schedule: { timezone: f.get("timezone"), make_at: f.get("make_at"), ahead: f.get("ahead") === "on",
+                stories_ahead: Number(f.get("stories_ahead") || 2) },
   };
   try {
     await api("/api/settings", { method: "PUT", json: body });
@@ -2020,7 +2107,7 @@ async function loadActivity() {
 
 // ------------------------------------------------------------------ routing
 
-const loaders = { overview: loadOverview, topics: loadTopics, scripts: loadScripts, studio: loadStudio, host: loadNarrator,
+const loaders = { overview: loadOverview, topics: loadTopics, scripts: loadScripts, studio: loadStudio, host: loadLook,
                   review: loadReview, schedule: loadSchedule, results: loadResults, music: loadMusic,
                   youtube: () => loadYouTube(),
                   settings: loadSettings, activity: loadActivity };

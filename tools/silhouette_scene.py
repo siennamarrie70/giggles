@@ -339,7 +339,9 @@ class ComposedRoom(Room):
         self.HEIGHT = {"hall": 1150.0}.get(k, 900.0)
         self.TALL_WIDTH = {"hall": 900.0}.get(k, 720.0)
         half = self.HEIGHT * 16 / 9 / 2   # (the layout always uses the whole room, however close the framing)
+        self.ZOOM = 1.0   # how much closer than the room's own wide framing (the window's view softens with it)
         if height:
+            self.ZOOM = max(1.0, self.HEIGHT / float(height))
             self.TALL_WIDTH *= float(height) / self.HEIGHT
             self.HEIGHT = float(height)
         self.SPAN = (-half - 600, half + 600)
@@ -476,8 +478,8 @@ class ComposedRoom(Room):
         if over is not None:
             surf = over.surface()
             x = (surf[0] + surf[1]) / 2 if surf else over.x
-            return [(x, -150.0, surf[2] if surf else self.FLOOR)]
-        return [(0.0, -150.0, self.FLOOR)]
+            return [(x, -255.0, surf[2] if surf else self.FLOOR)]   # (above a standing head: lower, it lay across faces)
+        return [(0.0, -255.0, self.FLOOR)]
 
     def _wall_things(self, x0, x1):
         busy = sorted(self._tall() + [(w[0] - 40, w[2] + 40) for w in self.windows])
@@ -729,13 +731,12 @@ class ComposedRoom(Room):
             if stage in e.stages:
                 e.draw(stage, frame, at, tau)
 
-    def draw_people(self, frame, at, st, slot):
-        glows = super().draw_people(frame, at, st, slot)
+    def put_people(self, frame, at, st, slot, p):
+        super().put_people(frame, at, st, slot, p)
         if slot == "main":
             for a in st.get("actors") or []:
                 if a.get("glass"):
                     self._reflect(frame, at, a)
-        return glows
 
     def _reflect(self, frame, at, actor):
         """Someone at a mirror: their reflection in the glass, facing them, dimmer and cooler."""
@@ -942,16 +943,13 @@ class ComposedOutdoor(Outdoor):
             hills(p, self.SPAN[0] - 600, self.SPAN[1] + 600, self.GROUND - 30, 70, hexc(L["near"]), self.seed + "n", 6)
         if self.nat == "mountains":
             pines_row(p, self.SPAN[0] - 600, self.SPAN[1] + 600, self.GROUND - 40, hexc(L["near"]) * 0.9, self.seed)
-        if self.nat == "forest":
-            r = rng("trunks", self.seed)
-            dark = mix(L["near"], "#000000", 0.25)
-            for x in np.arange(self.SPAN[0], self.SPAN[1], 170):
-                x += r.uniform(-50, 50)
-                p.poly(rect(x - 14, -900, 28, 1180), dark)
-                cx, cy, rad = x + r.uniform(-60, 60), -300 - r.uniform(0, 200), r.uniform(120, 200)
-                p.circle(cx, cy, rad, dark)
-                if self.weather == "snow":
-                    p.poly(ell(cx, cy - rad * 0.70, rad * 0.62, rad * 0.16, 32), hexc(SNOWY), 0.40)
+        if self.nat == "forest":   # trees further off, paler in the air: a soft band behind the park's own trees, the
+            # sky open above (full-height trunks every few steps read as a glass wall's bars, their crowns as a ceiling)
+            haze = mix(L["near"], L["far"], 0.45)
+            treeline(p, self.SPAN[0] - 600, self.SPAN[1] + 600, self.GROUND - 40, 300, haze, self.seed + "forest", 1.8)
+            if self.weather == "snow":
+                p.poly(rect(self.SPAN[0] - 600, self.GROUND - 300, self.SPAN[1] - self.SPAN[0] + 1200, 60), hexc(SNOWY),
+                       0.18, soft=30)
         if self.kind == "bridge":
             PR.Thing("railing", 0.0, self.GROUND - 22, PR.Ctx(s=1, **self.ctx_args)).draw(p)
             PR.Thing("railing", 1600.0, self.GROUND - 22, PR.Ctx(s=1, **self.ctx_args)).draw(p)

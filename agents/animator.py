@@ -1,36 +1,29 @@
 """
 Agent 3, Animator: makes the day's film, its short version, its thumbnail and a still of every scene, in your silhouette
-look, drawn entirely in code (no AI pictures).
+look, drawn entirely in code (no AI pictures), told without a narrator (your choice, 2026-11-19).
 
-  - The narrator reads the story (tools/narrator.py: a calm, warm voice, Gemini's text-to-speech on the free tier, in
-    parts; a part whose words didn't change is never read again).
-  - Every shot is timed to his lines, and the film is drawn in code with the music silent until the spark, then rising
-    (tools/story_film.py, tools/silhouette_render.py), at 1920x1080. The thumbnail is the chosen scene at its strongest
-    moment with Agent 1's words big beside him, and a still of every scene is kept for the dashboard and the Reviewer.
+  - A story written for the narrator (before 2026-11-19) first gets its moments and bubbles (agents/story.py
+    write_moments) and a new storyboard (agents/storyboard.py).
+  - Every shot lasts its bubbles' reading time (tools/story_film.py timeline: each bubble held long enough for an
+    average person to read it, a reply after the bubble it answers), and the film is drawn in code at 1920x1080 with
+    the bubbles over the speakers' heads, a soft pop as each comes, and the music low from the first second, lifting at
+    his realization (tools/silhouette_render.py). The thumbnail is the chosen scene at its strongest moment with its
+    words big beside him, and a still of every scene is kept for the dashboard and the Reviewer.
   - Then the short version (make_short; your choice, 2026-11-16: it replaced the teaser): the whole story in under a
-    minute for YouTube Shorts and Instagram Reels. Agent 2 writes its script the first time it's needed (agents/story.py
-    write_short: some of the film's shots and new lines over them), the narrator reads it (one reading, in its own
-    folder), and it's drawn upright (1080x1920) from the film's shots. One that runs a minute or more when read is
-    written again, shorter, once. It can be made on its own, the film as it is: for a story made before short versions,
-    a fix only it needs, or its Reel.
+    minute for YouTube Shorts and Instagram Reels. Agent 2 writes it the first time it's needed (agents/story.py
+    write_short: some of the film's shots with shorter bubbles), and it's drawn upright (1080x1920) from the film's
+    shots. One that would run a minute or more is written again, shorter, once (its length is known before anything
+    is drawn). It can be made on its own, the film as it is: for a fix only it needs, or its Reel.
 
 Every film and its short version go to the Reviewer (Agent 4, agents/reviewer.py) before the Publisher may post them. A
 film it fails comes back here with its notes, and improve() acts on them: a scene turned down is drawn again with a change
-(a lighter light, a calmer camera, him alone: STORY_FIXES), the sounds under him are turned down when he's hard to hear,
-a voice problem gets a new reading; a problem only the short version has is fixed in it alone (the sounds under him,
-a new reading, or a new script from Agent 2). A film still turned down after the Reviewer's rounds is made again by
-itself (make_again), and from the REWRITE_FROM-th time Agent 2 writes the story again. Problems that keep coming back
+(a lighter light, a calmer camera, him alone: STORY_FIXES); a problem only the short version has is fixed in it alone
+(the sounds under it, or a new script from Agent 2). A film still turned down after the Reviewer's rounds is made again
+by itself (make_again), and from the REWRITE_FROM-th time Agent 2 writes the story again. Problems that keep coming back
 become standing settings from the Reviewer's lessons (agents/base.py lessons_for), applied to every film from the start.
 
-The narrator has one voice, his own: Gemini's, from the models that take his persona, each reading measured against his
-sample (tools/narration.py, tools/voiceprint.py; a reading that only came out too high is brought down into his range,
-and a part both his models read unlike him is read again steadier). There's no backup voice. When his voice is out
-(still unlike him, busy, or used up), it rests (a note in the
-database, so nothing retries in the meantime) and the story waits (VoiceResting): until his models' free readings renew
-(13:30 in India) when they're used up for the day, otherwise REST_FIRST, twice as long after each failure in a row, up to
-REST_MOST. A film wanted now (its slot is due, or you pressed "Make it now") asks Gemini even while it rests.
-
-His readings are kept (.tmp/voices/<id>, and <id>-short for the short version) until the story is posted or discarded.
+(The narrator's code here, his readings and his voice's rest, is a narrated film's, from before 2026-11-19: kept so
+going back is easy.)
 
 Usage:
     python -m agents.animator --id 12          # makes story #12's film (.tmp/out/short_12.mp4) and its short version
@@ -44,7 +37,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import db
@@ -103,6 +96,54 @@ def reel_path(row: dict) -> Path:
 
 def voice_dir(video_id: int) -> Path:
     return tmp_path("voices", str(video_id), "x").parent
+
+
+VOICE_KEPT_FOR = timedelta(days=2, hours=12)  # a cloud run's kept files are there this long (GitHub keeps them 3 days)
+
+
+def voice_kept(plan: dict) -> set[str]:
+    """The parts of a story's reading (narrator.part_names) an earlier cloud run read and kept (plan "kept_voice":
+    tools/jobs.py keep_videos), while GitHub still has them; none when there are none, or they're too old."""
+    kept_by = plan.get("kept_voice") or {}
+    try:
+        fresh = datetime.now(timezone.utc) - slots.parse(kept_by["at"]) < VOICE_KEPT_FOR
+    except (KeyError, TypeError, ValueError):
+        return set()
+    return set(kept_by.get("parts") or []) if fresh and kept_by.get("run") else set()
+
+
+def _fetch_voice(row: dict, progress=log) -> None:
+    """In the cloud: the parts of a story the narrator read in an earlier run that ended before its film was made (his
+    readings ran out, or his voice rested), fetched from that run into its voice folder, so they aren't read again
+    (no free reading spent twice). One that can't be fetched is read again, as before."""
+    import kept
+
+    kept_by = row["plan"].get("kept_voice") or {}
+    if not voice_kept(row["plan"]) or not kept.in_cloud():
+        return
+    folder = voice_dir(row["id"])
+    folder.mkdir(parents=True, exist_ok=True)
+    got = 0
+    for name in kept_by.get("files") or []:
+        file = folder / name
+        if file.exists() or not name.startswith("part_"):
+            continue
+        try:
+            kept.fetch_file(kept_by["run"], f"voice-{int(row['id'])}-{name}", file)
+            got += 1
+        except Exception as e:
+            progress(f"Story #{row['id']}'s reading {name} kept by run {kept_by['run']} couldn't be fetched "
+                     f"({str(e)[:120]}): that part is read again")
+    for found in folder.glob("part_*.json"):  # (each reading's sound file, where it is on this machine)
+        try:
+            spoken = json.loads(found.read_text(encoding="utf-8"))
+            spoken["wav"] = str(found.with_suffix(".wav"))
+            found.write_text(json.dumps(spoken), encoding="utf-8")
+        except (OSError, ValueError, TypeError):
+            continue
+    if got:
+        progress(f"Story #{row['id']}: the parts the narrator read in run {kept_by['run']} fetched from it, so they "
+                 "aren't read again")
 
 
 def short_voice_dir(video_id: int) -> Path:
@@ -188,8 +229,9 @@ def rest_until() -> str | None:
 
 
 def resting() -> dict | None:
-    """What holds the stories back now, if anything: the narrator's voice resting."""
-    return voice_resting()
+    """What holds the stories back now, if anything: nothing since 2026-11-19 (the films are silent, told in bubbles;
+    the narrator's voice resting held them back while he read them: voice_resting)."""
+    return None
 
 
 def _rest(why: str, until: str | None = None) -> dict:
@@ -279,19 +321,28 @@ def _beds(fixes: dict, short: bool = False) -> float:
             + (float(fixes.get("short_beds") or 0) if short else 0.0))
 
 
+def silent(story: dict) -> bool:
+    """A story told in bubbles (its moments written: agents/story.write_moments), not one written for the narrator."""
+    lines = story.get("lines") or []
+    return bool(lines) and all("bubbles" in x for x in lines)
+
+
 def animate(row: dict, out: Path, progress=log, now: bool = False) -> dict:
-    """The story's film, drawn in code in the silhouette look: the narrator's reading (only parts whose words changed are
-    read again), the film timed to his lines with the music from the spark, a still of every scene and the thumbnail;
-    the film is saved, then its short version is made (make_short). `now`: it's wanted now (its slot is due, or you
-    asked), so Gemini is asked even while its voice rests; otherwise a resting voice raises VoiceResting at once and the
-    story waits for it (a film made before his voice ran out is kept: only its short version waits)."""
+    """The story's film, drawn in code in the silhouette look, told without a narrator: its bubbles over the speakers'
+    heads, timed for reading (tools/story_film.py), the music low from the start and lifting at his realization, a still
+    of every scene and the thumbnail; the film is saved, then its short version is made (make_short). A story written
+    for the narrator gets its moments first (Agent 2) and a new storyboard (Agent 3). (`now`: kept for its callers.)"""
     plan = row["plan"]
     story = plan.get("story")
     if not series.is_story(row) or not story:
         raise RuntimeError(f"#{row['id']} is from an earlier version of the channel: it has no story to animate")
-    if not now and (rest := voice_resting()):
-        raise VoiceResting(f"Gemini's voice is resting until about {_after(rest)}; story #{row['id']} is made then")
     started = time.monotonic()
+    if not silent(story):   # (written for the narrator: its moments and their bubbles first, then a storyboard of them)
+        progress("This story was written for the narrator: Agent 2 turns it into moments and bubbles first")
+        story = story_agent.write_moments({k: v for k, v in story.items() if k not in ("shots", "short", "plates")},
+                                          progress)
+        plan = {**plan, "story": story}
+        db.update_video(row["id"], plan=plan)
     if not story.get("shots"):   # (written but not storyboarded yet: Agent 3 designs its pictures first)
         from agents import storyboard
 
@@ -300,10 +351,7 @@ def animate(row: dict, out: Path, progress=log, now: bool = False) -> dict:
                 "script": {**(plan.get("script") or {}), "lines": story_agent.lines_of(story)}}
         db.update_video(row["id"], plan=plan)
     fixes = plan.get("fixes") or {}
-    progress("The narrator is reading the story")
-    lines = story_agent.lines_of(story)
-    spoken = _read(lines, voice_dir(row["id"]), int(fixes.get("take") or 0), row["id"], progress)
-    made = story_film.make(story, spoken["lines"], out, progress, beds=_beds(fixes))
+    made = story_film.make(story, out, progress, beds=_beds(fixes))
     times = made["times"]
     story_film.cover(out, 2.6, cover_path(row["id"]))
     progress("Drawing a still of every scene")
@@ -312,86 +360,80 @@ def animate(row: dict, out: Path, progress=log, now: bool = False) -> dict:
         old.unlink(missing_ok=True)
     scenes = story_film.scenes(story, times, folder)
     seconds = round(time.monotonic() - started, 1)
-    plan = {**{k: v for k, v in plan.items() if k not in ("short_render", "teaser")},  # (teaser: an earlier version's)
+    plan = {**{k: v for k, v in plan.items() if k not in ("short_render", "teaser", "voice")},
             "plates": {pid: Path(path).name for pid, path in scenes.items()},
-            "voice": _voice_record(spoken, lines),
             "render": {"id": uuid.uuid4().hex[:10], "made_at": db.now_iso(), "look": series.LOOK, "seconds": made["seconds"],
                        "render_seconds": seconds, "title_until": 0.01, "chapters": made["chapters"],
-                       "music": made.get("music"),
+                       "music": made.get("music"), "silent": True,
                        "shots": [{"start": t["start"], "end": round(t["start"] + t["seconds"], 3),
-                                  "name": f"plate:{shot['plate']}", "act": shot["act"], "line": shot.get("line") or ""}
+                                  "name": f"plate:{shot['plate']}", "act": shot["act"],
+                                  "bubbles": len(t.get("bubbles") or [])}
                                  for shot, t in zip(story["shots"], times)],
-                       "lines": [{"start": t["line_at"], "end": round(t["line_at"] + t["line_seconds"], 3)}
-                                 for t in times if t["line_at"] is not None]},
+                       "bubbles": [{"shot": k + 1, "who": b["who"], "kind": b["kind"], "text": b.get("text") or "",
+                                    "picture": b.get("picture") or "", "start": round(t["start"] + b["start"], 3),
+                                    "end": round(t["start"] + b["end"], 3)}
+                                   for k, t in enumerate(times) for b in t.get("bubbles") or []]},
             "credits": _music_credit(made.get("music"))}
     try:
         plan["thumbnail"] = make_thumbnail(row["id"], plan)
     except Exception as e:  # a film without its thumbnail still goes out (YouTube picks a frame)
         progress(f"Couldn't make the thumbnail ({type(e).__name__}: {str(e)[:120]})")
-    db.update_video(row["id"], plan=plan)  # (kept even if its short version has to wait for his voice)
-    progress(f"Film ready: {made['seconds'] / 60:.1f} minutes, made in {seconds / 60:.0f} minutes")
+    db.update_video(row["id"], plan=plan)
+    progress(f"Film ready: {made['seconds'] / 60:.1f} minutes, {len(plan['render']['bubbles'])} bubbles, made in "
+             f"{seconds / 60:.0f} minutes")
     short = make_short({**row, "plan": plan}, progress, now=True)
     return {"plan": short["plan"], "video_id": row["id"], "length": made["seconds"],
-            "render_seconds": round(time.monotonic() - started, 1), "voice": spoken["voice"],
-            "readings": spoken["readings"] + short["readings"], "short": short["short"]}
+            "render_seconds": round(time.monotonic() - started, 1), "voice": None, "readings": 0,
+            "short": short["short"]}
 
 
 def make_short(row: dict, progress=log, now: bool = False, again: bool = False) -> dict:
-    """The story's short version (1080x1920), from its film as it is: Agent 2 writes its script if it has none (a story
-    written before short versions, or written again: kept with the story at once), the narrator reads it (one reading,
-    its own folder) and it's drawn upright from the film's shots. One that runs a minute or more when read is written
-    again, shorter, once. `now` as animate(). `again`: a posted story's short version made again for its Reel (nothing
-    saved, so its plan still describes what's on YouTube)."""
+    """The story's short version (1080x1920), from its film as it is: Agent 2 picks its shots and shortens their bubbles
+    if it has none (kept with the story at once), drawn upright from the film's shots. One that would run a minute or
+    more is made again shorter, once (its length is known before anything is drawn). `again`: a posted story's short
+    version made again for its Reel (nothing saved, so its plan still describes what's on YouTube)."""
     plan = row["plan"]
     story = plan.get("story")
     if not series.is_story(row) or not story:
         raise RuntimeError(f"#{row['id']} is from an earlier version of the channel: it has no story to animate")
     if not again and not (plan.get("render") or {}).get("id"):
         raise RuntimeError(f"Story #{row['id']}'s film isn't made yet: its short version comes after it")
-    if not now and (rest := voice_resting()):
-        raise VoiceResting(f"Gemini's voice is resting until about {_after(rest)}; story #{row['id']}'s short version "
-                           "is made then")
     started = time.monotonic()
     fixes = plan.get("fixes") or {}
-    complaint, readings = None, 0
+    complaint = None
     for attempt in range(2):
-        if not story.get("short"):
+        if not story.get("short") or not all("bubbles" in x for x in story["short"].get("shots") or []):
             story = {**story, "short": story_agent.run_short(story, progress=progress, complaint=complaint)}
-            if not again:  # (kept at once: if his voice has to wait, the same script is read when it's back)
+            if not again:
                 plan = {**plan, "story": story}
                 db.update_video(row["id"], plan=plan)
-        lines = story_film.short_lines(story)
-        progress("The narrator is reading the short version")
-        spoken = _read(lines, short_voice_dir(row["id"]), int(fixes.get("short_take") or 0), row["id"], progress)
-        readings += spoken["readings"]
-        length = sum(t["seconds"] for t in story_film.short_timeline(story_film.short_story(story), spoken["lines"]))
+        length = sum(t["seconds"] for t in story_film.short_timeline(story_film.short_story(story)))
         if length < story_film.SHORT_MOST:
             break
         if attempt:
-            raise RuntimeError(f"story #{row['id']}'s short version runs {length:.0f} s when read, a minute or more, even "
-                               "written again shorter")
-        complaint = (f"Read aloud, your last short version ran {length:.0f} s: write it with about 15 fewer words, so it "
+            raise RuntimeError(f"story #{row['id']}'s short version runs {length:.0f} s, a minute or more, even made "
+                               "again shorter")
+        complaint = (f"Your last short version would run {length:.0f} s: pick fewer shots or shorter bubbles, so it "
                      "stays well under a minute")
-        progress(f"The short version runs {length:.0f} s when read: Agent 2 writes it again, shorter")
+        progress(f"The short version would run {length:.0f} s: Agent 2 makes it again, shorter")
         story = {**story, "short": None}
-    made = story_film.make_short(story, spoken["lines"], short_path(row["id"]), progress, beds=_beds(fixes, short=True))
+    made = story_film.make_short(story, short_path(row["id"]), progress, beds=_beds(fixes, short=True))
     seconds = round(time.monotonic() - started, 1)
     progress(f"Short version ready: {made['seconds']:.0f} s, {len(made['film_shots'])} of the film's shots, made in "
              f"{seconds:.0f} s")
     if again:
-        return {"video_id": row["id"], "short": made["seconds"], "readings": readings, "voice": spoken["voice"]}
+        return {"video_id": row["id"], "short": made["seconds"], "readings": 0, "voice": None}
     plan = {**plan, "story": story,
             "short_render": {"id": uuid.uuid4().hex[:10], "of": (plan.get("render") or {}).get("id"),
                              "made_at": db.now_iso(), "seconds": made["seconds"], "render_seconds": seconds,
-                             "music": made.get("music"), "cover_at": story_film.SHORT_COVER_AT,
-                             "voice": _voice_record(spoken, lines),
+                             "music": made.get("music"), "cover_at": story_film.SHORT_COVER_AT, "silent": True,
                              "shots": [{"shot": k, "start": t["start"], "end": round(t["start"] + t["seconds"], 3)}
                                        for k, t in zip(made["film_shots"], made["times"])],
-                             "lines": [{"start": t["line_at"], "end": round(t["line_at"] + t["line_seconds"], 3)}
-                                       for t in made["times"] if t["line_at"] is not None]}}
+                             "bubbles": [{"start": round(t["start"] + b["start"], 3), "end": round(t["start"] + b["end"], 3),
+                                          "text": b.get("text") or "", "kind": b["kind"]}
+                                         for t in made["times"] for b in t.get("bubbles") or []]}}
     db.update_video(row["id"], plan=plan)
-    return {"plan": plan, "video_id": row["id"], "short": made["seconds"], "readings": readings,
-            "voice": spoken["voice"]}
+    return {"plan": plan, "video_id": row["id"], "short": made["seconds"], "readings": 0, "voice": None}
 
 
 # --- the thumbnail -----------------------------------------------------------------------------------------------------------

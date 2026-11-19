@@ -8,14 +8,14 @@ marks by SET_POSES) and how his eyes are (silhouette.MOODS); who else is there (
 (EVENTS: the head turning to camera with the eyes springing wide, the clock flipping...); the small label at the top;
 the camera's move (CAMERA) and how it enters (ENTER). plan() resolves it once; state() gives every frame's moment:
 breathing and blinks, a walk's or a run's cycle (the camera follows outdoors), the event's motion, the camera, the
-label, fades. The first shot carries the title card, the last the closing line; the last second of the film holds
-completely still.
+label, fades. The film begins straight with its story (no title in the picture: your choice, 2026-11-20); the last
+shot carries the closing line, and the last second of the film holds completely still.
 
 render() draws the shots in parallel processes (one piece of video each), joins them, mixes the sound
 (tools/film_sound.py: the beds and single sounds, the narrator's lines, the music from the spark) and makes the film.
 The short version (render(upright=True), tools/story_film.py make_short) is drawn the same way from the film's shots it
-picks, upright (1080x1920, each place framed on him, not cropped), with the title at the top for its first seconds and
-the closing line at its end. The thumbnail is tools/thumbnail.py's.
+picks, upright (1080x1920, each place framed on him, not cropped), beginning straight with the story and ending on the
+closing line. The thumbnail is tools/thumbnail.py's.
 
 Subtitles (your request, 2026-11-17; tools/subtitles.py cuts and times them by his words): the narrator's words in the
 look's type (Oswald, warm white): the film's in the black band under the picture, one row, never over it; the short
@@ -624,8 +624,8 @@ def _dim(frame, a):
 
 
 def overlays(frame, size, t, flags):
-    """The title card (the film's first shot), the closing line (the last), the short version's title at the top, the
-    subtitles."""
+    """The closing line (the last shot) and a narrated film's subtitles. (The title card and the short version's title at
+    the top are drawn only when a shot's flags ask for them: none does since 2026-11-20.)"""
     W, H = size
     k = min(W, H) / 1080
     if flags.get("title"):
@@ -708,16 +708,17 @@ def workers() -> int:
 
 
 def jobs_for(story: dict, times: list[dict], size, folder: Path, short: bool = False, subs: list[dict] | None = None):
-    """Every shot's drawing job: its plan, its fades and texts, its frames. The film opens on its title card; the short
-    version (short: story_film.short_story's) on its title at the top. Both end on the closing line, the last second
-    still. A shot keeps its seed when it has one (the short version's: drawn as in the film). subs: the subtitles
+    """Every shot's drawing job: its plan, its fades and texts, its frames. The film and its short version (short:
+    story_film.short_story's) begin straight with the story (no title in the picture) and end on the closing line, the
+    last second still. A shot keeps its seed when it has one (the short version's: drawn as in the film). subs: the subtitles
     (subtitle_cues), each shot given its own, in its own seconds."""
     all_shots = story["shots"]
     n = len(all_shots)
     out, index0 = [], 0
     for k in range(n):
         t = times[k]
-        shot = {**all_shots[k], "seed": all_shots[k].get("seed", k * 101 + 7), "seconds": t["seconds"]}
+        shot = {**all_shots[k], "seed": all_shots[k].get("seed", k * 101 + 7), "seconds": t["seconds"],
+                "bubbles": t.get("bubbles") or []}   # (its bubbles timed for reading: tools/story_film.timeline)
         frames_n = max(1, round(t["seconds"] * FPS))
         p = plan_for(story, shot, size)
         flags = {"t0": t["start"]}
@@ -732,17 +733,9 @@ def jobs_for(story: dict, times: list[dict], size, folder: Path, short: bool = F
             flags["fade_out"] = 0.45
         if nxt is not None and nxt.get("enter") == "lights_out":
             flags["lights_out_at"] = max(0.0, t["seconds"] - 0.55)
-        if k == 0 and short:
-            flags["top_title"] = story["title"]
-            flags["top_title_until"] = t["seconds"] - 0.1
-            flags["no_label"] = True
-        elif k == 0:
-            flags["title"] = story["title"]
-            flags["title_span"] = (0.7, max(2.6, t["seconds"] - 0.4))
-            flags["no_label"] = True
         if k == n - 1:
             flags["closing"] = story.get("closing_line") or ""
-            flags["closing_at"] = (t["line_at"] - t["start"]) if t.get("line_at") is not None else 0.8
+            flags["closing_at"] = t["closing_at"] if t.get("closing_at") is not None else 0.8
             flags["still_from"] = max(0.0, t["seconds"] - 1.0)
             flags["fade_out"] = 0.9
         out.append({"k": k, "plan": p, "flags": flags, "size": list(size), "n": frames_n, "index0": index0,
@@ -785,6 +778,7 @@ SOUND = {  # each single sound's level (dB, film_sound's standard), and how it p
     "gate_close": {"gain": -5}, "phone_buzz": {"gain": -5}, "keys_jingle": {"gain": -4}, "switch_click": {"gain": -6},
     "page_turn": {"gain": -6}, "page_flip": {"gain": -12, "dur": 0.35}, "glass_set_down": {"gain": -6},
     "paper_rip": {"gain": -5}, "wind_howl": {"gain": -6}, "monitor_beep": {"gain": -15}, "door_knock": {"gain": -6},
+    "bubble_pop": {"gain": -15},
 }
 
 
@@ -850,6 +844,9 @@ def _composed_sound(story_shot: dict, p: dict, seconds: float, beds_db: float) -
                 sounds += [_sound("door_knock", 0.3 + d, seconds) for d in (0.0, 0.38, 0.76)]
             elif action in ("reading", "letter"):
                 sounds.append(_sound("page_turn", min(1.2, seconds * 0.3), seconds))
+    for b in p.get("bubbles") or []:   # (a soft pop as each bubble comes)
+        if b.get("start", 0.0) < seconds - 0.2:
+            sounds.append(_sound("bubble_pop", b["start"] + 0.02, seconds))
     ev, at = p["event"], p["event_at"]
     if ev == "lamp_off":
         sounds.append(_sound("switch_click", at, seconds))
@@ -907,24 +904,26 @@ def shot_sound(story_shot: dict, p: dict, seconds: float, beds_db: float = 0.0) 
 
 
 def music_spec(story: dict, times: list[dict]) -> dict | None:
-    """The music: silent until his realization (the storyboard's shot; a story before it: its spark's first shot), then
-    rising to the end."""
+    """The music: low from the first second (no voice to leave room for: the pictures and the bubbles need its mood),
+    lifting at his realization (the storyboard's shot) and swelling to the end."""
+    if not story.get("music"):
+        return None
     k = story.get("realization")
     if k is None or not 0 <= int(k) < len(times):
-        k = next((i for i, s in enumerate(story["shots"]) if s.get("act") == "spark"), None)
-    if k is None or not story.get("music"):
-        return None
-    k = int(k)
-    return {"file": story["music"], "at": times[k]["start"] + 0.6, "from": float(story.get("music_from") or 0.0),
-            "rise": 6.0, "swell": 3.0, "swell_s": 20.0, "gain": 0.0}
+        k = next((i for i, s in enumerate(story["shots"]) if s.get("act") in ("spark", "transformation")), None)
+    lift_at = times[int(k)]["start"] + 0.4 if k is not None else None
+    return {"file": story["music"], "at": 0.0, "from": float(story.get("music_from") or 0.0), "rise": 3.0,
+            "low": -9.0 if lift_at is not None else 0.0, "lift_at": lift_at, "lift": 6.0, "swell": 3.0,
+            "swell_s": 20.0, "gain": 2.0}
 
 
 # --- the film, the short version, the thumbnail ---------------------------------------------------------------------------------
 def render(story: dict, times: list[dict], out: Path, voice: list[dict] | None = None, progress=print,
-           beds_db: float = 0.0, upright: bool = False, subtitles: bool = True) -> Path:
-    """The film (1920x1080, H.264 + AAC): the story's shots drawn, timed by `times` (tools/story_film.timeline), the
-    narrator's lines (voice: tools/story_film.voice_cues) with their subtitles, and the music from the spark. `upright`:
-    the short version (1080x1920, from tools/story_film.short_story and short_timeline)."""
+           beds_db: float = 0.0, upright: bool = False, subtitles: bool = False) -> Path:
+    """The film (1920x1080, H.264 + AAC): the story's shots drawn with their bubbles, timed by `times`
+    (tools/story_film.timeline), each place's sounds, a soft pop as each bubble comes, and the music low from the start,
+    lifting at his realization. `upright`: the short version (1080x1920, tools/story_film.short_story and
+    short_timeline). (voice and subtitles: a narrated film's, from before 2026-11-19.)"""
     import film_sound
 
     out = Path(out)

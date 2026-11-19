@@ -6,16 +6,19 @@ Gemini designs the film's pictures, for this story only, from the library of the
   - its places (PLACES of them), each built from the library: a kind of place (a room, a hall, a street, nature,
     inside a car...), its look (walls, floor, the window and its view), its things, its light, weather and effects;
   - the people around him (the cast), each one's role and look from the look's parts; he is always the same man;
-  - a shot for every line of the script, in order, and a few quiet ones without a line: its stage of your prompt's six,
-    its place, what he does there, where and with what eyes, who else is there, the framing and the camera, what the
-    picture shows (the Reviewer checks the drawing against it) and a few words for the narrator's voice;
-  - the shot where he realizes (the music starts there), six chapter names, the thumbnail's shot and words (white and
+  - a shot for every moment of the story (agents/story.py write_moments: what we see, who's in it, their bubbles; no
+    narrator), in order, and a few quiet ones: its stage of your prompt's six, its place, what he does there, where and
+    with what eyes and marks, who else is there, the framing and the camera, what the picture shows (the Reviewer
+    checks the drawing against it); code puts the moment's bubbles on its shot and its speakers in the picture;
+  - the habit shown big (whatever this story's is: any of the library's exaggerated pieces, none tied to a topic);
+  - the shot where he realizes (the music lifts there), six chapter names, the thumbnail's shot and words (white and
     yellow), the description and the tags.
 
-It gets the script, your look text word for word (prompts/look_silhouette.txt.enc) and the library. check() holds the
-answer to them: every line has its shot in order, every stage has shots, every place and person is real, every action
+It gets the moments, your look text word for word (prompts/look_silhouette.txt.enc) and the library. check() holds the
+answer to them: every moment has its shot in order, every stage has shots, every place and person is real, every action
 has somewhere it can happen in its place (tools/silhouette_board.where), adults only, the channel's rules. Small things
-code fixes itself (a misspelt thing, a person on a taken seat, a line's missing shot); problems go back to Gemini with its
+code fixes itself (a misspelt thing, a person on a taken seat, a moment's missing shot, a speaker left out of the picture,
+a habit not shown big enough); problems go back to Gemini with its
 storyboard, at most TRIES times. What a script needed that the library doesn't have is listed (story["missing"]): what's
 added to the library next. The places differ from the recent stories' (one too like a recent one gets other colours and
 its things the other way round). Every place is built from the library: the 12 ready-made sets of the first look
@@ -36,9 +39,7 @@ import sys
 from pathlib import Path
 
 import llm
-import narrator
 import silhouette_words as W
-import story_film
 from agents import story as story_agent
 from agents.base import act, log
 
@@ -71,7 +72,12 @@ GROUPS = {"home": "Home", "wall": "On the walls", "work": "Work", "health": "Hea
           "small": "Small things"}
 MOOD_WORDS = {"tired": "half-lidded", "open": "plain, awake", "wide": "shock", "closed": "shut", "sad": "sad",
               "determined": "set, focused", "soft": "tender, calm", "happy": "smiling arcs", "angry": "angry",
-              "worried": "worried"}
+              "worried": "worried", "hearts": "pink hearts (lust, infatuation)", "dollars": "gold $ signs (greed)",
+              "spirals": "hypnotised spirals (hooked on the phone, a craving)",
+              "droopy": "heavy-lidded with bags (laziness, no sleep)", "furious": "furious, glowing red (rage)",
+              "side_eye": "narrowed, looking sideways (envy, jealousy, suspicion)",
+              "smug": "half-shut, looking down his nose (ego, arrogance)", "sobbing": "streaming tears (self-pity, grief)",
+              "terrified": "huge with tiny pupils (fear)", "fire": "flames (obsession, fierce resolve)"}
 SET_PLACES = {  # a ready-made set of the first look an answer still names -> that place built from the library
     "desk_room": {"kind": "room", "wall": "plum", "floor": "wood", "window": "big", "view": "city", "lamp": True,
                   "things": ["bookcase", "desk", "plant"], "wall_things": ["clock", "shelf"], "small": ["laptop", "mug"]},
@@ -176,6 +182,9 @@ def library() -> str:
             + "; cloth (their clothes' colour): " + ", ".join(c for c in W.CLOTH_COLORS if c != "teal")
             + "; extras: " + ", ".join(W.EXTRAS) + f"; build: {', '.join(BUILDS)}; height: {', '.join(HEIGHTS)}",
             "EYES (their mood): " + ", ".join(f"{m} ({w})" for m, w in MOOD_WORDS.items()),
+            "MARKS (round a person's head, at most 2): " + "; ".join(f"{k} ({v})" for k, v in W.MARKS.items()),
+            "SCREEN (his phone's screen turned to us, when he looks at his phone: phone, lying_awake, doomscrolling): "
+            + "; ".join(f"{k} ({v})" for k, v in W.SCREENS.items()),
             "", "framing: wide (the whole place: where he is, how small in it), medium (from the knees up: what he does), "
             "close (head and shoulders: the eyes), detail (a thing close up; close_on names it: a thing of that place)",
             f"move: {', '.join(W.CAMERA)} (push_in: slowly closer, for a blow landing or a realization; pull_out: slowly "
@@ -192,8 +201,21 @@ def _events() -> dict:
 
 
 def _numbered(story: dict) -> str:
-    return "\n".join(f"{k + 1}. {x['text']}" + ("  (the closing line, said last)" if x.get("closing") else "")
+    """The story's moments for Gemini: k. [stage] what we see | who is in it | its bubbles."""
+    def bubble(b):
+        what = f"picture: {b['picture']}" + (f", \"{b['text']}\"" if b.get("text") else "") if b["kind"] == "picture" \
+            else f"\"{b['text']}\""
+        return f"{b['who']} {b['kind']}s {what}"
+    return "\n".join(f"{k + 1}. [{x.get('stage', '')}] {x['text']} | in it: {', '.join(x.get('who') or ['him'])}"
+                     + (" | " + "; ".join(bubble(b) for b in x["bubbles"]) if x.get("bubbles") else " | (no bubble)")
                      for k, x in enumerate(story["lines"]))
+
+
+def _people_text(story: dict) -> str:
+    people = story.get("people") or []
+    if not people:
+        return "(none: only him)"
+    return "; ".join(f"{p['id']} ({p['role']})" for p in people)
 
 
 def _recent_text(recent: list[dict]) -> str:
@@ -221,10 +243,11 @@ def system(story: dict, recent: list[dict]) -> str:
     import prompts
 
     look = prompts.load("look_silhouette")
-    return f"""You are the storyboard artist of a YouTube channel of animated motivational story films. A calm, warm
-narrator reads the script; the film shows it in pictures drawn entirely in code, in the channel's own look, from a
-library of places, things, people and actions (below). You design this story's pictures: the places it happens in, the
-people around its hero, and a shot for every line of the script.
+    return f"""You are the storyboard artist of a YouTube channel of animated motivational story films. There's no
+narrator: the film shows the story in pictures drawn entirely in code, in the channel's own look, from a library of
+places, things, people and actions (below), and what the people say and think appears in bubbles over their heads (code
+draws them, from the moments below). You design this story's pictures: the places it happens in, the people around its
+hero, and a shot for every moment.
 
 THE LOOK, in the channel owner's own words (its scene is one example of the look: its rules hold for every place you
 design, its room and its clock don't):
@@ -233,14 +256,18 @@ design, its room and its clock don't):
 \"\"\"
 
 THE HERO is always the same man, drawn the same way in every story: a black silhouette in a teal hoodie, two white eyes.
-He never speaks. Never describe his looks: say what he does, where, and how his eyes are.
+He speaks and thinks only in his bubbles. Never describe his looks: say what he does, where, and how his eyes are.
 
 THE STORY: "{story['title']}". Theme: {story.get('theme')}. Core message: {story.get('core_message')}
 Its stages, in the script writer's words, in order: hook, incident (the major incident), collapse, rock_bottom (rock
 bottom and the realization), transformation, payoff (the new life).
 
-THE SCRIPT, one numbered line per shot (the narrator reads them in this order):
+{_habit_text(story, recent)}
+
+THE MOMENTS, one numbered moment per shot, in order ([stage] what we see | who is in it | their bubbles):
 {_numbered(story)}
+
+THE PEOPLE (their ids are fixed: the bubbles name them): {_people_text(story)}
 
 WHAT YOU DESIGN
 1. places ({PLACES[0]}-{PLACES[1]}): every place the story happens in, designed for this story and built from the library.
@@ -259,11 +286,11 @@ WHAT YOU DESIGN
    places (below). No place holds more than a third of the shots: when many lines happen in one home or one night, use
    its other rooms and corners, other framings, the light changing as time passes. Every place is built from the
    library's parts: there are no ready-made places.
-2. cast (0-{CAST_MOST}): the people around him, never him. id: a short name (wife, boss, client); role: who they are to
-   him; their look from the library's parts: hair and its colour, cloth (never teal: that's his), extras, build, height.
-   Each looks different from the others at a glance. Everyone is an adult.
-3. shots: one for every line of the script, in order (line: its number), and {QUIET[0]}-{QUIET[1]} quiet shots without a
-   line (line: 0) where a moment needs to breathe: after a blow lands, before the turn, a place before he enters it.
+2. cast (0-{CAST_MOST}): the people around him, never him: the moments' people with their ids exactly (above), and anyone
+   else a shot needs. role: who they are to him; their look from the library's parts: hair and its colour, cloth (never
+   teal: that's his), extras, build, height. Each looks different from the others at a glance. Everyone is an adult.
+3. shots: one for every moment, in order (line: its number), and {QUIET[0]}-{QUIET[1]} quiet shots without a moment
+   (line: 0) where the film needs to breathe: after a blow lands, before the turn, a place before he enters it.
    - stage: the stage the line belongs to (every stage has shots, in order, never going back).
    - place: a place's id. light, weather: empty for the place's own, or this shot's.
    - action: what he does (ACTIONS), or none when he isn't in the shot; at: where (below); item: what he holds, or empty;
@@ -271,22 +298,21 @@ WHAT YOU DESIGN
    - others: who else is in the shot (cast ids, at most {OTHERS_MOST}), each with what they do, where, and their eyes.
    - framing, close_on (detail only), move, event (none, mostly), enter.
    - shows: what the picture shows, in one plain sentence (the reviewer checks the drawing against it).
-   - direction: a few words for the narrator's voice on this line ("slow, heavy", "quiet, tender"); empty when quiet.
-     He's a calm mentor telling it late at night: a direction changes his mood and pace, never his loudness or pitch
-     (never loud, shouting, booming, resonant, high or excited); a big moment is slower and firmer, not louder.
+   - Everyone in a moment ("in it") is in its shot: him (his action) and the people (others). Whoever has a bubble
+     must be in the picture, with room above their head for it: frame them medium or close, or wide when the place
+     matters.
    - label: rarely, a small caption at the top for a time ("3:00 AM", "SIX HOURS LEFT", "MONTHS LATER"), at most
      {LABELS_MOST} in the film; else empty.
-   - seconds: how long a quiet shot stays (3-6); 0 for a line's shot (the narrator sets it).
-   How to picture a line: when it says something visible, show exactly that (he stares at the empty seat across the
-   table: him at the table, the chair across empty). When it says something inside him (a thought, a feeling, a
-   lesson), show him in a moment that carries it (at the window, walking alone, his head in his hands, working at
-   dawn), never a random scene. Stay in a place for the lines that happen there, framed differently (wide to show the
-   place, then medium, close, a detail of what matters); move on when the story does. The people a line speaks of are in
-   its shot. The realization is close on his eyes.
-   The pictures can't show: words or text of any kind (on screens, letters, phones), faces (people are silhouettes with
-   two white eyes), blood or injuries, anyone undressed. A crash, a fire, an illness are shown by their signs (smoke,
-   an ambulance's lights, a hospital bed), never by harm.
-4. realization: the number of the shot (counting every shot, 1 = the first) where he realizes; the music starts
+   - seconds: how long a quiet shot stays (3-6); 0 for a moment's shot (its bubbles set it).
+   How to picture a moment: show exactly what it says we see, and whoever speaks or thinks in it, with room for their
+   bubble. When a bubble is a thought, show him in a moment that carries it (at the window, walking alone, his head in
+   his hands, working at dawn), never a random scene. Stay in a place for the moments that happen there, framed
+   differently (wide to show the place, then medium, close, a detail of what matters); move on when the story does. The
+   realization is close on his eyes.
+   The pictures can't show: words or text of any kind (the bubbles are code's; a phone shows only a SCREEN), faces
+   (people are silhouettes with two white eyes), blood or injuries, anyone undressed. A crash, a fire, an illness are
+   shown by their signs (smoke, an ambulance's lights, a hospital bed), never by harm.
+4. realization: the number of the shot (counting every shot, 1 = the first) where he realizes; the music lifts
    there. In rock_bottom, or the first shot of transformation.
 5. chapters: six short names (2-5 words), one for each stage in order: the film's YouTube chapters.
 6. thumbnail: the shot (its number) that makes a stranger click (him in it, a strong moment) and its words: lead (white,
@@ -335,8 +361,8 @@ def schema() -> dict:
         "action": {"type": "string", "description": "an action of the library"},
         "at": {"type": "string", "description": "where: a thing of the place, or spot, window, floor, in, out, across"},
         "item": {"type": "string", "description": "something they hold, or empty"},
-        "eyes": one_of(W.MOODS)},
-        "required": ["who", "action", "at", "item", "eyes"]}
+        "eyes": one_of(W.MOODS), "marks": {"type": "array", "items": one_of(W.MARKS), "description": "at most 2"}},
+        "required": ["who", "action", "at", "item", "eyes", "marks"]}
     place = {"type": "object", "properties": {
         "id": s, "name": s, "kind": one_of(W.PLACE_KINDS), "nature": {"type": "string", "description": "for kind nature, else empty"},
         "wall": one_of(W.WALLS), "floor": one_of(W.FLOORS), "window": one_of(W.WINDOWS), "view": one_of(W.VIEWS),
@@ -359,21 +385,145 @@ def schema() -> dict:
         "weather": {"type": "string", "description": "empty, or this shot's weather"},
         "action": {"type": "string", "description": "what he does (an action), or none"}, "at": s, "item": s,
         "eyes": one_of(W.MOODS), "with": {"type": "string", "description": "hugging, handshake, arguing: the other's id"},
+        "marks": {"type": "array", "items": one_of(W.MARKS), "description": "round his head: at most 2"},
+        "screen": one_of([""] + list(W.SCREENS), "his phone's screen turned to us, or empty"),
         "others": {"type": "array", "items": person},
         "framing": one_of(FRAMINGS), "close_on": {"type": "string", "description": "detail: the thing; else empty"},
         "move": one_of(W.CAMERA), "event": one_of(_events()), "enter": one_of(W.ENTER),
         "effects": {"type": "array", "items": one_of(W.EFFECTS)}, "label": s, "seconds": {"type": "number"},
-        "shows": s, "direction": s},
-        "required": ["line", "stage", "place", "light", "weather", "action", "at", "item", "eyes", "with", "others",
-                     "framing", "close_on", "move", "event", "enter", "effects", "label", "seconds", "shows", "direction"]}
+        "shows": s},
+        "required": ["line", "stage", "place", "light", "weather", "action", "at", "item", "eyes", "with", "marks",
+                     "screen", "others",
+                     "framing", "close_on", "move", "event", "enter", "effects", "label", "seconds", "shows"]}
     return {"type": "object", "properties": {
         "places": {"type": "array", "items": place}, "cast": {"type": "array", "items": cast},
         "shots": {"type": "array", "items": shot}, "realization": {"type": "integer"},
         "chapters": {"type": "array", "items": s},
         "thumbnail": {"type": "object", "properties": {"shot": {"type": "integer"}, "lead": s, "punch": s},
                       "required": ["shot", "lead", "punch"]},
-        "description": s, "tags": {"type": "array", "items": s}},
-        "required": ["places", "cast", "shots", "realization", "chapters", "thumbnail", "description", "tags"]}
+        "description": s, "tags": {"type": "array", "items": s},
+        "habit": {"type": "string", "description": "this story's habit or struggle, shown big: a few words"}},
+        "required": ["places", "cast", "shots", "realization", "chapters", "thumbnail", "description", "tags", "habit"]}
+
+
+# --- the habit, shown big: exaggerated like a cartoon, whatever the story's habit is ---------------------------------------
+# (any of the library's exaggerated pieces can serve any story: none belongs to a topic. tools/silhouette_words.IDEAS only
+# offers a few ideas for the topics of the owner's list; nothing is drawn from it by force)
+HABIT_LEAST = {"fall": 6, "before": 4, "after": 2}   # shots that must show it big
+FALL = ("hook", "incident", "collapse", "rock_bottom")    # where the habit grips him
+RISE = ("transformation", "payoff")                      # where a virtue story shows the virtue
+BIG_EYES = ("hearts", "dollars", "spirals", "droopy", "furious", "side_eye", "smug", "sobbing", "terrified", "fire")
+BIGGER = {"sad": ("sobbing", "raincloud"), "angry": ("furious", "steam"), "tired": ("droopy", "zzz"),
+          "worried": ("terrified", "sweat"), "wide": ("terrified", "exclaim")}   # a shot's own eyes, made bigger
+
+
+def _ideas(story: dict) -> dict:
+    """A few ideas for the story's topic when it's one of the owner's list (else none)."""
+    text = " ".join(str(story.get(k) or "") for k in ("theme", "title", "core_message"))
+    name = W.ideas_for(story.get("topic") or "", text)
+    return W.IDEAS.get(name) or {}
+
+
+def _habit_text(story: dict, recent: list[dict]) -> str:
+    """The habit shown big, for Gemini: the story's own, with any of the library's exaggerated pieces."""
+    virtue = story.get("kind") == "virtue"
+    rule = (f"at least {HABIT_LEAST['before']} shots of hook, incident, collapse and rock_bottom show the weakness he "
+            f"overcomes big, and at least {HABIT_LEAST['after']} of transformation and payoff the virtue itself"
+            if virtue else
+            f"at least {HABIT_LEAST['fall']} shots of hook, incident, collapse and rock_bottom show it big, growing as it "
+            "grips him")
+    ideas = _ideas(story)
+    idea = ""
+    if ideas:
+        bits = [f"{k}: {', '.join(v)}" for k, v in ideas.items() if isinstance(v, list) and v and k != "words"]
+        idea = (f"\nA few ideas for {story.get('topic') or 'this topic'} (a starting point, not a rule: use what fits this "
+                "story, and anything else): " + "; ".join(bits))
+    last = sorted({p for r in recent[:1] for p in r.get("habit_used") or []})
+    return ("THE HABIT, SHOWN BIG. Whatever this story's habit or struggle is, the film shows it exaggerated, like a "
+            "cartoon, so a stranger sees it at once without a word. Name it in a few words, this story's own (habit), "
+            "and show it with the library's exaggerated pieces: any of them, whichever fit this story (none belongs to a "
+            "topic): the big eyes (" + ", ".join(BIG_EYES) + "), the marks round a head (" + ", ".join(W.MARKS) + "), "
+            "the habit actions (" + ", ".join(W.HABIT_ACTIONS) + "), his phone's screen (" + ", ".join(W.SCREENS) +
+            "), the things a habit leaves in his places (" + ", ".join(W.HABIT_PROPS) + "), the effects (" +
+            ", ".join(W.HABIT_EFFECTS) + "). " + rule[0].upper() + rule[1:] + ". Vary them: never the same piece in "
+            "every shot." + idea + (f"\nThe last story used: {', '.join(last)}: choose others where they fit."
+                                    if last else ""))
+
+
+def _pieces(shot: dict) -> set:
+    """The exaggerated pieces a shot shows: his big eyes, the marks round his head, a habit's action, his phone's
+    screen, a habit's effect."""
+    him = shot.get("him") or {}
+    used = set()
+    if him.get("eyes") in BIG_EYES:
+        used.add(f"eyes:{him['eyes']}")
+    used |= {f"mark:{m}" for m in him.get("marks") or [] if m in W.MARKS}
+    if him.get("action") in W.HABIT_ACTIONS:
+        used.add(f"action:{him['action']}")
+    if him.get("screen") in W.SCREENS:
+        used.add(f"screen:{him['screen']}")
+    used |= {f"effect:{e}" for e in shot.get("effects") or [] if e in W.HABIT_EFFECTS}
+    return used
+
+
+def _show_big(shots: list[dict], stages, least: int, story: dict, last: set, problems: list, notes: list,
+              what: str) -> None:
+    """At least `least` shots of `stages` showing it big. Short, it goes back to Gemini (a problem), and code shows it
+    itself on the shots that can carry it: the pieces this storyboard already chose first (its own habit), then the
+    shot's own eyes made bigger (sad: streaming tears and a rain cloud; angry: furious eyes and steam), then the ideas
+    for the story's topic when it has some."""
+    showing = [s for s in shots if s["stage"] in stages and _pieces(s)]
+    short = least - len(showing)
+    if short <= 0:
+        return
+    problems.append(f"the habit shown big ({what}): {len(showing)} shots show it, at least {least} must")
+    own = {}
+    for s in shots:
+        for p in _pieces(s):
+            own[p] = own.get(p, 0) + (0.5 if p in last else 1)
+    eyes = [p.split(":")[1] for p in sorted(own, key=lambda p: -own[p]) if p.startswith("eyes:")]
+    marks = [p.split(":")[1] for p in sorted(own, key=lambda p: -own[p]) if p.startswith("mark:")]
+    screens = [p.split(":")[1] for p in sorted(own, key=lambda p: -own[p]) if p.startswith("screen:")]
+    ideas = _ideas(story)
+    cands = [s for s in shots if s["stage"] in stages and s.get("him") and not _pieces(s)
+             and s["him"]["action"] not in ("asleep", "asleep_desk", "none")]
+    cands.sort(key=lambda s: (s["him"].get("eyes") not in BIGGER, shots.index(s)))   # (emotional ones first)
+    done = 0
+    for i, s in enumerate(cands):
+        if done >= short:
+            break
+        him = s["him"]
+        mood = him.get("eyes") or ""
+        big_eyes = eyes[i % len(eyes)] if eyes else (BIGGER.get(mood, (None, None))[0] or
+                                                     (ideas.get("eyes") or [None])[0])
+        mark = marks[i % len(marks)] if marks else (BIGGER.get(mood, (None, None))[1] or
+                                                    (ideas.get("marks") or [None])[0])
+        if stages == RISE:   # (the virtue: fierce resolve in his eyes, no marks)
+            big_eyes, mark = ("fire" if mood in ("determined", "open", "") else None), None
+        if big_eyes and mood not in ("closed", "happy"):
+            him["eyes"] = big_eyes
+        if mark and len(him.get("marks") or []) < 2:
+            him["marks"] = (him.get("marks") or []) + [mark]
+        if him["action"] in ("phone", "lying_awake", "doomscrolling") and not him.get("screen"):
+            pick = screens or ideas.get("screens") or []
+            him["screen"] = pick[0] if pick else ""
+        if _pieces(s):
+            done += 1
+    if done:
+        notes.append(f"code showed it big in {done} more shots ({what})")
+
+
+def _habits(shots: list[dict], story: dict, recent: list[dict], problems: list, notes: list) -> list[str]:
+    """The story's habit shown big in as many shots as HABIT_LEAST asks; returns the pieces the storyboard used."""
+    if not shots:
+        return []
+    last = {p for r in recent[:1] for p in r.get("habit_used") or []}
+    if story.get("kind") == "virtue":
+        _show_big(shots, FALL, HABIT_LEAST["before"], story, last, problems, notes, "the weakness, before his turn")
+        _show_big(shots, RISE, HABIT_LEAST["after"], story, last, problems, notes, "the virtue, after it")
+    else:
+        _show_big(shots, FALL, HABIT_LEAST["fall"], story, last, problems, notes, "his fall")
+    return sorted(set().union(*[_pieces(s) for s in shots]))
 
 
 # --- what code checks -------------------------------------------------------------------------------------------------------
@@ -533,12 +683,46 @@ def _cover(shots: list[dict], story: dict, problems: list, notes: list) -> list[
             copy.update(line_index=i, shows=base.get("shows", ""), label="", enter="cut")
             shots.insert(k + 1, copy)
             notes.append(f"line {i + 1} had no shot: it's over a copy of the shot before it")
-    for s in shots:
+    for s in shots:   # (a moment's shot carries its bubbles: code draws them over the speakers' heads)
         i = s["line_index"]
-        s["line"] = story["lines"][i]["text"] if i is not None else ""
-        if i is None:
-            s["direction"] = ""
+        s["line"] = ""
+        s["bubbles"] = json.loads(json.dumps(story["lines"][i].get("bubbles") or [])) if i is not None else []
     return shots
+
+
+def _speakers_in(shot: dict, cast: dict, where: str, problems: list, notes: list) -> None:
+    """Whoever has a bubble in a shot is in its picture: him (standing, when the shot left him out) or the person (code
+    puts them in when the shot didn't)."""
+    for b in shot.get("bubbles") or []:
+        who = b["who"]
+        if who == "him":
+            if not shot.get("him"):
+                notes.append(f"{where}: he has a bubble, so he's in the shot (standing)")
+                shot["him"] = {"action": "standing", "at": "spot", "item": "", "eyes": "", "with": "", "marks": [],
+                               "screen": ""}
+            continue
+        if any(o["who"] == who for o in shot.get("others") or []):
+            continue
+        if who not in cast:
+            problems.append(f"{where}: {who} has a bubble but isn't in the cast: add {who} to the cast")
+            continue
+        notes.append(f"{where}: {who} has a bubble, so they're in the shot (standing)")
+        shot.setdefault("others", []).append({"who": who, "action": "standing", "at": "spot", "item": "", "eyes": "",
+                                              "marks": []})
+
+
+def _people_in_cast(cast: dict, story: dict, problems: list, notes: list) -> None:
+    """The moments' people are all in the cast, by their ids (the bubbles name them): one missing is a problem, and
+    code gives them a plain look meanwhile."""
+    for k, person in enumerate(story.get("people") or []):
+        if person["id"] in cast:
+            continue
+        problems.append(f"the cast leaves out {person['id']} ({person['role']}): give them a look")
+        hair = ("short", "long", "bun", "short")[k % 4]
+        cast[person["id"]] = _person({"id": person["id"], "role": person["role"], "hair": hair,
+                                      "hair_color": ("brown", "black", "grey", "auburn")[k % 4],
+                                      "cloth": ("navy", "wine", "olive", "grey", "plum", "mustard")[k % 6], "extras": [],
+                                      "build": "average", "height": "average"}, person["id"], notes, problems)
 
 
 def plates_of(story: dict) -> list[dict]:
@@ -627,6 +811,7 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
         while cid in cast:
             cid += "_2"
         cast[cid] = _person(c, cid, notes, problems)
+    _people_in_cast(cast, story, problems, notes)
     if len(cast) > CAST_MOST:
         notes.append(f"{len(cast)} people: at most {CAST_MOST}")
     # the shots
@@ -659,7 +844,9 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
         him = None
         if action != "none":
             him = {"action": action, "at": _at(s.get("at")), "item": _item(s.get("item")),
-                   "eyes": s.get("eyes") if s.get("eyes") in W.MOODS else "", "with": _id(s.get("with"), "")}
+                   "eyes": s.get("eyes") if s.get("eyes") in W.MOODS else "", "with": _id(s.get("with"), ""),
+                   "marks": [x for x in dict.fromkeys(_word(m) for m in s.get("marks") or []) if x in W.MARKS][:2],
+                   "screen": s.get("screen") if s.get("screen") in W.SCREENS else ""}
         others = []
         for o in s.get("others") or []:
             who = _id(o.get("who"), "")
@@ -676,7 +863,9 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
                 continue
             oa = _action(o.get("action"), notes, missing, where)
             others.append({"who": who, "action": "standing" if oa == "none" else oa, "at": _at(o.get("at")),
-                           "item": _item(o.get("item")), "eyes": o.get("eyes") if o.get("eyes") in W.MOODS else ""})
+                           "item": _item(o.get("item")), "eyes": o.get("eyes") if o.get("eyes") in W.MOODS else "",
+                           "marks": [x for x in dict.fromkeys(_word(m) for m in o.get("marks") or [])
+                                     if x in W.MARKS][:2]})
         if len(others) > OTHERS_MOST:
             notes.append(f"{where}: at most {OTHERS_MOST} others in a shot")
             others = others[:OTHERS_MOST]
@@ -703,8 +892,7 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
             seconds = float(s.get("seconds") or 0)
         except (TypeError, ValueError):
             seconds = 0.0
-        shot = {"line_index": num - 1 if num else None, "line": "",
-                "direction": narrator.voice_direction(_clean(s.get("direction")))[:80],
+        shot = {"line_index": num - 1 if num else None, "line": "", "bubbles": [],
                 "stage": stage, "place": pid, "light": s.get("light") if s.get("light") in LIGHTS else "",
                 "weather": s.get("weather") if s.get("weather") in W.WEATHER else "", "him": him, "others": others,
                 "framing": framing, "close_on": close_on if framing == "detail" else "",
@@ -742,15 +930,20 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
     lacking = [STAGE_NAMES[x] for x in STAGES if x not in {s["stage"] for s in shots}]
     if lacking and shots:
         problems.append("every stage has its shots: none for " + ", ".join(lacking))
+    # the habit shown big in enough shots (code shows it itself when the answer falls short)
+    habit_used = _habits(shots, story, recent, problems, notes)
+    habit = _clean(raw.get("habit"))[:80]
     # each shot's people on their marks, its framing, its seconds
     quiet, labels = 0, 0
     for k, s in enumerate(shots):
         where = f"line {s['line_index'] + 1}" if s["line_index"] is not None else f"shot {k + 1} (quiet)"
-        if s["line_index"] is None:
-            quiet += 1
-            s["seconds"] = round(min(6.5, max(2.5, s["seconds"] or 3.5)), 2)
+        _speakers_in(s, cast, where, problems, notes)
+        if s["line_index"] is None or not s["bubbles"]:   # (a quiet shot, or a moment told by its picture alone)
+            quiet += s["line_index"] is None
+            s["seconds"] = round(min(6.5, max(2.5, s["seconds"] or story_agent.QUIET_MOMENT)), 2)
         else:
-            s["seconds"] = round(narrator.estimate_seconds(s["line"]) + story_film.LEAD + story_film.TAIL, 2)
+            s["seconds"] = round(story_agent.bubbles_span(s["bubbles"]) + story_agent.MOMENT_LEAD
+                                 + story_agent.MOMENT_TAIL, 2)
         if s["label"]:
             labels += 1
             if labels > LABELS_MOST:
@@ -820,14 +1013,14 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
     if len(tags) < 5:
         notes.append("tags: 6-12 search words")
     texts = [s["shows"] for s in shots] + [c["role"] for c in cast.values()] + list(chapters.values()) + [
-        lead, punch, description, *tags]
+        lead, punch, description, *tags] + [b["text"] for s in shots for b in s.get("bubbles") or []]
     hard = story_agent.rules_broken(" ".join(texts))
     hard += [p for p in problems if "everyone in the story is an adult" in p]
     problems += [h for h in hard if h not in problems]
     board = {"places": places, "cast": list(cast.values()), "shots": shots, "plates": plates, "realization": rk,
              "chapters": chapters,
              "thumbnail": {"shot": tk + 1, "lead": lead, "punch": punch}, "description": description, "tags": tags,
-             "missing": list(dict.fromkeys(missing)), "hard": hard}
+             "missing": list(dict.fromkeys(missing)), "hard": hard, "habit": habit, "habit_used": habit_used}
     return board, problems, notes
 
 
@@ -867,13 +1060,14 @@ def recent_boards(days: int = 60, leave_out: str = "") -> list[dict]:
     import series
 
     out = []
-    for v in db.recent_videos(days=days, parts=("brief", "story.title", "story.places")):
+    for v in db.recent_videos(days=days, parts=("brief", "story.title", "story.places", "story.habit_used")):
         st = v["plan"].get("story") or {}
         if v["format"] != series.STORY or v["status"] == "skipped" or not v["plan"].get("brief"):
             continue
         if leave_out and st.get("title") == leave_out:
             continue
-        out.append({"title": st.get("title") or "", "places": st.get("places") or []})
+        out.append({"title": st.get("title") or "", "places": st.get("places") or [],
+                    "habit_used": st.get("habit_used") or []})
     return out[:6]
 
 
@@ -885,7 +1079,7 @@ def design(story: dict, progress=log, recent: list[dict] | None = None, keep_raw
     text = system(story, recent)
     best, complaints, raw = None, [], {}
     for attempt in range(TRIES):
-        prompt = f"Storyboard \"{story['title']}\": every line of the script its shot, in order."
+        prompt = f"Storyboard \"{story['title']}\": every moment its shot, in order."
         if complaints:
             prompt += ("\n\nYour last storyboard is below, with these problems. Make it again with every one fixed, "
                        "keeping what works:\n- " + "\n- ".join(complaints[:30])

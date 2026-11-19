@@ -25,7 +25,9 @@ voice and spend no reading on a sample of their own (one made fresh each run cou
 voice (#7's closing line, "resonant, calm", 2026-11-17/18: read 2.4-3.5 semitones too high, or in another timbre, by
 both models, try after try, and the story waited for one line), so before a reading is given up:
   - one that only came out too high (by at most LOWER_MOST) is lowered to LOWER_TO above his sample, formants kept (as
-    "deeper" does), and measured again, pitch and timbre: no reading spent;
+    "deeper" does), and measured again, pitch and timbre: no reading spent; one that came out a little too low (at most
+    RAISE_BELOW under his range: #8's "Julian's bank account...", 3.2 semitones under him, 2026-11-19) is raised to
+    RAISE_TO the same way. His limits (tools/voiceprint.py) stay as they are: the moved reading must pass them;
   - when both his models read a part unlike him, it's read again in STEADY, his own register, in place of its lines'
     directions (one more reading from each, until one is his); the part is read that way from then on (its .steady
     mark), so asking again doesn't spend readings on the direction that failed.
@@ -82,6 +84,10 @@ FAILED_FOR = 30 * 60            # seconds a model that failed is asked last (a b
 LOWER_MOST = 2.5                # semitones a reading that came out too high may be lowered by (one from +2 to +3.5 above
                                 # his sample; higher isn't him: the dropped model read +4 to +5, tools/voiceprint.py)
 LOWER_TO = 1.0                  # semitones above his sample a lowered reading is brought to (his own: -2.4 to +1.2)
+RAISE_BELOW = 1.5               # semitones under his range (voiceprint.PITCH) a reading that came out too low may be, to
+                                # be raised (lower still isn't him)
+RAISE_TO = -2.2                 # semitones under his sample a raised reading is brought to (inside his own range, near its
+                                # foot: the smallest shift; a real reading of his moved 1.2-1.6 kept his timbre, 0.23-0.24)
 STEADY = "low, calm and unhurried"  # the direction a part read unlike him is read again in (his sample's register)
 # A line the Reviewer found rushed is read again "slowly", but Gemini doesn't always hear it (#52 came back at 3.7
 # words a second, 2026-10-27): one still faster than SLOW_LINE is slowed on its own (pitch kept), gently:
@@ -530,8 +536,8 @@ def narrate(lines: list[dict], out: Path, voice_cfg: dict | None = None, progres
     steady_mark = out.with_suffix(".steady")  # (this part was read unlike him before: it's read the steady way at once)
 
     def read_by(model: str, said: list[dict], how: str) -> dict | None:
-        """One reading of `said` by `model`, finished into `out`: returned if it's his voice (brought down into his
-        range when it only came out too high), else None (why: in attempts)."""
+        """One reading of `said` by `model`, finished into `out`: returned if it's his voice (brought into his range
+        when it only came out a little too high or too low), else None (why: in attempts)."""
         if not left_today().get(model):
             raise _UsedUp(model)
         progress(f"Reading the script in {name}'s voice (Gemini{how})")
@@ -549,14 +555,15 @@ def narrate(lines: list[dict], out: Path, voice_cfg: dict | None = None, progres
         like = spoken["likeness"] = voiceprint.compare(voiceprint.measure(out), his)
         why = like["why"]
         shift = _lowering(like)
-        if shift:  # (only too high: brought into his range, then measured again, pitch and timbre)
+        if shift:  # (only too high or too low: brought into his range, then measured again, pitch and timbre)
             spoken = _finish(audio, heard, said, out, "gemini", f"{name} ({model})", match, deeper, keep_gap, shift)
             spoken["likeness"] = voiceprint.compare(voiceprint.measure(out), his)
+            moved = f"brought {'down' if shift > 0 else 'up'} {abs(shift):.1f}"
             if spoken["likeness"]["his"]:
-                progress(f"That reading came out {like['pitch']:.1f} semitones higher than his voice: brought down "
-                         f"{shift:.1f}")
+                progress(f"That reading came out {abs(like['pitch']):.1f} semitones "
+                         f"{'higher' if shift > 0 else 'lower'} than his voice: {moved}")
                 return spoken
-            why = f"{why}; brought down {shift:.1f}: {spoken['likeness']['why']}"
+            why = f"{why}; {moved}: {spoken['likeness']['why']}"
         elif like["his"]:
             return spoken
         unlike.append(_plain(like))
@@ -595,12 +602,17 @@ def narrate(lines: list[dict], out: Path, voice_cfg: dict | None = None, progres
 
 def _lowering(like: dict) -> float:
     """How far to lower a reading that came out too high for his voice (its timbre may be off with the height alone: it's
-    measured again), to LOWER_TO above his sample; 0 when it isn't too high, or too high for that (another voice)."""
+    measured again), to LOWER_TO above his sample, or to raise one that came out a little too low, to RAISE_TO (a
+    negative number: semitones up); 0 when it's in his range, or too far out of it (another voice)."""
     pitch = like.get("pitch")
-    if pitch is None or pitch <= voiceprint.PITCH[1]:
+    if pitch is None:
         return 0.0
-    shift = round(pitch - LOWER_TO, 2)
-    return shift if shift <= LOWER_MOST else 0.0
+    if pitch > voiceprint.PITCH[1]:
+        shift = round(pitch - LOWER_TO, 2)
+        return shift if shift <= LOWER_MOST else 0.0
+    if voiceprint.PITCH[0] - RAISE_BELOW <= pitch < voiceprint.PITCH[0]:
+        return round(pitch - RAISE_TO, 2)
+    return 0.0
 
 
 def _plain(like: dict) -> str:
@@ -717,8 +729,8 @@ def voice_end(pcm) -> float:
 def _finish(audio: bytes, heard: list, lines: list[dict], out: Path, engine: str, voice: str, match: float,
             deeper: int = 0, keep_gap: float = KEEP_GAP, lowered: float = 0.0) -> dict:
     """The reading's pauses tightened, a line the Reviewer found rushed slowed on its own if it still is, the pauses a
-    line asks for put in, made deeper (and `lowered` more: one that came out too high), and saved; every word's time
-    follows."""
+    line asks for put in, made deeper (and `lowered` more: one that came out too high; less, a negative `lowered`: one
+    that came out a little too low), and saved; every word's time follows."""
     pcm, moved = tighten(_pcm(audio), heard, keep_gap)
     heard = [(moved(a), moved(b), w) for a, b, w in heard]
     timed, match = align(lines, heard)

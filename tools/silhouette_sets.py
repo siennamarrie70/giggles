@@ -643,6 +643,9 @@ class Stage:
             sprite = S.label_sprite(text, self.label_px)
             y = self.finish.bar + self.label_px * (1.25 if not self.tall else 1.6)
             S.paste(frame, sprite, W / 2, y, scale=0.55 + 0.45 * S.back_out(q, 2.2), opacity=smooth(q * 1.6) * smooth(alpha))
+        if st.get("bubbles"):   # what the people say and think (tools/silhouette_bubbles.py), under the grain and the bars
+            import silhouette_bubbles as BB
+            BB.draw(frame, st["bubbles"])
         frame = self.finish.apply(frame, index, still=st.get("still", False))
         fade = st.get("fade", 1.0)
         if fade < 1:
