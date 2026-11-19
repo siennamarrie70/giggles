@@ -63,6 +63,23 @@ def keep_secret(value: str) -> None:
             print(f"::add-mask::{value}", flush=True)
 
 
+def _hide_database_parts() -> None:
+    """The database address's own parts (its password, user and host) hidden like secrets too: redact() hides the whole
+    address, but an error from the database names its host and user without it (2026-11-19 audit)."""
+    from urllib.parse import urlsplit
+
+    for name in ("DATABASE_URL", "POSTGRES_URL", "NEON_DATABASE_URL"):
+        try:
+            parts = urlsplit(os.getenv(name) or "")
+            for part in (parts.password, parts.username, parts.hostname):
+                keep_secret(part or "")
+        except ValueError:  # (not an address: redact() still hides it whole)
+            continue
+
+
+_hide_database_parts()
+
+
 def redact(text, addresses: bool = True) -> str:
     """The text with every secret hidden: the value of each key, token, secret, password and database address in the
     environment (.env, or GitHub's and Vercel's settings), each secret made while running (keep_secret) and, with

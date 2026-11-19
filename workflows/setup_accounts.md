@@ -107,11 +107,15 @@ Follow `workflows/produce_long.md`: write a story (the Themes page, or ask for a
 make its film (**Make it now** in the Studio), watch it, then upload it as private and check it in YouTube Studio. Only
 then switch the autopilot on.
 
-### 8. Cloud: the morning run on GitHub Actions (free for a public repository)
+### 8. Cloud: the autopilot on GitHub Actions (free for a public repository)
 One story needs 15-30 minutes of drawing and about 1.5 GB of models and packages. Vercel's free functions stop after
 5 minutes and a Python function may be 500 MB unzipped (2026), so Vercel only shows the dashboard: it installs
-`requirements.txt` alone (the dashboard's packages), and the morning run `requirements-worker.txt` (those plus the
+`requirements.txt` alone (the dashboard's packages), and the autopilot's run `requirements-worker.txt` (those plus the
 video-making ones). GitHub Actions is free for public repositories (4 cores, 16 GB, up to 6 hours a job).
+**Keys in the workflows (2026-11-19 audit):** each secret goes only to the steps that use it (`env:` on the step, never
+the job): no step that installs packages has one (installing runs other people's code), the hourly check has only
+`DATABASE_URL`, the run's GitHub token reads only (`actions: read`: it fetches a film an earlier run kept), and only
+the small keep-alive job may change Actions settings. Keep it that way when adding a step or a secret.
 1. **Database (free):** a free PostgreSQL database (Aiven since 2026-11-15, after Neon's free allowance locked the
    old one) → copy its connection string. Put it in `.env` as `DATABASE_URL`, then copy this computer's data there once:
    `.venv/Scripts/python tools/db_copy.py` (every row keeps its number; the counts are checked). Restart the dashboard:
@@ -129,14 +133,16 @@ video-making ones). GitHub Actions is free for public repositories (4 cores, 16 
    `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`, `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and for
    Reels `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`, `INSTAGRAM_USERNAME` and `REELS_KEY` (it encrypts the short
    versions kept between runs; posting needs no Facebook app ID or secret). Claude can copy them all from `.env` with
-   `gh secret set`, without showing them. Two workflows then run: **Morning run** and **Reels** (at the short version's time,
-   posting the Reels whose morning run has ended). Variables tab: `PAUSED` = `false` (`true` stops the cloud run; the
+   `gh secret set`, without showing them. Two workflows then run: **Autopilot** and **Reels** (at the short version's
+   time, posting the Reels whose autopilot run has ended). Variables tab: `PAUSED` = `false` (`true` stops the cloud run; the
    dashboard's switch does too).
-4. **Test:** Actions tab → **Morning run** → **Run workflow**, tick **test**: it writes, makes and reviews one story
+4. **Test:** Actions tab → **Autopilot** → **Run workflow**, tick **test**: it writes, makes and reviews one story
    and uploads nothing. The first run downloads the models (about 1 GB, kept for the next runs). The log's ffmpeg step
    says whether the bundled ffmpeg has rubberband (his deeper voice); if not, the run uses Ubuntu's.
-5. From then on it runs by itself: every day at 06:55 India time (`.github/workflows/morning.yml`), with a catch-up
-   run at 13:00. GitHub emails you when a run fails; Telegram tells you when the day's story is scheduled.
+5. From then on it runs by itself: GitHub checks every hour, at :35 India time (`.github/workflows/morning.yml`,
+   `python tools/jobs.py due`), and makes the next story as soon as its slot is free (the story before it is public)
+   and the free quotas for all of it are there (`schedule.ahead`; workflows/produce_long.md). A check with nothing to
+   do ends in about a minute. GitHub emails you when a run fails; Telegram tells you when a story is scheduled.
 6. **The YouTube sign-in must not expire:** in Testing it lasts 7 days, and the cloud run would stop every week. Publish
    the app (step 2.3), which needs the `/about` and `/privacy` pages online: step 7.
 7. **Optional, the dashboard online (Vercel, Hobby):** vercel.com → sign up with GitHub → **Add New → Project** →
@@ -162,7 +168,7 @@ video-making ones). GitHub Actions is free for public repositories (4 cores, 16 
 ## Expected Outputs
 - `.env` filled in locally; the same keys as the GitHub repository's secrets
 - The data in the cloud database (`tools/db_copy.py`), with `DATABASE_URL` in `.env`
-- A green **test** run on the Actions tab, then the Morning run scheduled every day at 06:55 India time
+- A green **test** run on the Actions tab, then the Autopilot checking every hour (at :35 India time)
 
 ## Edge Cases & Known Issues
 - **The switch, as done on 2026-10-28:** stop the dashboard first (its loop writes to the laptop database), take off
@@ -174,6 +180,10 @@ video-making ones). GitHub Actions is free for public repositories (4 cores, 16 
 - **Vercel's screens (2026-10):** variables are under Settings → **Environment Variables** ("Environments" is a
   Pro feature: Cancel); type **Secret**, Production; a change needs **Redeploy** ("Use existing Build Cache" is
   fine). In the firewall, the **AND** button adds a second condition.
+- **The online dashboard's Channels page says "Not connected" for YouTube and Instagram (2026-11-19)** while this
+  computer's says connected: Vercel has no `YOUTUBE_*` / `INSTAGRAM_*` variables (its Connect buttons are greyed out
+  online). Posting isn't affected: the cloud's runs use GitHub's own copy of the keys. Adding the six variables from
+  `.env` to Vercel (then Redeploy) only lets the online page show the channel, what's live, and Stop/Delete videos.
 - **Reconnect on the YouTube page opens Google's page in the default browser** (Microsoft Edge on this laptop), not
   necessarily the dashboard's; another click says "Busy" until it's finished or 5 minutes pass.
 - **Vercel deployed before the data copy (2026-10-28):** leave out `DASHBOARD_USERNAME`/`DASHBOARD_PASSWORD` until
@@ -216,8 +226,8 @@ video-making ones). GitHub Actions is free for public repositories (4 cores, 16 
 - **Vercel Hobby is for non-commercial use.** Fine while growing; once the channel earns money, upgrade to Pro or move hosts.
 - **Vercel no longer runs the autopilot (2026-10-26):** its cron jobs are gone from `vercel.json`; GitHub Actions makes
   the stories.
-- **GitHub starts scheduled runs late at busy times** (often 5-30 minutes; a story takes 15-30), and the 13:00
-  catch-up covers a run it skipped. **A public repository's schedules switch off after 60 days
+- **GitHub starts scheduled runs late at busy times** (often 5-30 minutes), and the next hourly check covers a run it
+  skipped. **A public repository's schedules switch off after 60 days
   without a commit:** the workflow re-enables itself every run; if GitHub still emails a warning, press **Enable** on
   the Actions tab. **The run logs are public:** they show themes and titles, never the keys (GitHub hides secrets).
 - **Gemini free tier**: Google may use free-tier prompts to improve its products. Nothing private is sent: the channel's settings and your look description, the stories' scripts, frames of the finished films, and public view counts.

@@ -1,22 +1,26 @@
-# The morning run in the cloud. Every day at 06:55 India time GitHub starts a Linux machine (free for
-# public repositories: 4 cores, 16 GB) that makes the day's story (python tools/jobs.py morning): Agent 1 picks the
-# theme, Agent 2 writes the story, Agent 3 has the narrator read it and draws the film and its short version, Agent 4
-# reviews them, and Agent 5 uploads the film scheduled for 17:30 (series.post_at), its short version as a Short 3 hours
-# later; then it stops. The catch-up at 13:00
-# makes the day's story if the morning couldn't (e.g. the narrator's free readings, which renew at 13:30), and ends
-# within minutes otherwise. "Run workflow" on the Actions tab starts it by hand; with "test" it writes, makes and
-# reviews one story and uploads nothing.
-# Keys come from the repository's secrets (Settings -> Secrets and variables -> Actions); the PAUSED
-# variable, or the dashboard's pause switch, stops it.
+# The autopilot in the cloud. Every hour (at :35 India time) GitHub starts a Linux machine (free for public
+# repositories: 4 cores, 16 GB) that first checks, with only the dashboard's packages installed, whether there's anything
+# to do (python tools/jobs.py due): a story whose slot is due (as soon as the story before it is public: schedule.ahead
+# in config/channel.yaml) and whose free quotas are all there (the narrator's readings for all of it, his voice not
+# resting, YouTube's room for its uploads), or the day's numbers. Most hours there's nothing, and the run ends in about a
+# minute. When there is, it installs the video-making packages and makes the story (python tools/jobs.py morning):
+# Agent 1 picks the theme, Agent 2 writes the story, Agent 3 has the narrator read it and draws the film and its short
+# version, Agent 4 reviews them, and Agent 5 uploads the film scheduled for its slot (17:30, series.post_at), its short
+# version as a Short 3 hours later; then it stops. So the story after one that went public at 17:30 is made within the
+# hour, and one waiting for the narrator's free readings is made in the hour after they renew (13:30 India time).
+# "Run workflow" on the Actions tab starts it by hand (no check first); with "test" it writes, makes and reviews one
+# story and uploads nothing.
+# Keys come from the repository's secrets (Settings -> Secrets and variables -> Actions), each given only to the steps
+# that need it (2026-11-19 audit): installing packages runs other people's code, so no step that installs gets one; the
+# hourly check gets only the database's address. The PAUSED variable, or the dashboard's pause switch, stops it.
 # Instagram: at its end the short version of a Reel still waiting is kept with the run, encrypted (tools/kept.py), for the
 # Reels workflow (reels.yml) to post at its time. So is a story made but not uploaded because of YouTube's daily upload
-# limit: the next run (the catch-up) uploads it without making it again.
-name: Morning run
+# limit: a later run uploads it without making it again.
+name: Autopilot
 
 on:
   schedule:
-    - cron: "25 1 * * *"   # 06:55 India time: the run waits for 07:00 (schedule.make_at)
-    - cron: "30 7 * * *"   # 13:00: catch-up (the 17:30 story's slot is due until 18:30)
+    - cron: "5 * * * *"   # every hour at :05 UTC (:35 India time): the next story as soon as its slot is free
   workflow_dispatch:
     inputs:
       test:
@@ -26,11 +30,11 @@ on:
 
 concurrency:
   group: morning-run
-  cancel-in-progress: false  # a catch-up waits for a morning run still going
+  cancel-in-progress: false  # a check waits for a run still going (and then finds its story made)
 
 permissions:
   contents: read
-  actions: write  # only for the keep-alive step at the end
+  actions: read  # the run fetches a film an earlier run kept (gh run download); the keep-alive job has its own
 
 jobs:
   run:
@@ -38,18 +42,6 @@ jobs:
     timeout-minutes: 358  # GitHub's limit is 6 hours; the run stops at 5 h 40 min, then keeps its Reels' videos
     env:
       PYTHONUNBUFFERED: "1"
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}  # Reels (posting needs no app ID or secret)
-      INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
-      INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
-      REELS_KEY: ${{ secrets.REELS_KEY }}  # encrypts the short versions kept with the run (tools/kept.py)
-      PROMPTS_KEY: ${{ secrets.PROMPTS_KEY }}  # opens your look description and script writer's prompt (tools/prompts.py)
       PAUSED: ${{ vars.PAUSED }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -62,28 +54,52 @@ jobs:
           cache: pip
           cache-dependency-path: requirements*.txt
 
-      - name: Install (requirements-worker.txt, the dashboard's packages and the video-making ones)
+      - name: The dashboard's packages (installed with no key on the machine)
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        timeout-minutes: 10
+        run: pip install -r requirements.txt
+
+      - name: Anything to do? (a story due with its free quotas there, or the day's numbers)
+        id: due
+        timeout-minutes: 5
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}  # (the only key the check needs)
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Started by hand: no check"
+            echo "work=true" >> "$GITHUB_OUTPUT"
+          else
+            python tools/jobs.py due > due.txt
+            grep -E '^work=(true|false)$' due.txt >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install (requirements-worker.txt, the video-making packages; no key on the machine)
+        if: ${{ steps.due.outputs.work == 'true' }}
+        timeout-minutes: 20
         run: pip install -r requirements-worker.txt
 
       - name: Restore the model (whisper, about 250 MB, kept between runs)
         id: models
+        if: ${{ steps.due.outputs.work == 'true' }}
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .tmp/models
           key: models-v3  # (v2 held the case-study Shorts' models too, 1.2 GB: not restored any more)
 
       - name: The model on this machine (it downloads once)
+        if: ${{ steps.due.outputs.work == 'true' }}
         working-directory: tools
         run: python -c "import narration; narration._model()"
 
       - name: Keep the model for the next run
-        if: ${{ steps.models.outputs.cache-hit != 'true' }}
+        if: ${{ steps.due.outputs.work == 'true' && steps.models.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .tmp/models
           key: models-v3
 
       - name: ffmpeg with the rubberband filter (it makes his voice deeper)
+        if: ${{ steps.due.outputs.work == 'true' }}
         run: |
           if python -c "import imageio_ffmpeg, subprocess, sys; sys.exit(0 if 'rubberband' in subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-filters'], capture_output=True, text=True).stdout else 1)"; then
             echo "The bundled ffmpeg has rubberband"
@@ -95,20 +111,44 @@ jobs:
 
       - name: Test (one story written, made and reviewed, nothing uploaded)
         if: ${{ inputs.test }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PROMPTS_KEY: ${{ secrets.PROMPTS_KEY }}  # opens your look description and script writer's prompt (tools/prompts.py)
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
         run: |
           python tools/jobs.py prepare
           python tools/jobs.py publish --dry-run --newest
 
-      - name: Morning run
-        if: ${{ !inputs.test }}
+      - name: The autopilot's run (the story that's due, made and scheduled)
+        if: ${{ steps.due.outputs.work == 'true' && !inputs.test }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}  # Reels (posting needs no app ID or secret)
+          INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+          INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
+          REELS_KEY: ${{ secrets.REELS_KEY }}  # encrypts the short versions kept with the run (tools/kept.py)
+          PROMPTS_KEY: ${{ secrets.PROMPTS_KEY }}  # opens your look description and script writer's prompt (tools/prompts.py)
+          GH_TOKEN: ${{ github.token }}  # (read-only: fetches a film an earlier run kept, so it isn't made again)
         run: python tools/jobs.py morning
 
       - name: Keep the videos still needed (encrypted) - short versions still to post as Reels, and a story YouTube's upload limit held back
-        if: ${{ always() && !inputs.test }}
+        if: ${{ always() && !inputs.test && steps.due.outputs.work == 'true' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REELS_KEY: ${{ secrets.REELS_KEY }}
         run: python tools/jobs.py keep
 
       - name: Store them with this run for 3 days (the Reels workflow posts them at their time)
-        if: ${{ always() && !inputs.test }}
+        if: ${{ always() && !inputs.test && steps.due.outputs.work == 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: shorts-${{ github.run_id }}
@@ -118,11 +158,21 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
 
-      - name: Keep the schedule switched on (GitHub turns off a public repository's schedules after 60 days without a commit)
-        if: ${{ always() && github.event_name == 'schedule' }}
+  keep-alive:
+    # GitHub turns off a public repository's schedules after 60 days without a commit: each scheduled run switches both
+    # on again. The only job that may change Actions settings, with no key of the channel's and no code of ours.
+    needs: run
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Keep the schedules switched on
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/morning.yml/enable"
-          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/reels.yml/enable"
+          gh api -X PUT "repos/$REPO/actions/workflows/morning.yml/enable"
+          gh api -X PUT "repos/$REPO/actions/workflows/reels.yml/enable"

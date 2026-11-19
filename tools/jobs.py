@@ -2,11 +2,14 @@
 The jobs that run the channel on its posting schedule, by calling the six agents (agents/) in order: one motivation
 story a day, public at series.post_at (17:30 in India), and its short version (the whole story in under a minute) as a
 Short series.short_after_hours later. GitHub
-Actions runs the morning run every day (.github/workflows/morning.yml); the dashboard on this computer runs the same jobs
-while its database is the local one.
+Actions looks every hour (.github/workflows/morning.yml: `due`, then `morning` when there's something to do); the
+dashboard on this computer runs the same jobs while its database is the local one.
 
-  morning    the day's run: from schedule.make_at (07:00), the day's story, made and scheduled; then one summary to your
-             phone and the day's numbers. Then it rests until the next morning.
+  due        the cloud's hourly check, with only the dashboard's packages installed: is there anything for a run to do
+             now (a story due with its free quotas there, or the day's numbers)? Prints work=true or work=false
+  morning    the autopilot's run: the next story, made and scheduled once its slot is due (as soon as the story before
+             it is public: schedule.ahead) and the free quotas allow it (quota_short); then one summary to your phone and
+             the day's numbers
   autopilot  the day's slot (or, with --now / the dashboard's "Make the 17:30 video now", the next open one) -> the oldest
              story ready to go up (or a new one, written on the spot) -> Agent 3 makes the film and its short version and
              Agent 4 reviews them (unless that's done; a film that fails goes back to Agent 3, at most twice, then it's
@@ -32,10 +35,16 @@ A story that's waiting without its film (written from the Themes page, sent back
 run) is made and reviewed by the loop on this computer between runs, without anyone pressing "Make it now" (unmade()):
 not while Gemini's voice rests, a failed one again after PREVIEW_RETRY, and given up after PREVIEW_TRIES failures.
 
-A slot is due once its posting day's run has started (make_at that morning; see tools/slots.py) until an hour after the
-slot. next_chore() is what the dashboard's loop on this computer asks every minute: the morning run while the day's slot
-is open, then a waiting story's film, then the day's numbers. Between runs nothing is made ahead. Reels whose time has
-come are posted by the same loop beside all that (the instagram job as a task of its own).
+A slot is due from when it opens until an hour after it (tools/slots.py opens): with schedule.ahead (on since 2026-11-19,
+your choice), the moment the story before it goes public, so the next story is made then, not the next morning; without
+it, from make_at on its own day. Only the next slot is filled: one story waits ahead, never more. A story is started
+only when the free quotas it needs are all there (quota_short): the narrator's readings for all of it (readings_needed),
+his voice not resting, YouTube's room for its two uploads. Otherwise nothing is started (a story read half-way would be
+lost with the cloud's machine) and a later check starts it: the readings renew at 13:30 in India, hours before the 17:30
+slot. Gemini's text quota can't be counted ahead: if it's out, the run stops before a reading is spent.
+next_chore() is what the dashboard's loop on this computer asks every minute: the morning run while a slot is due and
+its quotas are there, then a waiting story's film, then the day's numbers. Reels whose time has come are posted by the
+same loop beside all that (the instagram job as a task of its own).
 
 In the cloud (GitHub Actions) there's no such loop, and the machine is wiped after each run: the morning run posts the
 Reels whose time comes while it goes, from a thread beside it (their videos are on its machine: _reels_beside); at its end
@@ -54,7 +63,8 @@ run and every automatic job. Stories, films and uploads you start yourself still
 through `progress` (stderr by default; the dashboard shows them live).
 
 Usage:
-    python tools/jobs.py morning               # the day's run (what GitHub runs at 06:55)
+    python tools/jobs.py due                   # anything to do? (GitHub's hourly check: work=true / work=false)
+    python tools/jobs.py morning               # the autopilot's run (what GitHub runs when there is)
     python tools/jobs.py autopilot [--now]     # one story; --now: the next open slot, even if it isn't due
     python tools/jobs.py prepare
     python tools/jobs.py publish [--dry-run] [--newest]  # --dry-run makes and reviews but doesn't upload; --newest: the story written last
@@ -77,6 +87,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the agents/ p
 import db  # noqa: E402
 import kept  # noqa: E402
 import llm  # noqa: E402
+import narration  # noqa: E402
+import narrator  # noqa: E402
 import notify  # noqa: E402
 import prompts  # noqa: E402
 import series  # noqa: E402
@@ -110,6 +122,10 @@ SLOT_PARTS = ("metadata.title", "brief.theme", "instagram", "short_upload")  # w
 PAUSE_CHECK = timedelta(minutes=10)    # while a run waits, the dashboard's pause switch (in the database) is read this
                                        # often: every read wakes the database
 REELS_FINISH = timedelta(minutes=10)   # ...and how long it waits, at its end, for a Reel being posted
+NEW_STORY_PARTS = 7                    # the narrator's readings for the film of a story not written yet (story.WORDS'
+                                       # most, 560 words, is about 7 parts of narrator.PART_WORDS)
+READINGS_SPARE = 2                     # readings a story must leave spare beyond its own (a part read again)
+QUOTA_WAIT = "it waits for the free quotas"  # (a run stopped for them: not a failure, a later check starts it)
 clock = slots.clock
 
 
@@ -135,7 +151,7 @@ def _now() -> datetime:
 
 def slot_board(start: datetime, end: datetime, sched: dict, now: datetime | None = None) -> list[dict]:
     """Each slot from start to end, with the story holding it and where it stands: posted, scheduled, making, late (its
-    time has come), due (its day's run has started), open (made in a later run) or missed."""
+    time has come), due (it has opened: tools/slots.py opens), open (it opens later) or missed."""
     now = now or _now()
     holders = db.slot_holders(slots.iso(start - sched["every"]), slots.iso(end + sched["every"]), parts=SLOT_PARTS)
     board = []
@@ -150,14 +166,13 @@ def slot_board(start: datetime, end: datetime, sched: dict, now: datetime | None
         elif slot < now - LATE_GRACE:
             state = "missed"
         else:
-            started = now >= slots.run_starts(slots.posting_day(slot, sched), sched)
-            state = "late" if slot <= now else "due" if started else "open"
+            state = "late" if slot <= now else "due" if now >= slots.opens(slot, sched) else "open"
         board.append({"slot": slot, "state": state, "video": video})
     return board
 
 
 def due_slot(now: datetime | None = None, sched: dict | None = None) -> datetime | None:
-    """The earliest slot that needs a story now, if any: an open slot of a posting day whose run has started."""
+    """The earliest slot that needs a story now, if any: one no story holds that has opened (tools/slots.py opens)."""
     now, sched = now or _now(), sched or slots.plan()
     return next((s["slot"] for s in slot_board(now - LATE_GRACE, now + timedelta(days=1), sched, now)
                  if s["state"] in ("late", "due")), None)
@@ -193,15 +208,80 @@ def tick(progress=_log) -> dict:
 
 
 def next_chore() -> tuple[str, dict] | None:
-    """What the loop on this computer should do now, most urgent first, or None. Between morning runs it rests:
-    nothing is made ahead. (Reels aren't a chore: the loop posts them at their time beside whatever is going.)"""
-    if check():
+    """What the loop on this computer should do now, most urgent first, or None: the autopilot's run while a slot is due
+    and the free quotas its story needs are there, then a waiting story's film, then the day's numbers. (Reels aren't a
+    chore: the loop posts them at their time beside whatever is going.)"""
+    if check() and not quota_short(publisher.choose()):
         return "morning", {}
     if waiting := unmade():
         return "publish", {"dry_run": True, "video_id": waiting["id"]}
     if stats_due():
         return "stats", {}
     return None
+
+
+def readings_needed(row: dict | None) -> int:
+    """The narrator's free readings making a story would take (row None: one not written yet, NEW_STORY_PARTS): one for
+    each part of its film unless its film is made (here, or kept by a cloud run for it), one for its short version unless
+    that's made too, and READINGS_SPARE beside them; none when nothing of it is left to read."""
+    if row is None:
+        return NEW_STORY_PARTS + 1 + READINGS_SPARE
+    plan = row["plan"]
+    kept_by = plan.get("kept_video") or {}
+    kept_film = bool(kept_by.get("run") and kept_by.get("render") == (plan.get("render") or {}).get("id"))
+    film_made = kept_film or animator.preview_path(row["id"]).exists()
+    lines = [line for line in (plan.get("script") or {}).get("lines") or [] if str(line.get("text") or "").strip()]
+    film = 0 if film_made else len(narrator.parts(lines)) if lines else NEW_STORY_PARTS
+    short = 0 if kept_film or (film_made and animator.short_made(row)) else 1
+    return film + short + READINGS_SPARE if film + short else 0
+
+
+def quota_short(row: dict | None = None, now: datetime | None = None) -> str | None:
+    """What a story needs that the free quotas don't have now, in plain words, or None when they have it all: the
+    narrator's voice not resting after failures, his free readings for all of the story (readings_needed of those left
+    today: they renew at 13:30 in India), YouTube's room for its two uploads (its daily upload limit). A story is started
+    only when this is None, so nothing is spent on one that would have to stop half-way."""
+    now = now or _now()
+    sched = slots.plan()
+    if animator.voice_resting():
+        return f"Gemini's voice, resting after failures until about {animator.rest_until()}"
+    left, need = sum(narration.left_today().values()), readings_needed(row)
+    if left < need:
+        return (f"the narrator's free readings: {left} left today, {need} needed (they renew at "
+                f"{clock(slots.parse(narration.renews_at()), sched)})")
+    room = upload_room_at(now)
+    if room and room > now:
+        return f"YouTube's daily upload limit (it should take uploads again at about {clock(room, sched)})"
+    return None
+
+
+def story_name(slot: datetime, sched: dict, first: bool = False) -> str:
+    """A slot's story in words, e.g. "tomorrow's 17:30 story" or "Friday's 17:30 story" (`first`: to begin a sentence,
+    "Tomorrow's 17:30 story")."""
+    word = slots.day_word(slot, sched, _now())
+    if word in ("Today's", "Tomorrow's") and not first:
+        word = word.lower()
+    return f"{word} {clock(slot, sched)} story"
+
+
+def due(progress=_log) -> dict:
+    """The cloud's hourly check (the first step of .github/workflows/morning.yml, before the video-making packages are
+    installed): {"work", "why"}: is there anything for a run to do now? A story whose slot is due and whose free quotas
+    are there, or the day's numbers. Its verdict is kept for the dashboard (note autopilot:check); it isn't a run."""
+    sched = slots.plan()
+    if paused():
+        found = {"work": False, "why": "the autopilot is paused"}
+    elif slot := check(progress):
+        short = quota_short(publisher.choose())
+        found = ({"work": True, "why": f"{story_name(slot, sched, first=True)} is due: making it now"} if not short else
+                 {"work": stats_due(), "why": f"{story_name(slot, sched, first=True)} is due and waits for {short}",
+                  "waits": short})
+    elif stats_due():
+        found = {"work": True, "why": "the day's numbers are due"}
+    else:
+        found = {"work": False, "why": "nothing to do: the next story is scheduled"}
+    db.keep_note("autopilot:check", {**found, "at": db.now_iso()})
+    return found
 
 
 def stats_due() -> bool:
@@ -392,11 +472,13 @@ def day_count(day, sched: dict) -> tuple[int, int]:
 
 
 def morning(progress=_log) -> dict:
-    """The day's run: from schedule.make_at, the day's story, made and scheduled; then one summary to your phone and the
-    day's numbers. A story that fails doesn't stop it: the next try waits RETRY_FIRST, twice as long after each failure
-    in a row, up to RETRY_MOST. It stops early (an error, so GitHub marks the run failed and emails you) when YouTube's
-    sign-in is broken, after MAX_TRIES stories, or at RUN_LIMIT; the pause switch stops it quietly. In the cloud the
-    Reels whose time comes meanwhile are posted beside it (_reels_beside)."""
+    """The autopilot's run: the story of the slot that's due (as soon as the story before it is public, with
+    schedule.ahead; else from make_at on its day), made and scheduled when the free quotas it needs are there
+    (quota_short: otherwise it stops at once, not a failure, and a later check starts it); then one summary to your
+    phone and the day's numbers. A story that fails doesn't stop it: the next try waits RETRY_FIRST, twice as long after
+    each failure in a row, up to RETRY_MOST. It stops early (an error, so GitHub marks the run failed and emails you) when
+    YouTube's sign-in is broken, after MAX_TRIES stories, or at RUN_LIMIT; the pause switch stops it quietly. In the cloud
+    the Reels whose time comes meanwhile are posted beside it (_reels_beside)."""
     try:
         if not (kept.in_cloud() and publisher.reels_on()):
             return _morning(progress)
@@ -433,7 +515,7 @@ def _morning(progress) -> dict:
     sched = slots.plan()
     started = _now()
     start = slots.run_starts(started.astimezone(sched["tz"]).date(), sched)
-    if started < start <= started + MORNING_WAIT:  # GitHub starts it at 06:55
+    if not sched["ahead"] and started < start <= started + MORNING_WAIT:  # (a run started just before make_at)
         progress(f"The run starts at {clock(start, sched)}; waiting until then")
         time.sleep((start - started).total_seconds())
     if skipped := _paused():
@@ -455,8 +537,12 @@ def _morning(progress) -> dict:
         if _now() - started >= RUN_LIMIT:
             stopped = "it ran out of time"
             break
+        if short := quota_short(publisher.choose()):  # (nothing started that would have to stop half-way)
+            stopped = f"{QUOTA_WAIT}: {short}"
+            progress(f"{story_name(slot, sched, first=True)} waits for {short}; a later check starts it")
+            break
         tries += 1
-        progress(f"The {clock(slot, sched)} story")
+        progress(f"Making {story_name(slot, sched)}")
         try:
             result = autopilot(slot=slot, progress=progress)
         except animator.Resting as e:  # the story waits for Gemini's voice: nothing counted
@@ -515,14 +601,16 @@ def _morning(progress) -> dict:
             stats(progress=progress)
         except Exception as e:  # the numbers can wait for tomorrow; the story is what matters
             progress(f"The day's numbers couldn't be read ({str(e)[:200]})")
-    waits = (stopped or "").startswith(LIMIT_STOP)  # (not a failure: a later run goes on when YouTube takes uploads)
+    # (not failures: a later run goes on when YouTube takes uploads, or when the free quotas are there)
+    waits = (stopped or "").startswith((LIMIT_STOP, QUOTA_WAIT))
+    slot = slots.day_slots(day, sched)[0]
     if stopped and stopped != "the autopilot is paused" and not waits:
-        raise RuntimeError(f"stopped without the day's story scheduled: {stopped}.{notes}")
-    if waits:
-        notify.run(f"⏳ Today's run stopped at YouTube's daily upload limit: {stopped[len(LIMIT_STOP) + 2:]}, and a later "
+        raise RuntimeError(f"stopped without {story_name(slot, sched)} scheduled: {stopped}.{notes}")
+    if (stopped or "").startswith(LIMIT_STOP):
+        notify.run(f"⏳ The run stopped at YouTube's daily upload limit: {stopped[len(LIMIT_STOP) + 2:]}, and a later "
                    f"run carries on then.{notes}")
     elif held and not made:
-        notify.run(f"⏸ Today's story isn't scheduled yet.{notes}")
+        notify.run(f"⏸ {story_name(slot, sched, first=True)} isn't scheduled yet.{notes}")
     return result
 
 
@@ -665,7 +753,7 @@ def run_job(name: str, **kwargs) -> dict:
         db.finish_run(run_id, False, {"error": str(e)})
         if not isinstance(e, animator.Resting):  # waiting for Gemini's voice isn't a failure
             what = (f"Making the film for story #{kwargs['video_id']}" if kwargs.get("dry_run") and kwargs.get("video_id")
-                    else "Today's morning run" if name == "morning" else f"The {name} job")
+                    else "The autopilot's run" if name == "morning" else f"The {name} job")
             notify.run(f"⚠️ {what} failed: {e}")
         raise
     result["seconds"] = round(time.monotonic() - started, 1)
@@ -677,7 +765,7 @@ def main() -> int:
     hide_secrets_in_crashes()   # (the cloud run's log is public: a crash's report is cleaned like every other line)
     background_priority()
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    parser.add_argument("job", choices=list(JOBS))
+    parser.add_argument("job", choices=[*JOBS, "due"])
     parser.add_argument("--dry-run", action="store_true", help="publish only: make and review but don't upload")
     parser.add_argument("--newest", action="store_true", help="publish only: the story written last, not the oldest ready one (the cloud test's)")
     parser.add_argument("--now", action="store_true", help="autopilot only: the next open slot, even if not due")
@@ -685,6 +773,15 @@ def main() -> int:
     parser.add_argument("--stay", type=float, default=0, help="instagram only: minutes to keep looking for Reels due")
     args = parser.parse_args()
 
+    if args.job == "due":  # (GitHub's hourly check: the answer for $GITHUB_OUTPUT, the reason in the run's log)
+        try:
+            found = due()
+        except Exception as e:
+            print(f"Error: {redact(e)}", file=sys.stderr)
+            return 1
+        print(f"work={'true' if found['work'] else 'false'}")
+        print(f"  {redact(found['why'])}", file=sys.stderr)
+        return 0
     if args.job in ("morning", "autopilot", "instagram") and (skipped := _paused()):  # (automatic: the cloud's)
         print(json.dumps(skipped))
         return 0

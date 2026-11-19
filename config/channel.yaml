@@ -6,7 +6,9 @@ channel:
 
 schedule:
   timezone: "Asia/Kolkata"   # the clock the posting time and the morning run are on
-  make_at: "07:00"           # the morning run that makes the day's story (at least an hour before it goes public)
+  ahead: true                # make the next story as soon as its slot is free (the story before it is public), when the
+                             # free quotas allow (tools/jobs.py quota_short); false: the morning run makes the day's story
+  make_at: "07:00"           # (ahead off) the morning run that makes the day's story (at least an hour before it goes public)
 
 series:                      # the channel (your idea since 2026-11-15): one 3-4 minute motivation story a day, drawn in code
                              # in your silhouette look, told by a calm, warm narrator, and its short version: the whole

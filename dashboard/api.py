@@ -569,8 +569,9 @@ def _autopilot_state(cfg: dict) -> dict:
         next_open = None
     return {
         "here": autopilot_here(),
-        "schedule": {k: sched[k] for k in ("timezone", "post_at", "make_at")},
-        "run": {"starts": slots.iso(slots.run_starts(shown, sched)), "slots": len(board),
+        "schedule": {k: sched[k] for k in ("timezone", "post_at", "make_at", "ahead")},
+        "check": db.latest_note("autopilot:check"),  # (the last check's verdict: is a story being made, or what it waits for)
+        "run": {"starts": slots.iso(slots.opens(day[0], sched)), "slots": len(board),  # (when its story could start)
                 "scheduled": sum(1 for s in board if s["state"] in ("scheduled", "posted")),
                 "running": bool(last and not last["finished_at"]), "last": _run_json(last)},
         "slots": [{"at": slots.iso(s["slot"]), "state": s["state"], "video": _slot_video(s["video"])} for s in board],
@@ -860,6 +861,8 @@ async def edit_video(video_id: int, request: Request):
         plan = story_agent.apply_edits(video["plan"], await _json(request))
     except (ValueError, IndexError, KeyError) as e:
         raise HTTPException(422, str(e))
+    except (TypeError, AttributeError):  # (an edit not in the page's shape: a list or text where an object goes)
+        raise HTTPException(422, "The changes aren't in the right shape: reload the page and try again.")
     animator.remove(animator.short_path(video_id))
     plan.pop("review", None)  # the words changed: a new film, reviewed afresh, without the old version's fixes
     plan.pop("fixes", None)
@@ -1636,8 +1639,8 @@ def music_file(name: str):
 @router.get("/api/settings")
 def get_settings():
     cfg = load_config()
-    return {"channel": cfg.get("channel") or {}, "schedule": cfg.get("schedule") or {}, "series": series.settings(),
-            "instagram": cfg.get("instagram") or {}, "editable": not ON_VERCEL}
+    return {"channel": cfg.get("channel") or {}, "schedule": {"ahead": True, **(cfg.get("schedule") or {})},
+            "series": series.settings(), "instagram": cfg.get("instagram") or {}, "editable": not ON_VERCEL}
 
 
 def _number(value, name: str, low: float, high: float, whole: bool = True):
@@ -1651,14 +1654,17 @@ def _number(value, name: str, low: float, high: float, whole: bool = True):
 
 
 def _validated(s: dict) -> dict:
-    channel = s.get("channel") or {}
+    channel, sent = s.get("channel") or {}, s.get("schedule") or {}
+    if not isinstance(channel, dict) or not isinstance(sent, dict):
+        raise ValueError("The settings aren't in the right shape: reload the page and try again.")
     name = str(channel.get("name", "")).strip()
     if not 1 <= len(name) <= 60:
         raise ValueError("Channel name: 1 to 60 characters.")
     contact = str(channel.get("contact_email") or "").strip()
     if contact and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", contact):
         raise ValueError("Contact email doesn't look like an email address.")
-    schedule = slots.validate(s.get("schedule") or {}, series.settings().get("post_at"))
+    # (a setting a page doesn't send keeps its value: an older page has no "ahead" switch)
+    schedule = slots.validate({**(load_config().get("schedule") or {}), **sent}, series.settings().get("post_at"))
     return {"name": name, "contact": contact, "schedule": schedule}
 
 
@@ -1679,5 +1685,6 @@ async def save_settings(request: Request):
         ch["name"], ch["contact_email"] = Q(v["name"]), Q(v["contact"])
         for key in ("timezone", "make_at"):
             data.setdefault("schedule", {})[key] = Q(v["schedule"][key])
+        data["schedule"]["ahead"] = bool(v["schedule"]["ahead"])
     update_config(change)
     return get_settings()

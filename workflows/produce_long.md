@@ -23,9 +23,22 @@ eight-part arc, before the redirect) are set aside: they stay in the Studio and 
 | 5 Publisher | The film into its slot (Film & Animation, the storyboard's description, chapters, the music's credit), its thumbnail, then the short version as a Short a few hours later (#shorts, the film's link); the Reel = the short version. | `agents/publisher.py` |
 | 6 Analyst | Daily numbers; long videos ranked by watch time; weekly lessons for the other five. | `agents/analyst.py` |
 
-The morning run (`python tools/jobs.py morning`, GitHub at 06:55 IST) writes, storyboards, makes and uploads the
-day's story (`jobs.make_story`: brief, script, storyboard). The dashboard's "Make the 17:30 video now" does the same
-at once. On this computer: `python tools/jobs.py prepare` writes and storyboards a story; `python tools/jobs.py
+The autopilot's run (`python tools/jobs.py morning`) writes, storyboards, makes and uploads the next story
+(`jobs.make_story`: brief, script, storyboard). The dashboard's "Make the 17:30 video now" does the same at once.
+
+**When (since 2026-11-19, your choice):** the next story is made as soon as its slot is free: the moment the story
+before it goes public (17:30), tomorrow's 17:30 slot is due (`slots.opens`, `schedule.ahead: true` in
+`config/channel.yaml`; the Settings switch "Next story"). Only the next slot is filled: one story waits ahead, never
+more. It's started only when the free quotas for all of it are there (`jobs.quota_short`): the narrator's readings
+(`jobs.readings_needed`: a part each for the film, one for the short version, 2 spare; 10 of the day's 20 for a story
+not written yet; fewer for one already written, none for one already made), his voice not resting, YouTube's room for
+its two uploads. Otherwise nothing is started (in the cloud a story read half-way is lost with the machine) and the next
+check starts it, at the latest in the hour after the readings renew (13:30 IST), hours before its slot. GitHub checks
+every hour at :35 IST (`.github/workflows/morning.yml`, the workflow "Autopilot": `python tools/jobs.py due`, with
+only the dashboard's packages; it ends in about a minute when there's nothing to do). Its verdict is kept (note
+`autopilot:check`) and the Schedule page shows it ("Up next · being made" or "Waits for free quotas", with the reason).
+Gemini's text quota can't be counted ahead: if it's out, the run stops before a reading is spent. With the switch off,
+the morning run makes the day's story from `schedule.make_at` (07:00), as before. On this computer: `python tools/jobs.py prepare` writes and storyboards a story; `python tools/jobs.py
 publish --dry-run --newest` makes and reviews it without uploading. Start the dashboard with `python app.py`
 (http://localhost:8000): it never runs work on old code and restarts itself with new code when idle.
 

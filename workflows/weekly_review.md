@@ -55,6 +55,6 @@ Once a week, see what's working, steer the channel, and keep everything free. Ab
   Keep the stories varied (the themes, the blows, the places, the turn-down) and watch for a YouTube Partner Program
   message about "inauthentic content".
 - **A day without its story because Gemini's voice was out** (there's no backup voice; the Activity page shows "waits
-  for Gemini's voice"): the narrator's free readings renew at 13:30 in India and the 13:00 catch-up run or the next
-  morning makes it. Often means the readings are too few: check the voice models in `tools/narration.py`.
+  for Gemini's voice"): the narrator's free readings renew at 13:30 in India and the hourly check after that makes it
+  (a story is only started when the readings for all of it are there). Often means the readings are too few: check the voice models in `tools/narration.py`.
 - When the channel starts earning, that's the time to consider paid extras (a better voice, more of it).

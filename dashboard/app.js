@@ -16,6 +16,26 @@ const STATUS = { planned: ["Waiting", "run"], making: ["Being made", "run"],
 const SLOT = { posted: ["Posted", "ok"], scheduled: ["Scheduled", "run"], making: ["Making…", "run"],
                late: ["Late · going out", "warn"], due: ["In today's run", "accent"], open: ["Next run", "idle"],
                missed: ["No post", "idle"], paused: ["Paused", "warn"] };
+/** What a slot says. With the next story made as soon as its slot is free (schedule.ahead), a due slot's story is
+ *  being made, or waits for the free quotas (the last hourly check, autopilot.check, says which). */
+function slotLabel(s, a) {
+  if (a.paused && ["due", "late"].includes(s.state)) return SLOT.paused;
+  if (a.autopilot.schedule.ahead !== false) {
+    if (s.state === "due") return recentCheck(a.autopilot)?.waits ? ["Waits for free quotas", "warn"] : ["Up next · being made", "accent"];
+    if (s.state === "open") return ["After the next one", "idle"];
+  }
+  return SLOT[s.state] || [s.state, "idle"];
+}
+/** The cloud's last hourly check (tools/jobs.py due), if it's from the last 90 minutes. */
+function recentCheck(ap) {
+  const c = ap.check;
+  return c && c.at && Date.now() - Date.parse(c.at) < 90 * 60 * 1000 ? c : null;
+}
+/** The last check's verdict, as a sentence for the Schedule page ("" when there's none recent). */
+function checkNote(ap) {
+  const c = recentCheck(ap);
+  return c ? ` Last check ${clockIn(c.at, scheduleTz())}: ${c.why}.` : "";
+}
 // Where a story stands on each platform (platforms() in agents/publisher.py), beside it on the Schedule page.
 const ON_YOUTUBE = { making: ["Being made", "run"], scheduled: ["Scheduled", "run"], public: ["Public", "ok"],
                      hidden: ["Private in Studio", "warn"], rejected: ["Rejected", "bad"], gone: ["Deleted in Studio", "bad"],
@@ -381,8 +401,9 @@ function renderShell() {
   $("#autopost").checked = on;
   $("#autopost-label").textContent = on ? "Autopilot on" : "Autopilot paused";
   $("#autopost-sub").textContent = !on ? "The agents wait for you"
-    : `One story a day at ${ap.schedule.post_at}, made from ${ap.schedule.make_at}${ap.here ? "" : " on GitHub"}`;
-  $("#pause-switch").title = "Off stops the morning run and all automatic work, here and in the cloud "
+    : `One story a day at ${ap.schedule.post_at}, made ${ap.schedule.ahead !== false ? "as soon as its slot is free"
+       : `from ${ap.schedule.make_at}`}${ap.here ? "" : " on GitHub"}`;
+  $("#pause-switch").title = "Off stops the autopilot and all automatic work, here and in the cloud "
                              + "(your own buttons keep working)";
   $("#stale").replaceChildren(a.stale ? h("div", { class: "callout banner", dataset: { tone: "warn" }, role: "status" },
     h("b", {}, "The software on this computer was updated after this dashboard started. "),
@@ -572,7 +593,7 @@ function slotRows(slots) {
   return slots.map(s => {
     const v = s.video;
     const waiting = ["due", "late"].includes(s.state);
-    const [label, tone] = SLOT[a.paused && waiting ? "paused" : s.state] || [s.state, "idle"];
+    const [label, tone] = slotLabel(s, a);
     const live = s.state === "posted";
     const link = v?.youtube_id && h("a", { class: "platform", dataset: { tone: live ? "ok" : "run" }, target: "_blank", rel: "noopener",
       href: live ? `https://www.youtube.com/watch?v=${v.youtube_id}` : `https://studio.youtube.com/video/${v.youtube_id}/edit`,
@@ -617,8 +638,10 @@ function overviewLede(a) {
   const sch = a.autopilot.schedule;
   const rhythm = `one story a day, public at ${sch.post_at} (${sch.timezone}), its short version as a Short `
     + `${a.series.short_after_hours} hours later`;
-  const made = `the morning run makes it from ${sch.make_at}: the theme, the story, the narrator, the film drawn in your look `
-    + "and its short version";
+  const made = (sch.ahead !== false
+      ? "each story is made as soon as its slot is free (the one before it is public), when the free quotas allow: "
+      : `the morning run makes it from ${sch.make_at}: `)
+    + "the theme, the story, the narrator, the film drawn in your look and its short version";
   if (a.paused) return `The autopilot is paused, so the agents wait for you. Switch it on (top right) for ${rhythm}; ${made}.`;
   if (!a.services.youtube) return "The autopilot is on, but YouTube isn't connected yet, so nothing can be posted.";
   return `The autopilot is on: ${rhythm}; ${made}${a.autopilot.here ? "" : " (on GitHub)"}.`;
@@ -630,10 +653,12 @@ async function loadOverview() {
   const posted = ap.slots.filter(s => s.state === "posted").length;
   const next = ap.next;
   const run = ap.run;
-  const ranToday = run.last && run.last.at >= run.starts;
+  const ranToday = run.last && run.last.at >= run.starts;  // (a run since the day's slot opened)
+  const ahead = ap.schedule.ahead !== false;
   const runNote = run.running ? "running now"
+    : ahead && !run.scheduled && recentCheck(ap)?.waits ? "waits for the free quotas (Schedule page)"
     : ranToday && run.last.finished ? (run.last.ok ? `done at ${clockIn(run.last.finished, scheduleTz())}` : "stopped early: see Activity")
-    : `starts at ${clockIn(run.starts, scheduleTz())}`;
+    : ahead ? "at the next hourly check" : `starts at ${clockIn(run.starts, scheduleTz())}`;
   const root = $("#view-overview");
   const today = new Date(ap.slots[0].at).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", timeZone: scheduleTz() });
   const n = a.narrator || {};
@@ -660,9 +685,9 @@ async function loadOverview() {
       { label: "Today's run", value: run.scheduled ? "Scheduled" : "–", note: runNote,
         tone: ranToday && !run.running && run.last.ok === 0 ? "warn" : null },
       { label: "Narrator's readings", value: n.left ?? "–", unit: `/ ${n.daily ?? 20} left`,
-        note: `a story takes 3-4; renewed at ${n.renews || "13:30"}` },
+        note: `a story takes about 8-10; renewed at ${n.renews || "13:30"}` },
       { label: "Autopilot", value: a.paused ? "Paused" : "On", tone: a.paused ? "warn" : "ok",
-        note: ap.here ? "checks every minute on this PC" : `runs on GitHub${ap.last_check ? `, last ${fromNow(ap.last_check)}` : ""}` },
+        note: ap.here ? "checks every minute on this PC" : `checks hourly on GitHub${ap.last_check ? `, last ${fromNow(ap.last_check)}` : ""}` },
     ]),
     section({ num: "01–06", title: "The six agents", text: "In order: each one hands its work to the next, and all of them "
       + "learn from the Reviewer's checks and the Analyst's numbers.", body: pipelineSteps() }),
@@ -1369,7 +1394,8 @@ function seriesCard(s) {
   };
   return h("div", { class: "card", id: "set-series" },
     h("div", { class: "card-head" }, h("h3", {}, h("span", { class: "muted", style: "font-family:var(--font-mono);font-weight:500;margin-right:8px" }, "S2.1"), "The stories")),
-    row("Goes public at", `Every day, on the schedule's clock (${s.schedule?.timezone}). It's made by the morning run (${s.schedule?.make_at}).`, postAt),
+    row("Goes public at", `Every day, on the schedule's clock (${s.schedule?.timezone}). ${s.schedule?.ahead !== false
+      ? "The next story is made as soon as the one before it is public (S2.3)." : `It's made by the morning run (${s.schedule?.make_at}).`}`, postAt),
     row("Short version", "Hours after the film it goes public as a Short (the whole story in under a minute); it's also the Reel when Instagram is on.", after),
     row("Length", "Minutes, shortest and longest.", h("div", { class: "inline-fields" }, low, high)),
     row("Vices", "Agent 1 alternates a vice and a virtue. Commas between themes.", vices),
@@ -1527,7 +1553,7 @@ const partCell = (v, which) => h("td", { class: "col-part", "data-label": which 
 function scheduleRow(s) {
   const a = state.app;
   const v = s.video;
-  const [label, tone] = SLOT[a.paused && ["due", "late"].includes(s.state) ? "paused" : s.state] || [s.state, "idle"];
+  const [label, tone] = slotLabel(s, a);
   return h("tr", { class: "slot-row", dataset: { state: s.state, next: s.at === a.autopilot.next?.at && !a.paused ? "1" : "0" } },
     h("td", { class: "col-time" }, h("b", {}, clockIn(s.at, scheduleTz()))),
     h("td", { class: "col-time muted" }, nyTime(s.at)),
@@ -1578,7 +1604,8 @@ async function loadSchedule() {
     data.youtube.error && h("div", { class: "callout banner", dataset: { tone: "warn" } },
       h("b", {}, "YouTube didn't say how they stand just now "), `(${data.youtube.error}). The YouTube side shows what `
       + "the dashboard knows; it asks again in 2 minutes."),
-    section({ num: "5.1", title: "Today's story", text: `One story a day at ${ap.schedule.post_at} (${scheduleTz()}), made in the morning run from ${ap.schedule.make_at}.`,
+    section({ num: "5.1", title: "Today's story", text: `One story a day at ${ap.schedule.post_at} (${scheduleTz()}), ${ap.schedule.ahead !== false
+      ? "made as soon as its slot is free, when the free quotas allow" : `made in the morning run from ${ap.schedule.make_at}`}.${checkNote(ap)}`,
       body: table([["Time", { class: "col-time" }], ["New York", { class: "col-time" }], "Story",
                    partHead("ic-youtube", "YouTube"), partHead("ic-instagram", "Instagram")],
                   data.slots.map(scheduleRow), "schedule") }),
@@ -1920,7 +1947,14 @@ async function loadSettings() {
     card("schedule", "S2.3", "The clock",
       row("Time zone", "The posting time and the morning run are on this clock.",
           select("timezone", zones.map(z => [z, z === browserZone ? `${z} (this device)` : z]), sch.timezone), "s-timezone"),
-      row("Morning run", `When the day's story is made: at least an hour before it goes public (${s.series.post_at}).`,
+      row("Next story", "Made as soon as its slot is free (the story before it is public), when the narrator's free "
+            + "readings for all of it and YouTube's uploads are there; otherwise when they renew (13:30 in India). Off: "
+            + "the morning run below makes the day's story.",
+          h("label", { class: "switch", style: "margin-left:0;width:fit-content" },
+            h("input", { type: "checkbox", id: "s-ahead", name: "ahead", role: "switch", checked: sch.ahead !== false, disabled: ro }),
+            h("span", { class: "switch-track", "aria-hidden": "true" }, h("span", { class: "switch-thumb" })),
+            h("span", { class: "switch-text" }, h("b", {}, "As soon as its slot is free"))), "s-ahead"),
+      row("Morning run", `With the switch above off: when the day's story is made, at least an hour before it goes public (${s.series.post_at}).`,
           h("input", { class: "input", type: "time", id: "s-make_at", name: "make_at", value: sch.make_at || "07:00", disabled: ro }), "s-make_at")),
     h("div", { class: "savebar" },
       h("p", { class: "note" }, ro ? "Settings can only be changed on your computer." : "Saved to config/channel.yaml."),
@@ -1941,7 +1975,7 @@ async function saveSettings(event) {
   const f = new FormData(event.target);
   const body = {
     channel: { name: f.get("name"), contact_email: f.get("contact_email") },
-    schedule: { timezone: f.get("timezone"), make_at: f.get("make_at") },
+    schedule: { timezone: f.get("timezone"), make_at: f.get("make_at"), ahead: f.get("ahead") === "on" },
   };
   try {
     await api("/api/settings", { method: "PUT", json: body });

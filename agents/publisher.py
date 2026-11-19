@@ -187,10 +187,11 @@ def upload(row: dict, slot: datetime, sched: dict, progress=log) -> dict:
     watch = f"https://www.youtube.com/watch?v={result['id']}"
     short_note = (f"\nIts short version goes public as a Short at {slots.clock(short_at, sched)}." if short_id
                   else "\nIts short version couldn't be uploaded: send it again from the dashboard.")
+    whose = slots.day_word(slot, sched)  # ("Tomorrow's" for a story made as soon as its slot was free)
     if live_now:
-        notify.run(f"\U0001F3AC Today's story is live (the {when} slot):\n{meta['title']}\n{watch}{short_note}")
+        notify.run(f"\U0001F3AC {whose} story is live (the {when} slot):\n{meta['title']}\n{watch}{short_note}")
     else:
-        notify.run(f"\U0001F3AC Today's story goes live at {when}:\n{meta['title']}\nWatch, edit or delete it before then: "
+        notify.run(f"\U0001F3AC {whose} story goes live at {when}:\n{meta['title']}\nWatch, edit or delete it before then: "
                    f"{result['studio_url']}{short_note}")
     return {"video_id": row["id"], "youtube_id": result["id"], "slot": slots.iso(slot), "publish_at": publish_at,
             "live_now": live_now, "title": meta["title"], "thumbnail": plan["youtube_thumbnail"].get("set"),

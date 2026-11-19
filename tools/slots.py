@@ -3,8 +3,9 @@ The posting timetable: one story a day, public at `series.post_at` (17:30) on th
 (config/channel.yaml), its short version as a Short series.short_after_hours later. The moment a story goes public is
 its "slot".
 
-Each day's story is made in the morning run, which starts at `schedule.make_at` (07:00) that day: from then on the
-day's slot is due (tools/jobs.py morning).
+When a slot needs its story (opens): with `schedule.ahead` (on, your choice of 2026-11-19), the moment the story before it
+goes public, so the next story is made as soon as its slot is free, when the free quotas allow (tools/jobs.py
+quota_short); the cloud looks every hour. Without it, in the morning run of its own day, from `schedule.make_at` (07:00).
 
 Usage:
     python tools/slots.py            # today's and tomorrow's slots, in the schedule's time and UTC
@@ -53,7 +54,10 @@ def validate(raw: dict, post_at: str) -> dict:
     if _minutes(post_at) - _minutes(make) < MIN_LEAD.total_seconds() / 60:
         raise ValueError(f"Morning run: start it at least {MIN_LEAD.seconds // 60} minutes before the story goes "
                          f"public ({post_at}).")
-    return {"timezone": zone, "post_at": post_at, "make_at": make}
+    ahead = raw.get("ahead", True)
+    if not isinstance(ahead, bool):
+        ahead = str(ahead).strip().lower() in ("true", "1", "yes", "on")
+    return {"timezone": zone, "post_at": post_at, "make_at": make, "ahead": ahead}
 
 
 def plan(cfg: dict | None = None) -> dict:
@@ -85,6 +89,21 @@ def posting_day(slot: datetime, sched: dict) -> date:
 def run_starts(day: date, sched: dict) -> datetime:
     """When the run that makes `day`'s story starts (make_at that morning), in UTC."""
     return datetime.combine(day, sched["make"], tzinfo=sched["tz"]).astimezone(timezone.utc)
+
+
+def opens(slot: datetime, sched: dict) -> datetime:
+    """When a slot starts needing its story: with `ahead`, the moment the slot before it comes (that story goes public);
+    without, its posting day's morning run (make_at)."""
+    if sched.get("ahead"):
+        return slot - sched["every"]
+    return run_starts(posting_day(slot, sched), sched)
+
+
+def day_word(slot: datetime, sched: dict, now: datetime | None = None) -> str:
+    """Whose story a slot holds, by its posting day on the schedule's clock: "Today's", "Tomorrow's" or e.g. "Friday's"."""
+    now = now or datetime.now(timezone.utc)
+    days = (posting_day(slot, sched) - now.astimezone(sched["tz"]).date()).days
+    return {0: "Today's", 1: "Tomorrow's"}.get(days) or f"{posting_day(slot, sched):%A}'s"
 
 
 def between(start: datetime, end: datetime, sched: dict) -> list[datetime]:
