@@ -1566,7 +1566,8 @@ function partDetail(p, which) {
              public: p.at ? `since ${onClock(p.at)}` : "",
              hidden: `made ${p.privacy === "unlisted" ? "unlisted" : "private"} in YouTube Studio: it won't go public by itself`,
              rejected: `YouTube rejected it${p.why ? ` (${p.why})` : ""}`,
-             gone: "deleted in YouTube Studio: Delete clears it here" }[p.state] || "";
+             gone: "deleted in YouTube Studio: Delete clears it here",
+             stopped: "kept private: it won't go public by itself", deleted: "deleted from YouTube" }[p.state] || "";
   }
   return { making: "goes once it's on YouTube",
            none: p.why || "",
@@ -1628,29 +1629,78 @@ const partHead = (id, name) => [[icon(id, "th-ic"), name], { class: "col-part" }
 const partCell = (v, which) => h("td", { class: "col-part", "data-label": which === "youtube" ? "YouTube" : "Instagram" },
   v ? platformPart(v, which) : h("span", { class: "muted" }, "–"));
 
-/** A slot on the Schedule page: its time, its story, and the story's YouTube and Instagram parts. */
-function scheduleRow(s) {
-  const a = state.app;
-  const v = s.video;
-  const [label, tone] = slotLabel(s, a);
-  return h("tr", { class: "slot-row", dataset: { state: s.state, next: s.at === a.autopilot.next?.at && !a.paused ? "1" : "0" } },
-    h("td", { class: "col-time" }, h("b", {}, clockIn(s.at, scheduleTz()))),
-    h("td", { class: "col-time muted" }, nyTime(s.at)),
-    h("td", { class: "title-cell" }, v
-      ? [h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title || `Story #${v.id}`)), v.theme && h("small", {}, cap(v.theme))]
-      : [pill(label, tone), h("small", {}, s.state === "missed" ? "Nothing went out" : "Not made yet")]),
+/** A day on the schedule's clock, e.g. Fri 21 Nov (with its year when that isn't this year's). */
+function dayOn(iso) {
+  const tz = scheduleTz();
+  const year = t => new Date(t).toLocaleDateString("en-GB", { year: "numeric", timeZone: tz });
+  return new Date(iso).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: tz,
+                                                     ...(year(iso) !== year(Date.now()) ? { year: "numeric" } : {}) });
+}
+/** The Schedule page's date column: the day, the time on the schedule's clock, and how far off it is. */
+const dateCell = iso => h("td", { class: "col-time" }, iso
+  ? [h("b", { style: "display:block" }, dayOn(iso)), clockIn(iso, scheduleTz()),
+     h("small", { class: "muted", style: "display:block" }, fromNow(iso))]
+  : h("span", { class: "muted" }, "–"));
+const nyCell = iso => h("td", { class: "col-time muted" }, iso ? nyTime(iso) : "");
+
+/** A story's cell on the Schedule page: its title (to the Studio), its number and theme, and a line or two more. */
+function storyCell(v, lines = []) {
+  return h("td", { class: "title-cell" },
+    h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title || `Story #${v.id}`)),
+    h("small", {}, [`#${v.id}`, v.theme && cap(v.theme)].filter(Boolean).join(" · ")),
+    lines.filter(Boolean).map(t => h("small", {}, t)));
+}
+
+/** Where a story's short version stands as a Short, in a line. */
+function shortLine(v) {
+  const s = v.short;
+  if (!s) return null;
+  if (s.taken_off) return "Short: taken off with the film";
+  if (!s.youtube_id) return `Short: not uploaded${s.error ? ` (${s.error.slice(0, 90)})` : ""}`;
+  if (!s.at) return "Short: on YouTube";
+  return `Short: ${new Date(s.at) > new Date() ? "goes public" : "public since"} ${dayOn(s.at)} ${clockIn(s.at, scheduleTz())}`;
+}
+
+/** A story on YouTube (Scheduled or Posted): its date, its story, and its YouTube and Instagram parts. */
+function uploadRow(v) {
+  const off = v.taken_off_at && `${v.status === "deleted" ? "Deleted" : "Stopped"} ${dayOn(v.taken_off_at)}, `
+    + `${clockIn(v.taken_off_at, scheduleTz())}`;
+  return h("tr", { class: "slot-row", dataset: { state: v.status } },
+    dateCell(v.when), nyCell(v.when), storyCell(v, [shortLine(v), off]),
     partCell(v, "youtube"), partCell(v, "instagram"));
+}
+
+/** A slot still to fill (Will be posted): its date, the story that takes it (being made for it, or the next one in the
+ *  queue), and where that stands. */
+function comingRow(s) {
+  const a = state.app;
+  const v = s.video || s.queued;
+  const [label, tone] = s.state === "open" ? ["Later", "idle"] : slotLabel(s, a);
+  const q = s.queued;
+  const how = s.video ? "Being made and uploaded for this slot now"
+    : q ? (q.passed ? "Made, and passed the Reviewer: it goes up for this slot"
+           : q.made ? "Its film is made: the Reviewer checks it before it goes up"
+           : "Written: its film is made and reviewed before it goes up")
+    : s.state === "open" ? `Not written yet: its story is made from ${dayOn(s.opens)} ${clockIn(s.opens, scheduleTz())}`
+    : "Not written yet: a new story is written for it";
+  return h("tr", { class: "slot-row", dataset: { state: s.state, next: s.at === a.autopilot.next?.at && !a.paused ? "1" : "0" } },
+    dateCell(s.at), nyCell(s.at),
+    v ? storyCell(v, [q && `Next in the queue (written ${dayOn(q.created_at)})`])
+      : h("td", { class: "title-cell" }, h("b", { class: "slot-title" }, "No story yet"), h("small", {}, "Agent 1 picks its theme")),
+    h("td", { class: "col-part", "data-label": "Where it stands" },
+      h("div", { class: "part" }, h("div", { class: "part-state" }, pill(label, tone), h("small", { title: how }, how)))));
 }
 
 async function loadSchedule() {
   const a = state.app;
   const ap = a.autopilot;
   const data = await api("/api/schedule");
-  const now = new Date();
-  const stories = [...data.slots.map(s => s.video).filter(Boolean), ...data.later];
-  const ahead = stories.filter(v => v.status === "scheduled" && v.publish_at && new Date(v.publish_at) > now).length;
-  const posted = data.slots.filter(s => s.state === "posted").length;
+  const shown = data.posted.filter(v => v.status === "scheduled").length;
+  const filled = data.coming.filter(s => s.video || s.queued).length;
   const ig = a.services.instagram || {};
+  const timeHead = [["Date", { class: "col-time" }], ["New York", { class: "col-time" }], "Story"];
+  const partsHead = [partHead("ic-youtube", "YouTube"), partHead("ic-instagram", "Instagram")];
+  const later = data.queue_later.length;
   $("#view-schedule").replaceChildren(...[
     pageHead({ eyebrow: "05 · Agent 5 · Publisher", agent: "publisher", title: "Schedule",
       lede: "Agent 5 uploads each story that passed the Reviewer as private with its slot as the publish time, so YouTube "
@@ -1658,14 +1708,16 @@ async function loadSchedule() {
             + "the description, its thumbnail), then its short version (the whole story in under a minute) as a Short, "
             + `public ${a.series.short_after_hours} hours later and linking to the film. With Instagram on, the short version `
             + "also goes up as a Reel at its time. Beside each story: where it stands on YouTube and on Instagram, with "
-            + "Open, Post now and Delete for each (and Stop, which keeps the film and its short version private on YouTube).",
+            + "Open, Post now and Delete for each (and Stop, which keeps the film and its short version private on YouTube). "
+            + "Below, every story with its date: uploaded and waiting, the next days' slots, and everything that went out.",
       actions: [h("a", { class: "btn", href: "#settings" }, "Change the time"), makeButton({ primary: true })] }),
     kpis([
-      { label: "Posted today", value: posted, unit: `/ ${data.slots.length}` },
+      { label: "Scheduled", value: data.scheduled.length, note: "uploaded, private until their time" },
+      { label: "Will be posted", value: filled, unit: `/ ${plural(data.coming.length, "slot")}`,
+        note: `the next ${data.days} days that have a story` },
+      { label: "Posted", value: shown, note: data.posted.length > shown
+        ? `public on YouTube; ${data.posted.length - shown} stopped or deleted` : "public on YouTube" },
       { label: "Next story", value: ap.next ? clockIn(ap.next.at, scheduleTz()) : "–", note: ap.next ? fromNow(ap.next.at) : "" },
-      { label: "Scheduled ahead", value: ahead, note: "uploaded, waiting to go public" },
-      { label: "Next free slot", value: ap.next_open ? clockIn(ap.next_open, scheduleTz()) : "–",
-        note: ap.next_open ? fromNow(ap.next_open) : "every slot this week is taken" },
       { label: "Reels", value: ig.connected ? (ig.on ? "On" : "Off") : "–",
         note: ig.connected ? (ig.on ? "each short version also goes on Instagram" : "Reels are switched off") : "Instagram isn't connected" },
     ]),
@@ -1683,17 +1735,25 @@ async function loadSchedule() {
     data.youtube.error && h("div", { class: "callout banner", dataset: { tone: "warn" } },
       h("b", {}, "YouTube didn't say how they stand just now "), `(${data.youtube.error}). The YouTube side shows what `
       + "the dashboard knows; it asks again in 2 minutes."),
-    section({ num: "5.1", title: "Today's story", text: `One story a day at ${ap.schedule.post_at} (${scheduleTz()}), ${ap.schedule.ahead !== false
-      ? `${aheadWords(ap.schedule)}, when the free quotas allow` : `made in the morning run from ${ap.schedule.make_at}`}.${checkNote(ap)}`,
-      body: table([["Time", { class: "col-time" }], ["New York", { class: "col-time" }], "Story",
-                   partHead("ic-youtube", "YouTube"), partHead("ic-instagram", "Instagram")],
-                  data.slots.map(scheduleRow), "schedule") }),
-    data.later.length > 0 && section({ num: "5.2", title: "Later days", text: "Uploaded for a later day, private on YouTube until their time.",
-      body: table([["Goes public", { class: "col-time" }], "Story", partHead("ic-youtube", "YouTube"), partHead("ic-instagram", "Instagram")],
-        data.later.map(v => h("tr", {},
-          h("td", { class: "col-time" }, onClock(v.publish_at), h("small", { class: "muted", style: "display:block" }, fromNow(v.publish_at))),
-          h("td", { class: "title-cell" }, h("a", { href: `#studio/${v.id}` }, h("b", {}, v.title)), v.theme && h("small", {}, cap(v.theme))),
-          partCell(v, "youtube"), partCell(v, "instagram"))), "schedule") })].filter(Boolean));
+    section({ num: "5.1", title: "Scheduled", text: "Uploaded to YouTube as private, each with its time: YouTube makes the "
+      + `film public then, and its short version ${a.series.short_after_hours} hours later as a Short.`,
+      body: data.scheduled.length
+        ? table([...timeHead, ...partsHead], data.scheduled.map(uploadRow), "schedule")
+        : empty("Nothing is waiting on YouTube", "A story shows here once it's uploaded for its slot.") }),
+    section({ num: "5.2", title: "Will be posted", text: `The next ${data.days} days' slots, one story a day at `
+      + `${ap.schedule.post_at} (${scheduleTz()}), ${ap.schedule.ahead !== false ? aheadWords(ap.schedule)
+        : `made in the morning run from ${ap.schedule.make_at}`}. Each shows the story being made for it, or the one `
+      + "waiting in the queue that takes it (the oldest first, as the autopilot takes them)."
+      + (later ? ` ${plural(later, "more story")} wait${later === 1 ? "s" : ""} in the queue for the days after.` : "")
+      + (data.paused ? " The autopilot is paused: nothing here is made or uploaded until it's on again." : checkNote(ap)),
+      body: data.coming.length
+        ? table([...timeHead, ["Where it stands", { class: "col-part" }]], data.coming.map(comingRow), "schedule")
+        : empty("Every slot is taken", `The next ${data.days} days' stories are all uploaded (Scheduled, above).`) }),
+    section({ num: "5.3", title: "Posted", text: "Everything that went out, newest first: public on YouTube, or stopped "
+      + `or deleted there${data.posted.length >= data.posted_most ? ` (the latest ${data.posted_most})` : ""}.`,
+      body: data.posted.length
+        ? table([...timeHead, ...partsHead], data.posted.map(uploadRow), "schedule")
+        : empty("Nothing has gone out yet", "Each story shows here once its time has come.") })].filter(Boolean));
   syncButtons();
 }
 

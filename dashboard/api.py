@@ -556,10 +556,19 @@ def ui_file(name: str, request: Request):
 def _slot_video(v: dict | None, live: dict | None = None) -> dict | None:
     if not v:
         return None
-    meta = v["plan"].get("metadata", {})
+    plan = v["plan"]
+    meta = plan.get("metadata", {})
+    short = plan.get("short_upload") or {}
+    # (a story stopped or deleted on YouTube: when, and the time it had then: publisher.take_off)
+    off = plan.get(v["status"]) if v["status"] in ("stopped", "deleted") else None
     return {"id": v["id"], "status": v["status"], "title": meta.get("title") or _draft_title(v) or v["theme"],
-            "theme": (v["plan"].get("brief") or {}).get("theme") or v["theme"], "youtube_id": v["youtube_id"],
-            "publish_at": v["publish_at"], "slot": v["slot"], "platforms": publisher.platforms(v, live)}
+            "theme": (plan.get("brief") or {}).get("theme") or v["theme"], "youtube_id": v["youtube_id"],
+            "publish_at": v["publish_at"], "slot": v["slot"], "platforms": publisher.platforms(v, live),
+            "when": v["publish_at"] or (off or {}).get("publish_at") or (off or {}).get("slot") or v["slot"],
+            "taken_off_at": (off or {}).get("at"),
+            "short": {"status": short.get("status"), "at": short.get("publish_at"), "youtube_id": short.get("youtube_id"),
+                      "error": short.get("error"), "taken_off": bool(short.get("stopped") or short.get("deleted"))}
+            if short else None}
 
 
 def _draft_title(v: dict) -> str | None:
@@ -1101,21 +1110,55 @@ def _youtube_now(ids: list[str]) -> dict | None:
     return None if seen["error"] else {i: seen["found"].get(i) for i in ids}
 
 
+SCHEDULE_DAYS = 7       # the Schedule page's "Will be posted" shows this many days of slots ahead
+POSTED_MOST = 200       # ...and its "Posted" at most this many stories, newest first
+LIVE_DAYS = 7           # YouTube is asked how the posts of the last week stand (older ones show what the dashboard knows)
+SCHEDULE_PARTS = jobs.SLOT_PARTS + ("stopped", "deleted")
+QUEUE_PARTS = jobs.SLOT_PARTS + ("review.passed", "review.held", "review.override", "render.id", "render.look")
+
+
+def _queue() -> list[dict]:
+    """The stories written and waiting for a slot, in the order the autopilot takes them (publisher.choose: the oldest
+    first, not held by the Reviewer, and not drawn in an earlier look)."""
+    return [v for v in db.planned_videos(parts=QUEUE_PARTS) if db.ready(v)
+            and (not (v["plan"].get("render") or {}).get("id") or (v["plan"].get("render") or {}).get("look") == series.LOOK)]
+
+
+def _queued_json(v: dict) -> dict:
+    """A waiting story on the Schedule page: as a slot shows it, and how far it's made."""
+    review, made = v["plan"].get("review") or {}, (v["plan"].get("render") or {}).get("id")
+    return {**_slot_video(v), "made": bool(made), "passed": bool(review.get("passed") or review.get("override")),
+            "created_at": v["created_at"]}
+
+
 @router.get("/api/schedule")
 def schedule_page():
-    """The Schedule page: the shown day's slots and the Shorts scheduled for later days, each with where it stands on
-    YouTube (asked about them at most every 2 minutes, to notice changes made in YouTube Studio) and on Instagram."""
+    """The Schedule page, every story with its date: "Posted" (went out: public, or stopped or deleted on YouTube),
+    "Scheduled" (uploaded, private until its time) and "Will be posted" (the next SCHEDULE_DAYS days' slots not uploaded
+    yet, each with the story being made for it or the one in the queue that takes it). YouTube is asked how the
+    uploads stand at most every 2 minutes, to notice changes made in YouTube Studio."""
     sched = slots.plan(load_config())
     now = datetime.now(timezone.utc)
-    day = slots.day_slots(slots.shown_day(now, sched), sched)
-    board = jobs.slot_board(day[0], day[-1], sched, now)
-    shown = {s["video"]["id"] for s in board if s["video"]}
-    later = sorted((v for v in db.list_videos(100, parts=jobs.SLOT_PARTS) if v["status"] == "scheduled" and v["id"] not in shown
-                    and v["publish_at"] and slots.parse(v["publish_at"]) > now), key=lambda v: v["publish_at"])
-    live = _youtube_now([s["video"]["youtube_id"] for s in board if s["video"]] + [v["youtube_id"] for v in later])
-    return {"slots": [{"at": slots.iso(s["slot"]), "state": s["state"], "video": _slot_video(s["video"], live)}
-                      for s in board],
-            "later": [_slot_video(v, live) for v in later],
+    scheduled = db.scheduled_videos(days=0, parts=SCHEDULE_PARTS)
+    scheduled = [v for v in scheduled if v["publish_at"] and slots.parse(v["publish_at"]) > now]
+    posted = db.posted_history(POSTED_MOST, parts=SCHEDULE_PARTS)
+    board = jobs.slot_board(now - jobs.LATE_GRACE, now + timedelta(days=SCHEDULE_DAYS), sched, now)
+    queue = iter(_queue())
+    coming = []
+    for s in board:
+        if s["state"] in ("posted", "scheduled", "missed"):  # (in "Posted" and "Scheduled")
+            continue
+        queued = None if s["state"] == "making" else next(queue, None)  # (publisher.choose's order)
+        coming.append({"at": slots.iso(s["slot"]), "state": s["state"], "opens": slots.iso(slots.opens(s["slot"], sched)),
+                       "video": _slot_video(s["video"]) if s["video"] else None,
+                       "queued": _queued_json(queued) if queued else None})
+    recent = slots.iso(now - timedelta(days=LIVE_DAYS))
+    live = _youtube_now([v["youtube_id"] for v in scheduled]
+                        + [v["youtube_id"] for v in posted if v["status"] == "scheduled" and v["publish_at"] >= recent])
+    posted = sorted((_slot_video(v, live) for v in posted), key=lambda v: v["when"] or "", reverse=True)
+    return {"coming": coming, "queue_later": [_queued_json(v) for v in queue],
+            "scheduled": [_slot_video(v, live) for v in scheduled], "posted": posted,
+            "days": SCHEDULE_DAYS, "posted_most": POSTED_MOST, "paused": jobs.paused(),
             "youtube": {"asked": live is not None, "error": _youtube_seen["error"]}}
 
 

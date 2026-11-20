@@ -422,6 +422,14 @@ def published_videos(days: int = 60, parts: tuple[str, ...] | None = None) -> li
                          "ORDER BY publish_at", (now_iso(), now_iso(-timedelta(days=days))), parts)
 
 
+def posted_history(limit: int = 200, parts: tuple[str, ...] | None = None) -> list[dict]:
+    """Every story that went up to YouTube and whose time has come (public, unless it was taken off in YouTube Studio),
+    and those you stopped or deleted: the Schedule page's "Posted", newest first (`limit` at most)."""
+    with connect() as db:
+        return _read(db, "WHERE youtube_id IS NOT NULL AND ((status = 'scheduled' AND publish_at <= %s) "
+                         "OR status IN ('stopped', 'deleted')) ORDER BY id DESC LIMIT %s", (now_iso(), limit), parts)
+
+
 def scheduled_videos(days: int = 3, parts: tuple[str, ...] | None = None) -> list[dict]:
     """Stories on YouTube whose publish time is still to come, or passed at most `days` ago."""
     with connect() as db:
