@@ -105,23 +105,24 @@ def generate_json(parts: list, schema: dict | None, system: str, careful: bool =
     global passed_over
     failures = passed_over = []
     answer = None
+    slow: set = set()   # (models too slow for this request: not asked again for it, nor waited for)
     if strong:
         for wait in [0, *STRONG_WAITS]:
-            ready = [m for m in STRONG_MODELS if not _resting(m)]
+            ready = [m for m in STRONG_MODELS if not _resting(m) and m not in slow]
             if not ready:
                 break
             if wait:
                 if progress:
                     progress(f"Gemini's stronger models are busy: asking them again in {wait} s")
                 time.sleep(wait)
-            answer, busy = _ask(parts, schema, system, careful, thinking, timeout_ms, failures, ready)
+            answer, busy = _ask(parts, schema, system, careful, thinking, timeout_ms, failures, ready, slow)
             if answer is not None or not busy:
                 break
     if answer is None:
         for wait in [0, *(BUSY_WAITS if patient else ())]:
             if wait:
                 time.sleep(wait)
-            answer, busy = _ask(parts, schema, system, careful, thinking, timeout_ms, failures)
+            answer, busy = _ask(parts, schema, system, careful, thinking, timeout_ms, failures, slow=slow)
             if answer is not None or not busy:
                 break
     if answer is not None:
@@ -164,13 +165,17 @@ def _per_day(e: errors.APIError) -> float | None:
     return (wait or 3600.0) if per_day else None
 
 
-def _ask(parts, schema, system, careful, thinking, timeout_ms, failures, order=None) -> tuple[dict | None, bool]:
+def _ask(parts, schema, system, careful, thinking, timeout_ms, failures, order=None,
+         slow: set | None = None) -> tuple[dict | None, bool]:
     """One round of generate_json over the models (`order`, else models(careful)): (the answer, or None; whether every
-    model asked was only busy)."""
+    model asked was only busy). `slow`: the models that ran past timeout_ms on this request (504, or our own timeout):
+    added to here, and not asked again (2026-11-21: asking a slow model again, and waiting for it, cost over an hour of
+    one storyboard; a model too slow for it doesn't get faster in a minute)."""
     contents = [types.Content(role="user", parts=[_to_part(p) for p in parts])]
     busy, asked = True, []
+    slow = slow if slow is not None else set()
     for model in order or models(careful):
-        if _resting(model):
+        if _resting(model) or model in slow:
             continue
         asked.append(model)
         config = types.GenerateContentConfig(
@@ -193,6 +198,9 @@ def _ask(parts, schema, system, careful, thinking, timeout_ms, failures, order=N
                 failures.append(f"{model}: {e.code} {e.message}")
                 if e.code in (401, 403):
                     raise RuntimeError(f"Gemini rejected the API key: {e.message}") from e
+                if e.code == 504:   # (past our time limit: too slow for this request, not a blip)
+                    slow.add(model)
+                    break
                 if e.code and e.code >= 500 and attempt == 0:
                     time.sleep(5)
                     continue
@@ -204,13 +212,15 @@ def _ask(parts, schema, system, careful, thinking, timeout_ms, failures, order=N
                 break  # quota (429), unknown model (404) or unsupported request (400): next model
             except httpx.TransportError as e:  # timeout or connection problem: next model
                 failures.append(f"{model}: {type(e).__name__}")
-                if timeout_ms and attempt == 0 and not isinstance(e, httpx.TimeoutException):
+                if isinstance(e, httpx.TimeoutException):
+                    slow.add(model)
+                elif timeout_ms and attempt == 0:
                     time.sleep(BLIP_WAIT)  # (a long answer is worth a moment's wait: a network blip passes)
                     continue
                 break
             except ValueError as e:  # empty or non-JSON reply; retry once, then next model
                 failures.append(f"{model}: {e}")
-    return None, busy and any(not _resting(m) for m in asked)
+    return None, busy and any(not _resting(m) and m not in slow for m in asked)
 
 
 def main() -> int:

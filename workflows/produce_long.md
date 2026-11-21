@@ -186,6 +186,12 @@ are busy": 3.6-flash (and 3.5-flash, which shares its allowance) had used up its
 3.8-flash was answering a one-word request in 42 s, so the long requests timed out and were waited for again and again.
 Hence the hours stories are made in (above).
 
+Learned 2026-11-21: inside those hours it happened again (the first silent run in the cloud): 3.6-flash ran past the
+storyboard's 5-minute limit (504 "Deadline expired"), and each such model was asked twice, then waited for (60/120/180 s)
+and asked again, over an hour for one storyboard. Now (`tools/llm.py`, `slow`) a model past the time limit (504, or our
+own timeout) isn't asked again for that request, nor waited for: the next model answers at once. Busy ones (429 for the
+minute, 503 overloaded) are still waited for, as before.
+
 Learned 2026-11-19: films #5-#7 passed the Reviewer (#5 got 10/10) with heads cut off by the frame, hands knotted into
 blobs, hair as loose discs, his head grey under a lamp and giant tree blobs over the sky. Gemini's look doesn't catch
 framing reliably: the framing is now measured in code before a shot is drawn (above), and the hair, the hug, the
