@@ -147,7 +147,6 @@ HABIT_EFFECTS = {  # how the whole picture feels when a habit grips him
     "shake": "the camera shaking (rage, panic, a blow)",
     "timelapse": "time racing: day to night and back, the sun sweeping the wall, the clock spinning (no sense of time)",
     "notifications": "notifications popping up all round the picture (the phone's pull)",
-    "shadows": "dark shapes creeping in from the edges (fear)",
 }
 EFFECTS.update(HABIT_EFFECTS)
 
@@ -498,7 +497,7 @@ IDEAS = {  # a few ideas for showing big the topics of the owner's list (Setting
                             "addict", "gaming", "video game", "dopamine"]},
     "fear": {"kind": "weakness", "eyes": ["terrified"], "marks": ["tremble", "sweat"],
              "actions": ["hiding_bed", "backing_away", "cowering"], "screens": [], "things": [],
-             "effects": ["shadows", "shake"], "pictures": ["shadow", "laughing", "cross", "question"],
+             "effects": ["tunnel", "shake"], "pictures": ["shadow", "laughing", "cross", "question"],
              "words": ["fear", "afraid", "anxiety", "anxious", "coward", "panic", "dread", "scared", "timid", "doubt"]},
     "greed": {"kind": "weakness", "eyes": ["dollars"], "marks": ["dollars"],
               "actions": ["counting_money", "hugging_bag", "grabbing"], "screens": ["bank"],

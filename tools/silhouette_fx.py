@@ -548,5 +548,6 @@ def make(name: str, place, **kw) -> Effect:
     cls = {"fire": Fire, "smoke": Smoke, "emergency": Emergency, "snow": Snow, "fog": Fog, "party": PartyLights,
            "spotlight": Spotlight, "red_pulse": RedPulse, "pink_haze": PinkHaze, "green_tint": GreenTint,
            "grey_drain": GreyDrain, "tunnel": Tunnel, "shake": Shake, "timelapse": Timelapse,
-           "notifications": Notifications, "shadows": Shadows}[name]
+           "notifications": Notifications,
+           "shadows": Effect}[name]   # (2026-11-21: its giant claw-like shapes looked broken: no longer offered, and drawn as nothing in stories that still name it)
     return cls(place, **kw)
