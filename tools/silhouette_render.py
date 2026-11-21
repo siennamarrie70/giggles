@@ -746,12 +746,14 @@ def jobs_for(story: dict, times: list[dict], size, folder: Path, short: bool = F
 
 def draw_video(jobs: list[dict], out: Path, progress=print) -> Path:
     """The jobs drawn in parallel, joined without re-encoding (silent)."""
+    import multiprocessing  # (spawn: on Linux a forked worker can freeze on a lock another thread held; 2026-11-21 #10)
     from concurrent.futures import ProcessPoolExecutor
 
     import media
 
     done = 0
-    with ProcessPoolExecutor(max_workers=max(1, min(workers(), len(jobs)))) as pool:
+    with ProcessPoolExecutor(max_workers=max(1, min(workers(), len(jobs))),
+                             mp_context=multiprocessing.get_context("spawn")) as pool:
         for _ in pool.map(_shot_video, jobs):
             done += 1
             if done % 4 == 0 or done == len(jobs):

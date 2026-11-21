@@ -1137,6 +1137,7 @@ def draw_board(story: dict, folder: Path, size=STILL, workers: int = 0, progress
     """Every shot's still, every place empty and the cast side by side, into `folder`: {"shots": [...], "places": {...},
     "cast": path}."""
     import os
+    import multiprocessing
     from concurrent.futures import ProcessPoolExecutor
 
     folder = Path(folder)
@@ -1146,7 +1147,7 @@ def draw_board(story: dict, folder: Path, size=STILL, workers: int = 0, progress
     jobs.append(("cast", story, None, size, folder / "cast.jpg"))
     n = workers or max(1, min(6, os.cpu_count() or 2))
     done = 0
-    with ProcessPoolExecutor(max_workers=n) as pool:
+    with ProcessPoolExecutor(max_workers=n, mp_context=multiprocessing.get_context("spawn")) as pool:
         for _ in pool.map(_job, jobs):
             done += 1
             if done % 10 == 0 or done == len(jobs):
