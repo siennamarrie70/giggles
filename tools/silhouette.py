@@ -11,9 +11,10 @@ cloud needs no GPU and nothing is counted against a free allowance.
     (the lamp's cone, the sun's bloom, the laptop's glow), never painted over.
   - Shapes: anti-aliased polygons (OpenCV's fillPoly at 1/16 px), filled flat, with a gradient, or soft-edged (a blurred
     mask). No outlines anywhere (the look's rule): shapes stay flat, light does the mood.
-  - The figure: a big round black head, a thin stick neck, stick legs, a hoodie in one flat colour with a few thin fold
-    lines and white drawstrings; no face, only two white eyes (open, half-lidded, wide, closed, sad, determined). Its rim
-    light is a red copy of its silhouette nudged towards the light, with a soft glow: a thin crescent on the lit side.
+  - The figure, as drawn here: a large black disc for a head on a narrow neck, thin legs, and a flat-coloured hoodie
+    (some fold lines, two pale drawstrings). Its face is just the two white eyes, in several states (open, half-lidded,
+    wide, closed, sad, determined). The rim light is the silhouette again in red, shifted towards the light and blurred,
+    which leaves a thin bright crescent on the lit side.
   - The finish: haze and a slight blur on far layers, a strong vignette, black letterbox bars and fine film grain. A frame
     can be "still" (the last second of a scene): then the grain and the dust hold too, so nothing flickers.
 
@@ -699,7 +700,8 @@ class Look:
 
     def __init__(self, cloth="#2B6470", hood=False, strings=False, hair=None, hair_color="#1E141B", build=1.0, hem=2.85,
                  collar=None, tie=None, cap=None, stethoscope=False, size=1.0, gap=0.42, beard=None, glasses=False,
-                 helmet=None, apron=None, dress=False, jacket=None):
+                 helmet=None, apron=None, dress=False, jacket=None, fit=False, tee=False, watch=False, pocket=None,
+                 child=False, scarf=None, backpack=None):
         self.cloth = hexc(cloth)
         self.body = PAL["figure"]
         self.hood, self.strings, self.hair, self.hair_color = hood, strings, hair, hexc(hair_color)
@@ -714,6 +716,11 @@ class Look:
         self.apron = hexc(apron) if apron else None
         self.dress = bool(dress)
         self.jacket = hexc(jacket) if jacket else None
+        self.fit, self.tee, self.watch = bool(fit), bool(tee), bool(watch)   # (his: fit, the gym's T-shirt, a watch)
+        self.pocket = hexc(pocket) if pocket else None
+        self.child = bool(child)   # (a child: small, the head bigger for the body)
+        self.scarf = hexc(scarf) if scarf else None
+        self.backpack = hexc(backpack) if backpack else None
         if self.dress and hem <= 2.85:
             self.hem = 3.9
 
@@ -738,6 +745,22 @@ LOOKS = {
 }
 
 
+def _him(outfit: str = "", fit: bool = False) -> Look:
+    """His other looks (tools/silhouette_board.py picks them shot by shot): the gym's fitted teal T-shirt, his new life's
+    sharp suit (charcoal, a teal tie and pocket square, a gold watch); fit (broad in the chest and back, strong arms) from
+    his first workout after his realization on (agents/storyboard.py marks those shots)."""
+    if outfit == "gym":
+        return Look("#2B6470", tee=True, fit=fit, hem=2.70, build=1.12 if fit else 1.0)
+    if outfit == "suit":
+        return Look("#E9E4EC", jacket="#30323E", collar="#E9E4EC", tie="#2B6470", pocket="#2B6470", watch=True, fit=fit,
+                    build=1.12 if fit else 1.0)
+    return Look("#2B6470", hood=True, strings=True, fit=fit, build=1.12 if fit else 1.0)
+
+
+HIM_LOOKS = {"_".join(["him"] + [w for w in (o, "fit" if fit else "") if w]): _him(o, fit)
+             for o in ("", "gym", "suit") for fit in (False, True) if o or fit}   # him_fit, him_gym, him_suit_fit...
+
+
 
 def look_from(spec: dict) -> Look:
     """A person's look from a storyboard's description: {"cloth": a CLOTH_COLORS name, "hair": HAIRS, "hair_color":
@@ -751,7 +774,8 @@ def look_from(spec: dict) -> Look:
     hair_c = col("hair_color", HAIR_COLORS, HAIR_COLORS["black"])
     cloth = col("cloth", CLOTH_COLORS, CLOTH_COLORS["slate"])
     kw = {"cloth": cloth, "hair": hair if hair in HAIRS and hair != "none" else None, "hair_color": hair_c,
-          "build": clamp(float(spec.get("build") or 1.0), 0.8, 1.3), "size": clamp(float(spec.get("size") or 1.0), 0.85, 1.1)}
+          "build": clamp(float(spec.get("build") or 1.0), 0.8, 1.3),
+          "size": clamp(float(spec.get("size") or 1.0), *((0.60, 0.80) if spec.get("child") else (0.85, 1.1)))}
     if "beard" in extras:
         kw["beard"] = col("beard_color", HAIR_COLORS, hair_c if hair != "none" else HAIR_COLORS["black"])
     if "glasses" in extras:
@@ -773,6 +797,16 @@ def look_from(spec: dict) -> Look:
         kw["hem"] = 3.45
     if "stethoscope" in extras:
         kw.update(stethoscope=True, collar="#EEEAF2")
+    if "watch" in extras:
+        kw["watch"] = True
+    if "scarf" in extras:
+        kw["scarf"] = col("scarf_color", CLOTH_COLORS, "#8A6A2E")
+    if "backpack" in extras:
+        kw["backpack"] = col("backpack_color", CLOTH_COLORS, "#3D5A80")
+    if spec.get("child"):
+        kw["child"] = True
+    if spec.get("young_him"):   # (him as a boy: his teal hoodie, small)
+        kw.update(cloth="#2B6470", hood=True, strings=True, hair=None)
     return Look(**kw)
 
 
@@ -935,8 +969,10 @@ def pose_sit(x, seat_y, ground, f, R, slump=0.0, lift=0.0, arms="lap", reach=Non
             lift = min(lift, -0.5)
         head = T(0.14 + 0.24 * sl - 0.08 * lift, -1.28 + 0.40 * sl - 0.06 * lift)
         if arms in ("desk", "type", "cup") and reach is not None:
-            target = (reach[0] + (f * 0.06 * R * math.sin(tap * math.tau * 3.1) if arms == "type" else 0.0),
-                      reach[1] - (0.05 * R * max(0.0, math.sin(tap * math.tau * 6.3)) if arms == "type" else 0.0))
+            target = reach
+            if arms == "type":   # (the hand drifting along the keys, tapping lightly: never a buzz)
+                target = (reach[0] + f * 0.06 * R * math.sin(tap * math.tau * 0.45),
+                          reach[1] - 0.035 * R * (0.5 - 0.5 * math.cos(tap * math.tau * 3.2)))
             near = _reach(sh, target, R, f)
             if arms == "cup":
                 hold = {"kind": "cup", "at": (target[0] + f * 0.10 * R, target[1] - 0.12 * R)}
@@ -1032,11 +1068,13 @@ def _hair(p, hx, hy, R, f, kind: str, color) -> None:
     """Hair over a head facing f, hugging it (never a loose disc behind it): over the top and the back, down to a
     hairline round the brow, the ear and the nape. Short hair has soft tufts over the brow and the crown; a bun's and long
     hair are smooth, swept back off the brow. A few darker strands make it read as hair."""
-    short = kind == "short"
+    short = kind in ("short", "curly")
     a = np.linspace(-0.42 if short else -0.30, -math.pi - 0.92, 44)
     top = np.clip(-np.sin(a), 0.0, 1.0)
     rad = R * (1.035 + 0.06 * top ** 2)
-    if short:
+    if kind == "curly":   # a cloud of curls
+        rad = rad + R * 0.13 * np.abs(np.sin(9.0 * (a + 0.42)))
+    elif short:
         rad = rad + R * 0.055 * np.clip(np.sin(7.0 * (a + 0.42)), 0.0, 1.0) * (a > -2.3)
     outer = np.stack([hx + f * np.cos(a) * rad, hy + np.sin(a) * rad], 1)
     line = ([(-0.58, 0.80), (-0.42, 0.42), (-0.30, 0.16), (-0.14, 0.10), (-0.06, -0.18), (0.16, -0.44), (0.52, -0.56),
@@ -1272,6 +1310,23 @@ def _h_money(p, h, R, f, pose):
         p.poly(_slab(cx, cy, 0.50 * R, 0.24 * R, ang), hexc(("#6E8A6A", "#7E9A78", "#8AA884")[k]))
 
 
+def _h_barbell(p, h, R, f, pose):
+    """A barbell seen end on (its bar points at the camera): the near plate, big, over his hands; its lit rim, the hub."""
+    bx, by = h["at"]
+    p.circle(bx, by, 0.80 * R, METAL_LIT)
+    p.circle(bx + 0.03 * R, by + 0.04 * R, 0.72 * R, METAL)
+    p.circle(bx, by, 0.24 * R, hexc("#55525E"))
+    p.circle(bx, by, 0.10 * R, METAL_LIT)
+
+
+def _h_rope(p, h, R, f, pose):
+    """A jump rope: its loop from his hands round him (h["loop"]: its points), thin and dark; held still, it hangs."""
+    bx, by = h.get("at") or pose["near"][2]
+    loop = h.get("loop") or [(bx, by), (bx + f * 0.10 * R, by + 0.80 * R), (bx + f * 0.30 * R, by + 1.20 * R),
+                             (bx + f * 0.50 * R, by + 0.80 * R), (bx + f * 0.60 * R, by)]
+    p.poly(tube(loop, 0.06 * R, k=3), hexc("#1A1420"))
+
+
 HOLDS = {  # kind: (draw, under the near arm?)
     "box": (_h_box, True), "clipboard": (_h_clipboard, True), "phone": (_h_phone, False), "phone_up": (_h_phone, False),
     "phone_ear": (_h_phone, False), "cup": (_h_cup, False), "book": (_h_book, False), "letter": (_h_letter, False),
@@ -1279,7 +1334,7 @@ HOLDS = {  # kind: (draw, under the near arm?)
     "broom": (_h_broom, True), "rag": (_h_rag, True), "wrench": (_h_wrench, True), "hammer": (_h_hammer, True),
     "mic": (_h_mic, False), "glass": (_h_glass, False), "bottle": (_h_bottle, False), "flowers": (_h_flowers, False),
     "bag": (_h_bag, True), "suitcase": (_h_suitcase, True), "trophy": (_h_trophy, False), "gift": (_h_gift, False),
-    "money": (_h_money, False),
+    "money": (_h_money, False), "barbell": (_h_barbell, False), "rope": (_h_rope, False),
 }
 
 
@@ -1290,6 +1345,18 @@ def _hand(p, el, wr, kind, R, body):
     d = max(math.hypot(dx, dy), 1e-6)
     cx, cy = wr[0] + dx / d * 0.10 * R, wr[1] + dy / d * 0.10 * R
     p.poly(rell(cx, cy, 0.16 * R if kind == "open" else 0.14 * R, 0.11 * R, math.atan2(dy, dx)), body)
+
+
+def _along(a, b, u):
+    """The point u of the way from a to b."""
+    return (a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u)
+
+
+def _glint(x, y, s):
+    """A small four-pointed sparkle: a glint on gold or glass."""
+    a = np.arange(8) * math.pi / 4 - math.pi / 2
+    r = np.where(np.arange(8) % 2 == 0, s, 0.22 * s)
+    return np.stack([x + np.cos(a) * r, y + np.sin(a) * r], 1)
 
 
 def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
@@ -1305,10 +1372,21 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
     if look.hair == "long" and not lying:
         p.poly(tube([(hx - f * 0.50 * R, hy - 0.30 * R), (hx - f * 0.84 * R, hy + 0.50 * R),
                      (hx - f * 0.74 * R, hy + 1.60 * R)], 0.78 * R, 0.46 * R), look.hair_color)
+    hr = R * (1.18 if look.child else 1.0)   # (a child's head: bigger for the body)
+    if look.hair in ("ponytail", "pigtails") and not lying:   # tied back: a tail behind the head, its tie
+        tall = look.hair == "ponytail"
+        root = (hx - f * 0.86 * hr, hy - (0.30 if tall else -0.05) * hr)
+        p.poly(tube([root, (root[0] - f * 0.32 * hr, root[1] + 0.45 * hr),
+                     (root[0] - f * 0.20 * hr, root[1] + (1.05 if tall else 0.62) * hr)], 0.40 * hr, 0.16 * hr),
+               look.hair_color)
+        p.circle(root[0], root[1], 0.12 * hr, np.clip(look.hair_color * 0.7, 0, 1) if tall else hexc("#E8453C"))
     # the far arm (with what its hand holds) and the legs (behind the torso: its hem covers their tops)
+    aw = 1.30 if look.fit else 1.0   # (a fit build's arms: thicker, the biceps bulging)
     if pose.get("far"):
         sh, el, wr = pose["far"]
-        p.poly(tube([sh, el, wr], R * 0.38, R * 0.30), fold)
+        p.poly(tube([sh, el, wr], R * 0.38 * aw, R * 0.30 * aw), body if look.tee else fold)
+        if look.tee:   # (bare arms: a short sleeve)
+            p.poly(tube([sh, _along(sh, el, 0.55)], R * 0.46 * aw, R * 0.42 * aw), fold)
         if pose["hands"][0] == "fist":
             p.poly(ell(wr[0], wr[1] + 0.08 * R, 0.13 * R, 0.15 * R, 24), body)
         elif pose["hands"][0] == "open":
@@ -1319,7 +1397,7 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
         p.poly(tube([hip, knee, foot], R * 0.105, R * 0.095), body)
         if pose.get("plank"):
             p.poly(rell(foot[0], foot[1] + 0.02 * R, 0.10 * R, 0.24 * R, 0.0), body)
-        elif lying:
+        elif lying and not pose.get("flat_feet"):
             p.poly(rell(foot[0] + f * 0.05 * R, foot[1] - 0.06 * R, 0.09 * R, 0.18 * R, 0.0), body)
         elif pose.get("toes") and pose["toes"][k]:   # a kneeling leg: the foot on its toes behind
             p.poly(rell(foot[0] - f * 0.10 * R, foot[1] - 0.06 * R, 0.20 * R, 0.07 * R, 0.5 * f), body)
@@ -1329,6 +1407,9 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
     if look.hood and not hood_up:
         hx_, hy_ = T(-0.40, 0.02)
         p.poly(ell(hx_, hy_, 0.50 * R, 0.32 * R, 40), cloth)
+    if look.backpack is not None and not lying:   # on the back, behind the body
+        p.poly(spline([T(-0.50 * look.build, 0.20), T(-1.04 * look.build, 0.30), T(-1.10 * look.build, 1.55),
+                       T(-0.55 * look.build, 1.72)], True, 6), look.backpack)
     # the torso: the hoodie (or coat, jacket, dress), its folds, the hem's rib
     b = look.build
     hem = min(look.hem, pose.get("hem_max", 9.0))
@@ -1340,6 +1421,9 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
                 (-0.62, hem), (-0.70, min(2.40, hem - 0.4)), (-0.74, 1.30), (-0.70, 0.50)]
         if hem > 3.0:  # a long coat flares a little
             prof[5], prof[6], prof[7] = (0.72, 2.6), (0.74, hem), (-0.70, hem)
+        if look.fit:   # broad in the chest and the back, narrow at the waist
+            prof = [(-0.72, 0.08), (-0.22, -0.12), (0.42, -0.06), (0.94, 0.42), (0.92, 1.00), (0.64, 1.80), (0.56, 2.40),
+                    (0.54, hem), (-0.56, hem), (-0.60, min(2.40, hem - 0.4)), (-0.68, 1.70), (-1.00, 0.85), (-0.94, 0.40)]
     torso = spline([T(u * b, v) for u, v in prof], True, 10)
     p.poly(torso, coat)
     if look.jacket is not None:   # the open jacket: the shirt between its fronts, a lapel
@@ -1352,7 +1436,7 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
         p.poly(tube([T(-0.58 * b, 2.66), T(0.58 * b, 2.66)], R * 0.02), fold, 0.5)
     elif look.dress:
         p.poly(tube([T(-0.56 * b, 2.05), T(0.50 * b, 2.05)], R * 0.03), fold, 0.6)   # the waist's seam
-    elif look.jacket is None:
+    elif look.jacket is None and not look.tee:
         p.poly(tube([T(0.20 * b, 0.20), T(0.42 * b, min(2.6, hem - 0.3))], R * 0.02), fold, 0.55)  # the front edge
     if look.apron is not None:   # over the clothes: a bib from the chest, ties at the waist, down past the hem
         low = min(hem + 0.9, pose.get("hem_max", 9.0) + 0.4)
@@ -1364,9 +1448,18 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
         p.poly(np.array([T(0.10 * b, -0.02), T(0.52 * b, 0.04), T(0.40 * b, 0.70)]), look.collar)
     if look.tie is not None:
         p.poly(tube([T(0.44 * b, 0.10), T(0.50 * b, 1.30)], R * 0.07, R * 0.10), look.tie)
+    if look.fit:   # the line under his chest
+        p.poly(tube([T(0.30 * b, 1.02), T(0.62 * b, 1.08), T(0.88 * b, 0.94)], R * 0.035), fold, 0.6)
+    if look.pocket is not None:   # a pocket square: the suit's touch of his colour
+        p.poly(np.array([T(0.50 * b, 0.66), T(0.70 * b, 0.62), T(0.62 * b, 0.46)]), look.pocket)
     if look.stethoscope:
         p.poly(tube([T(-0.05, 0.02), T(0.30 * b, 0.55), T(0.52 * b, 1.05)], R * 0.03), hexc("#2A2A34"), 0.9)
         p.circle(*T(0.54 * b, 1.10), R * 0.07, hexc("#5A5A68"))
+    if look.backpack is not None and not lying:   # its strap over the shoulder
+        p.poly(tube([T(-0.05 * b, 0.08), T(0.14 * b, 0.95)], R * 0.08), np.clip(look.backpack * 0.75, 0, 1))
+    if look.scarf is not None:   # round the neck, an end hanging down the front
+        p.poly(tube([T(-0.36 * b, 0.08), T(0.06, -0.02), T(0.48 * b, 0.10)], R * 0.20), look.scarf)
+        p.poly(tube([T(0.38 * b, 0.12), T(0.44 * b, 0.95)], R * 0.15, R * 0.12), look.scarf)
     # the neck
     nx, ny = T(0.08, 0.02)
     p.poly(tube([(hx + (nx - hx) * 0.25, hy + (ny - hy) * 0.25), (nx, ny)], R * 0.10), body)
@@ -1382,10 +1475,24 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
     if draw_hold and draw_hold[1]:
         draw_hold[0](p, hold, R, f, pose)
     sh, el, wr = pose["near"]
-    p.poly(tube([sh, el, wr], R * 0.46, R * 0.39), fold, 0.55, soft=R * 0.02)
-    p.poly(tube([sh, el, wr], R * 0.40, R * 0.31), coat)
-    p.poly(tube([(el[0] * 0.25 + wr[0] * 0.75, el[1] * 0.25 + wr[1] * 0.75), wr], R * 0.31), fold, 0.35)
+    arm = body if look.tee else coat
+    p.poly(tube([sh, el, wr], R * 0.46 * aw, R * 0.39 * aw), fold, 0.55, soft=R * 0.02)
+    p.poly(tube([sh, el, wr], R * 0.40 * aw, R * 0.31 * aw), arm)
+    upper = math.hypot(el[0] - sh[0], el[1] - sh[1])
+    if look.fit and upper > 1e-6:   # the biceps
+        p.poly(rell(*_along(sh, el, 0.50), 0.44 * upper, 0.30 * R, math.atan2(el[1] - sh[1], el[0] - sh[0])), arm)
+    if look.tee:   # the short sleeve over the shoulder
+        p.poly(tube([sh, _along(sh, el, 0.55)], R * 0.54 * aw, R * 0.50 * aw), coat)
+    if look.fit:   # the shoulder's round muscle
+        p.circle(sh[0], sh[1] + 0.04 * R, 0.33 * R, coat)
+    else:
+        p.poly(tube([(el[0] * 0.25 + wr[0] * 0.75, el[1] * 0.25 + wr[1] * 0.75), wr], R * 0.31 * aw), fold, 0.35)
     _hand(p, el, wr, pose["hands"][1], R, body)
+    if look.watch and pose["hands"][1] != "hidden":   # a gold watch on his wrist, a glint on it
+        q = _along(el, wr, 0.80)
+        p.poly(rell(q[0], q[1], 0.07 * R, 0.17 * aw * R, math.atan2(wr[1] - el[1], wr[0] - el[0])), hexc("#C9962E"))
+        p.circle(q[0], q[1], 0.085 * R, hexc("#F5C542"))
+        p.poly(_glint(q[0] + 0.14 * R, q[1] - 0.16 * R, 0.18 * R), PAL["eye"], 0.95)
     if draw_hold and not draw_hold[1]:
         got = draw_hold[0](p, hold, R, f, pose)
         if hold["kind"] in ("phone", "phone_up", "phone_ear"):
@@ -1395,7 +1502,7 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
                 out["glow_color"] = I.screen_light(hold["screen"])
     # the head: a bun's knot behind it, the hood when it's up, the face, the hair over it, the eyes
     if look.hair == "bun" and not lying:   # (up at the back, standing well out of the head's round)
-        p.circle(hx - f * 0.78 * R, hy - 0.77 * R, 0.40 * R, look.hair_color)
+        p.circle(hx - f * 0.78 * hr, hy - 0.77 * hr, 0.40 * hr, look.hair_color)
     if hood_up:
         p.poly(tube([(hx - f * 0.55 * R, hy + 0.55 * R), T(-0.35, 0.15)], R * 0.85, R * 0.75), cloth)
         p.poly(ell(hx - f * 0.15 * R, hy - 0.03 * R, 1.16 * R, 1.13 * R, 64), cloth)
@@ -1403,9 +1510,9 @@ def draw_person(p: Paint, pose: dict, look: Look, eyes: Eyes | None) -> dict:
                      (hx - f * 0.60 * R, hy + 0.80 * R)], R * 0.022), fold, 0.6)
         p.circle(hx + f * 0.06 * R, hy + 0.05 * R, 0.90 * R, body)
     else:
-        p.circle(hx, hy, R, body)
-    if look.hair and not hood_up and (look.hair == "short" or not lying):
-        _hair(p, hx, hy, R, f, look.hair, look.hair_color)
+        p.circle(hx, hy, hr, body)
+    if look.hair and not hood_up and (look.hair in ("short", "curly") or not lying):
+        _hair(p, hx, hy, hr, f, look.hair, look.hair_color)
     if look.beard is not None and not lying:   # the jaw and the chin, a sideburn, a moustache: never round the back
         outer = _arc(hx, hy + 0.02 * R, 1.05 * R, f, 0.38, math.pi / 2 + 0.50, 22)
         line = [(hx - f * 0.40 * R, hy + 0.55 * R), (hx - f * 0.30 * R, hy + 0.10 * R), (hx - f * 0.18 * R, hy + 0.12 * R),

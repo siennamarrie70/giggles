@@ -12,7 +12,8 @@ the warm cream of the eyes' white, the thin coral-red rim, dark plum letters in 
                                       while the reply is read
 
 Where a bubble goes: above its speaker's head on the side with room (the way he faces first, for speech), inside the
-letterbox bars, off every face and every other bubble; it keeps its place by the head as the head moves.
+letterbox bars, off every face and every other bubble; it keeps its place by the head as the head moves, and stops,
+whole, at the frame's edge (never cut by it).
 """
 
 import math
@@ -146,14 +147,30 @@ def _shrink(shape, cx, cy, d):
     return np.array([cx, cy]) + v * np.maximum(n - d, 0) / n
 
 
+def _room(size, bar) -> tuple:
+    """Where a bubble may be (px): inside the bars, off the frame's sides (an upright Short's a little more: it's
+    watched on a phone). (x0, y0, x1, y1)"""
+    W, H = size
+    margin = 0.02 * min(W, H)
+    side = 0.045 * W if H > W else margin
+    return side, bar + margin, W - side, H - bar - margin
+
+
+def _within(cx, cy, bw, bh, room) -> tuple:
+    """(cx, cy) moved the least so the bw x bh box round it is whole inside room (in its middle when it's bigger)."""
+    x0, y0, x1, y1 = room
+    cx = (x0 + x1) / 2 if bw >= x1 - x0 else min(max(cx, x0 + bw / 2), x1 - bw / 2)
+    cy = (y0 + y1) / 2 if bh >= y1 - y0 else min(max(cy, y0 + bh / 2), y1 - bh / 2)
+    return cx, cy
+
+
 def place(head, r, size, bw, bh, f, avoid, kind, bar):
     """Where a bubble of bw x bh px goes for a head at `head` (radius r px) of someone facing f: (its middle x, y). Above
     the head on the side with room (the way he faces first for speech), inside the bars, off `avoid` (boxes: faces,
     bubbles)."""
     W, H = size
     hx, hy = head
-    margin = 0.02 * min(W, H)
-    lo_y, hi_y = bar + margin, H - bar - margin
+    room = _room(size, bar)
     side = 1 if f >= 0 else -1
     cands = [(hx + side * (r * 0.55 + bw / 2), hy - r * 1.35 - bh / 2, 0.0),
              (hx - side * (r * 0.55 + bw / 2), hy - r * 1.35 - bh / 2, 0.15 if kind == "say" else 0.0),
@@ -162,8 +179,7 @@ def place(head, r, size, bw, bh, f, avoid, kind, bar):
              (hx - side * (r * 1.45 + bw / 2), hy - r * 0.55, 0.35)]
     best = None
     for x, y, pref in cands:
-        cx = min(max(x, margin + bw / 2), W - margin - bw / 2)
-        cy = min(max(y, lo_y + bh / 2), hi_y - bh / 2)
+        cx, cy = _within(x, y, bw, bh, room)
         moved = math.hypot(cx - x, cy - y) / max(bw, bh)
         box = (cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2)
         hit = sum(_overlap(box, a) for a in avoid) / (bw * bh)
@@ -222,21 +238,24 @@ def draw(frame: np.ndarray, bubbles: list[dict]) -> None:
     px = int(round(_px((W, H))))
     bar = S.BARS * min(W, H)
     placed = []
+    room = _room((W, H), bar)
     for b in bubbles:
         sprite, bw, bh = body(b["kind"], b.get("text") or "", b.get("picture") or "", px, tall)
+        fit = min(1.0, (room[2] - room[0]) / bw, (room[3] - room[1]) / bh)   # (never bigger than the frame lets it be)
+        bw, bh = bw * fit, bh * fit
         if b.get("at") is None:
             b["at"] = place(b["head"], b["r"], (W, H), bw, bh, b.get("f", 1), list(b.get("avoid") or []) + placed,
                             b["kind"], bar)
             if b.get("keep") is not None:   # (its place beside the head, kept: it follows the head from now on)
                 b["keep"][b["key"]] = (b["at"][0] - b["head"][0], b["at"][1] - b["head"][1])
-        cx, cy = b["at"]
+        cx, cy = _within(*b["at"], bw, bh, room)   # (by a head that moves: stopped at the frame's edge, whole)
         placed.append((cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2))
         age, left = b.get("age", 1.0), b.get("left", 1.0)
         pop = S.back_out(min(1.0, age / POP), 1.6) if age < POP else 1.0
         alpha = min(1.0, age / (POP * 0.6)) * min(1.0, max(0.0, left) / FADE)
         if alpha <= 0.01:
             continue
-        scale = 0.82 + 0.18 * pop
+        scale = (0.82 + 0.18 * pop) * fit
         if b.get("dim"):   # (an earlier one, while the reply is read: a little darker, still solid)
             sprite = sprite.copy()
             sprite[..., :3] *= 1.0 - 0.28 * b["dim"]

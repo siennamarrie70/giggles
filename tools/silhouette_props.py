@@ -1321,10 +1321,13 @@ def d_letters(p, x, b, c):
 
 
 def d_money(p, x, b, c):
-    for k, dx in enumerate((-30, 6)):
-        for j in range(4 - k):
-            B(p, c, x, dx, dx + 34, b - 6 - j * 6, b - j * 6, ("#6E8A6A", "#7E9A78")[(j + k) % 2])
-        B(p, c, x, dx + 13, dx + 21, b - 6 * (4 - k), b, "#C8B890", a=0.8)
+    """Stacks of banknotes, each banded, a loose note fanned on top."""
+    for k, (dx, h) in enumerate(((-40, 5), (-6, 4), (28, 3))):
+        for j in range(h):
+            B(p, c, x, dx, dx + 30, b - 6 - j * 6, b - j * 6, ("#4E8A5E", "#5E9A6A")[(j + k) % 2])
+        B(p, c, x, dx + 12, dx + 18, b - 6 * h, b, "#E8D8A8", a=0.85)
+        Lit(p, c, x, dx, dx + 30, b - 6 * h, "#9ED8B4", 0.7, 2)
+    P(p, c, x, [(-38, b - 36), (-4, b - 46), (0, b - 40), (-34, b - 30)], "#6EAA7A")
 
 
 def d_bottle(p, x, b, c):
@@ -1425,11 +1428,16 @@ def d_photo_frame(p, x, b, c):
 
 
 def d_trophy(p, x, b, c):
-    gold = "#C9A24A"
-    P(p, c, x, [(-22, b - 76), (22, b - 76), (12, b - 46), (-12, b - 46)], gold)
-    B(p, c, x, -3, 3, b - 46, b - 24, gold)
-    B(p, c, x, -16, 16, b - 24, b, "#3A2E26")
-    B(p, c, x, -22, 22, b - 79, b - 75, "#FFE0A0", a=0.8)
+    """A gold cup on a stem and a dark base: its handles, a shine, its lit rim."""
+    gold, lit = "#D9A93A", "#FFE08A"
+    P(p, c, x, [(-26, b - 98), (26, b - 98), (18, b - 66), (6, b - 56), (-6, b - 56), (-18, b - 66)], gold, smooth=True)
+    for sx in (-1, 1):
+        Tb(p, c, x, [(sx * 24, b - 92), (sx * 38, b - 86), (sx * 22, b - 68)], 3.5, gold)
+    B(p, c, x, -4, 4, b - 58, b - 32, gold)
+    B(p, c, x, -16, 16, b - 32, b - 24, gold)
+    B(p, c, x, -22, 22, b - 24, b, "#2E2420", r=2)
+    B(p, c, x, -26, 26, b - 101, b - 97, lit, a=0.9)
+    Tb(p, c, x, [(-14, b - 90), (-9, b - 66)], 2.5, lit, a=0.6)
 
 
 def d_suitcase(p, x, b, c):
@@ -1762,3 +1770,158 @@ def m_checklist(x, b, c):
     side = 1 if x < 0 else -1
     return {"checklist": {"kind": "stand", "x": x + side * 260, "f": -side, "point": (x, b - HANG["checklist"]),
                           "use": ["ticking", "presenting"]}}
+
+
+# === step 5: the gym's bench and bar, his new life's cars, glass wall, safe and gold ========================================
+def d_weight_bench(p, x, b, c):
+    """A weight bench: its padded top, its legs; at its head the rack's uprights and the bar's hooks."""
+    for dx in (-176, -150):
+        B(p, c, x, dx - 5, dx + 5, b - 330, b, "#2A2832", STEEL_LIT, ea=0.5)
+    B(p, c, x, -182, -144, b - 300, b - 292, "#2A2832")
+    B(p, c, x, -150, 150, b - 118, b - 96, "#2E2A38", "#6A6480", r=8)
+    for dx in (-118, 112):
+        B(p, c, x, dx - 6, dx + 6, b - 96, b, "#1E1C26")
+    B(p, c, x, -134, 128, b - 10, b, "#1E1C26", r=3)
+
+
+def m_weight_bench(x, b, c):
+    return {"bench_press": mark("bench", x, c, -110, f=c.s, top=b - 118, use=["bench_press"]),
+            "bench_seat": mark("sit", x, c, 70, seat=b - 118, f=c.s)}
+
+
+def d_pullup_bar(p, x, b, c):
+    """A pull-up bar on a tall frame: two uprights on their feet, the bar across the top."""
+    for dx in (-100, 100):
+        B(p, c, x, dx - 8, dx + 8, b - 550, b, "#2A2832", STEEL_LIT, ea=0.5)
+        B(p, c, x, dx - 42, dx + 42, b - 12, b, "#1E1C26", r=4)
+    Tb(p, c, x, [(-112, b - 540), (112, b - 540)], 10.0, METAL_LIT)
+
+
+def m_pullup_bar(x, b, c):
+    return {"bar": mark("bar", x, c, 0, f=c.s, top=b - 540, use=["pullups"])}
+
+
+def d_sports_car(p, x, b, c):
+    """A sleek sports car: low and wide, a long bonnet, the cabin set back, big wheels with gold rims, a shine down its
+    side (his new life). Its colour: c.o["color"] (a deep red)."""
+    col = c.o.get("color", "#9A1C22")
+    P(p, c, x, [(-430, b - 64), (-438, b - 118), (-404, b - 154), (-250, b - 176), (-128, b - 246), (84, b - 250),
+                (196, b - 190), (420, b - 150), (446, b - 110), (442, b - 70), (420, b - 56), (-410, b - 54)], col,
+      smooth=True)
+    P(p, c, x, [(-112, b - 236), (74, b - 240), (166, b - 188), (-206, b - 182)], "#14121C")
+    Tb(p, c, x, [(-236, b - 178), (-118, b - 248), (86, b - 252), (192, b - 192)], 3.0, S.hexc(col) * 1.9, a=0.6)
+    Tb(p, c, x, [(-400, b - 118), (424, b - 112)], 3.0, "#FFFFFF", a=0.20)
+    Tb(p, c, x, [(-20, b - 176), (-24, b - 76)], 2.0, INK, a=0.5)
+    for dx in (-270, 286):
+        El(p, c, x, dx, b - 66, 84, 72, INK)
+        Ci(p, c, x, dx, b - 60, 62, "#141018")
+        Ci(p, c, x, dx, b - 60, 44, "#C9A24A")
+        Ci(p, c, x, dx, b - 60, 34, "#1A1620")
+        for k in range(5):
+            a = k * math.tau / 5
+            Tb(p, c, x, [(dx, b - 60), (dx + 38 * math.cos(a), b - 60 + 38 * math.sin(a))], 6.0, "#C9A24A")
+        Ci(p, c, x, dx, b - 60, 8, "#C9A24A")
+    P(p, c, x, [(402, b - 148), (442, b - 134), (438, b - 122), (400, b - 130)], "#FFF4D8" if c.lit else "#8A8090")
+    B(p, c, x, -440, -426, b - 140, b - 110, "#E8303A", a=0.95)
+
+
+def g_sports_car(p, x, b, c):
+    if c.lit:
+        G(p, c, x, 470, b - 140, 170, 40, PAL["lamp"], 0.35)
+        P(p, c, x, [(440, b - 148), (900, b - 196), (900, b - 30), (440, b - 120)], PAL["lamp"] * 0.5, a=0.22, soft=20)
+        G(p, c, x, -446, b - 126, 64, 28, (1.0, 0.2, 0.15), 0.45)
+    G(p, c, x, 0, b - 118, 380, 30, (1.0, 0.92, 0.85), 0.05)
+
+
+def m_sports_car(x, b, c):
+    return {"sports_car": mark("stand", x, c, -150, f=c.s), "sports_car_back": mark("stand", x, c, -590, f=c.s)}
+
+
+def d_luxury_car(p, x, b, c):
+    """A long black luxury car: tall and stately, chrome round its windows and along its side, chrome rims, a grille."""
+    col = c.o.get("color", "#15131B")
+    P(p, c, x, [(-470, b - 70), (-476, b - 168), (-444, b - 200), (-322, b - 214), (-232, b - 304), (188, b - 308),
+                (290, b - 216), (444, b - 198), (478, b - 160), (480, b - 84), (458, b - 62), (-452, b - 60)], col,
+      smooth=True)
+    P(p, c, x, [(-214, b - 294), (-42, b - 296), (-42, b - 218), (-300, b - 218)], "#22202E")
+    P(p, c, x, [(-26, b - 296), (176, b - 298), (266, b - 218), (-26, b - 218)], "#22202E")
+    Tb(p, c, x, [(-312, b - 216), (-228, b - 304), (186, b - 308), (284, b - 216), (-312, b - 216)], 4.0, "#B8BCCC",
+       a=0.75)
+    Tb(p, c, x, [(-462, b - 130), (470, b - 126)], 3.0, "#C8CCD8", a=0.85)
+    Tb(p, c, x, [(-450, b - 196), (440, b - 192)], 2.0, "#FFFFFF", a=0.14)
+    for dx in (-34, -230):
+        Tb(p, c, x, [(dx, b - 214), (dx, b - 72)], 2.0, INK, a=0.5)
+    for dx in (-110, 90):
+        B(p, c, x, dx, dx + 46, b - 176, b - 168, "#C8CCD8", a=0.9)
+    for dx in (-300, 310):
+        El(p, c, x, dx, b - 70, 82, 68, INK)
+        Ci(p, c, x, dx, b - 62, 62, "#141018")
+        Ci(p, c, x, dx, b - 62, 40, "#B8BCCC")
+        Ci(p, c, x, dx, b - 62, 30, "#2A2632")
+        Ci(p, c, x, dx, b - 62, 9, "#B8BCCC")
+    B(p, c, x, 466, 482, b - 176, b - 104, "#B8BCCC", a=0.9)
+    El(p, c, x, 462, b - 182, 12, 14, "#FFF4D8" if c.lit else "#6A6070")
+    B(p, c, x, -478, -466, b - 186, b - 150, "#C8322A", a=0.9)
+
+
+def g_luxury_car(p, x, b, c):
+    if c.lit:
+        G(p, c, x, 500, b - 180, 180, 50, PAL["lamp"], 0.35)
+        P(p, c, x, [(474, b - 196), (940, b - 240), (940, b - 40), (474, b - 160)], PAL["lamp"] * 0.5, a=0.25, soft=20)
+        G(p, c, x, -478, b - 168, 60, 30, (1.0, 0.2, 0.15), 0.35)
+
+
+def m_luxury_car(x, b, c):
+    return {"luxury_car": mark("stand", x, c, -130, f=c.s), "luxury_car_back": mark("stand", x, c, -640, f=c.s)}
+
+
+def d_panorama_window(p, x, b, c):
+    """A glass wall from the floor to the ceiling over a city: its towers and, at dusk and night, their lit windows; the
+    mullions dividing it."""
+    top, w = b - 760, 450
+    sky = {"night": "#0C1230", "dusk": "#3A2A50", "dawn": "#6A5A7A", "day": "#86A6D2"}[c.light]
+    B(p, c, x, -w, w, top, b - 2, sky)
+    r = rng("towers", c.seed)
+    dx = -w
+    while dx < w:
+        tw, th = float(r.uniform(50, 110)), float(r.uniform(160, 560))
+        B(p, c, x, dx, min(w, dx + tw - 8), b - th, b - 2, "#0A0A18" if c.night else "#4A5470")
+        if c.night:
+            for j in range(int(th // 34)):
+                for i in range(int((tw - 20) // 22)):
+                    if r.random() < 0.45 and dx + 18 + i * 22 < w:
+                        B(p, c, x, dx + 10 + i * 22, dx + 18 + i * 22, b - th + 14 + j * 34, b - th + 24 + j * 34,
+                          "#F5C878", a=0.85)
+        dx += tw
+    for k in range(5):
+        mx = -w + k * (2 * w) / 4
+        B(p, c, x, mx - 5, mx + 5, top, b, "#1A1622")
+    B(p, c, x, -w - 6, w + 6, top - 10, top, "#1A1622")
+    B(p, c, x, -w, w, top, b, "#FFFFFF", a=0.04)
+
+
+def g_panorama_window(p, x, b, c):
+    G(p, c, x, 0, b - 380, 520, 420, (0.45, 0.55, 1.0) if c.night else (1.0, 0.95, 0.85), 0.10)
+
+
+def d_safe(p, x, b, c):
+    """A heavy safe standing open: gold bars on its floor, money on its shelf, its thick door swung out with the dial."""
+    B(p, c, x, -60, 60, b - 140, b, "#3A3E4A", STEEL_LIT, r=6, ea=0.6)
+    B(p, c, x, -48, 48, b - 128, b - 12, "#14121A")
+    B(p, c, x, -48, 48, b - 70, b - 66, "#2A2E38")
+    for k in range(3):
+        B(p, c, x, -42 + k * 29, -18 + k * 29, b - 30, b - 14, "#D9A93A", "#FFE08A", ea=0.9, eh=2.0)
+    for k in range(2):
+        B(p, c, x, -40 + k * 42, -6 + k * 42, b - 92, b - 70, "#3E8F64")
+        B(p, c, x, -26 + k * 42, -20 + k * 42, b - 92, b - 70, "#E8D8A8", a=0.85)
+    P(p, c, x, [(60, b - 140), (98, b - 152), (98, b + 4), (60, b)], "#4A4E5A")
+    Ci(p, c, x, 80, b - 76, 11, "#8A8E9A")
+    Ci(p, c, x, 80, b - 76, 4, "#2A2E38")
+
+
+def d_gold(p, x, b, c):
+    """Gold bars stacked: three, two, one, their tops lit."""
+    for dx, lvl in ((-28, 0), (0, 0), (28, 0), (-14, 1), (14, 1), (0, 2)):
+        y0 = b - 14 * (lvl + 1)
+        P(p, c, x, [(dx - 13, y0 + 14), (dx + 13, y0 + 14), (dx + 9, y0), (dx - 9, y0)], "#D9A93A")
+        B(p, c, x, dx - 9, dx + 9, y0, y0 + 3, "#FFE08A", a=0.9)

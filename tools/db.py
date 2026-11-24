@@ -21,6 +21,7 @@ Usage:
 
 import argparse
 import contextvars
+import base64
 import json
 import re
 import sqlite3
@@ -78,6 +79,20 @@ CREATE TABLE IF NOT EXISTS topics (
     status TEXT NOT NULL,
     reason TEXT,
     video_id INTEGER
+);
+CREATE TABLE IF NOT EXISTS visuals (
+    id {pk},
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    says TEXT NOT NULL,
+    recipe TEXT NOT NULL,
+    made_for TEXT,
+    made_at TEXT NOT NULL,
+    removed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS visual_previews (
+    name TEXT PRIMARY KEY,
+    png TEXT NOT NULL
 );
 
 """
@@ -470,6 +485,52 @@ def keep_note(kind: str, body: dict | list | str) -> None:
         if not db.query("UPDATE notes SET body = %s, created_at = %s WHERE kind = %s RETURNING id",
                         (body, now_iso(), kind)):
             db.query("INSERT INTO notes (kind, body, created_at) VALUES (%s, %s, %s)", (kind, body, now_iso()))
+
+
+def add_visual(recipe: dict, made_for: str = "") -> None:
+    """A visual Agent 3 made (agents/visuals.py, its recipe: tools/visual_recipes.py) into the library."""
+    with connect() as db:
+        db.query("INSERT INTO visuals (name, kind, says, recipe, made_for, made_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                 (recipe["name"], recipe["kind"], recipe["says"], json.dumps(recipe), (made_for or "")[:160], now_iso()))
+
+
+def visuals(removed: bool = False) -> list[dict]:
+    """The visuals Agent 3 made, oldest first: each its recipe with "made_for", "made_at" and "removed_at" (a removed
+    one only when `removed`; the latest of a name wins)."""
+    with connect() as db:
+        rows = db.query("SELECT name, kind, says, recipe, made_for, made_at, removed_at FROM visuals ORDER BY id")
+    out = {}
+    for r in rows:
+        try:
+            rec = json.loads(r["recipe"])
+        except (TypeError, ValueError):
+            continue
+        out[(r["kind"], r["name"])] = {**rec, "made_for": r["made_for"] or "", "made_at": r["made_at"],
+                                       "removed_at": r["removed_at"]}
+    return [v for v in out.values() if removed or not v["removed_at"]]
+
+
+def remove_visual(name: str) -> bool:
+    """A made visual taken out of the library (the Studio's Remove): no later story uses it; the stories made with it
+    keep their own copies."""
+    with connect() as db:
+        return bool(db.query("UPDATE visuals SET removed_at = %s WHERE name = %s AND removed_at IS NULL RETURNING id",
+                             (now_iso(), name)))
+
+
+def set_visual_preview(name: str, png: bytes) -> None:
+    """A made visual's picture (PNG), kept with it: the dashboard shows it where nothing is drawn (online)."""
+    data = base64.b64encode(png).decode("ascii")
+    with connect() as db:
+        if not db.query("UPDATE visual_previews SET png = %s WHERE name = %s RETURNING name", (data, name)):
+            db.query("INSERT INTO visual_previews (name, png) VALUES (%s, %s)", (name, data))
+
+
+def visual_preview(name: str) -> bytes | None:
+    """The picture kept with a made visual (set_visual_preview), or None."""
+    with connect() as db:
+        rows = db.query("SELECT png FROM visual_previews WHERE name = %s", (name,))
+    return base64.b64decode(rows[0]["png"]) if rows else None
 
 
 def paused() -> bool:

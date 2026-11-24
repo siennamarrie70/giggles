@@ -1,12 +1,12 @@
-# Instagram Reels in the cloud. Instagram's API can't schedule a Reel, so this posts each story's short version (the
-# whole story in under a minute) as a Reel once its time has come (it goes public on YouTube as a Short
-# series.short_after_hours after the story: 17:30 + 3 h = 20:30 India time, 15:00 UTC). It was kept, encrypted, by the
+# Instagram Reels in the cloud. Instagram's API can't schedule a Reel, so this posts each Short (a story of 2-3 minutes,
+# since 2026-11-23) as a Reel once its time has come: when it goes public on YouTube, 21:00 and 03:00 India time (15:30
+# and 21:30 UTC) on the plan's nights of Shorts (tools/slots.py). It was kept, encrypted, by the
 # morning run that made it (tools/kept.py), and Instagram fetches it from a temporary link (tools/instagram.py). It stays
 # up to 40 minutes for retries and for YouTube being a little late making the Short public; with nothing due it ends in
 # a minute or two.
-# The two lines run at :35 of the even hours and :05 of the odd ones, 02:35 to 21:05 UTC: a Reel is posted by the first
-# run after its time (20:30 India time = 15:00 UTC: the 15:05 run), and a run GitHub starts late or skips is covered by
-# the next.
+# The lines run at :35 of the even hours and :05 of the odd ones, 02:35 to 21:05 UTC, and at 21:35 and 22:35 UTC for the
+# night's 03:00 Short: a Reel is posted by the first run after its time (GitHub starts them up to an hour late; each stays
+# 40 minutes), and a run GitHub starts late or skips is covered by the next.
 # "Run workflow" on the Actions tab starts it by hand. The PAUSED variable, or the dashboard's pause switch, stops it.
 name: Reels
 
@@ -14,6 +14,7 @@ on:
   schedule:
     - cron: "35 2-20/2 * * *"  # :35 of every other hour, 08:05 ... 02:05 India time
     - cron: "5 3-21/2 * * *"   # :05 of the hours between (GitHub can start late, or skip)
+    - cron: "35 21,22 * * *"   # 03:05 and 04:05 India time: the night's 03:00 Short's Reel (and a spare)
   workflow_dispatch:
 
 concurrency:

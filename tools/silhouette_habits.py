@@ -46,11 +46,30 @@ def _T(pose):
 
 
 def _elbow(sh, wr, R, f, out=False):
+    """The elbow of an arm from the shoulder sh to the wrist wr, facing f. out=False: it bends the way a real arm does
+    (the forearm folds forward), on the same side whatever the hand does, so it never jumps across the arm from one frame
+    to the next (it used to take the lower of the two places, which swapped as the hand passed under the shoulder).
+    out=True: raised and out (a hug's, a guard's) while the hand is below the shoulder, a real arm's above it: for a hand
+    that stays on one side of the shoulder's height (one that crosses it: out=False). Near full reach it straightens
+    softly, never snapping straight."""
     l1, l2 = 1.22 * R, 1.10 * R
+    wr = _soft_reach(sh, wr, l1 + l2)
+    if not out:
+        return ik(sh, wr, l1, l2, -f)
     k1, k2 = ik(sh, wr, l1, l2, 1), ik(sh, wr, l1, l2, -1)
-    if out:
-        return k1 if f * (k1[0] - k2[0]) > 0 else k2
-    return k1 if k1[1] > k2[1] else k2
+    return k1 if f * (k1[0] - k2[0]) > 0 else k2
+
+
+def _soft_reach(sh, wr, L, start=0.90, most=0.995):
+    """The hand the elbow is worked out for: eased in towards full reach (an elbow's angle changes ever faster as the arm
+    straightens; without this it snaps straight in the last frames). The hand itself stays where it was asked to be."""
+    dx, dy = wr[0] - sh[0], wr[1] - sh[1]
+    d = math.hypot(dx, dy)
+    a, b = start * L, most * L
+    if d <= a:
+        return wr
+    d2 = a + (b - a) * (1 - math.exp(-(d - a) / (b - a)))
+    return (sh[0] + dx * d2 / d, sh[1] + dy * d2 / d)
 
 
 def _arm(sh, wr, R, f, out=False):
@@ -69,6 +88,19 @@ def _lean(pose, angle, head=(0.14, -1.28)):
 
 def _lerp(a, b, u):
     return (a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u)
+
+
+def _swing(sh, a, b, s, over=True):
+    """A hand on its way (s 0-1) from a to b round the shoulder sh, never through it (an arm folded flat there whips
+    its elbow round): up and over (straight up on the way), or over=False the shorter way round; its distance from the
+    shoulder eased from a's to b's."""
+    a0, a1 = math.atan2(a[1] - sh[1], a[0] - sh[0]), math.atan2(b[1] - sh[1], b[0] - sh[0])
+    d = (a1 - a0) % math.tau
+    if ((-math.pi / 2 - a0) % math.tau > d) if over else d > math.pi:   # (the other way round)
+        d -= math.tau
+    r0, r1 = math.hypot(a[0] - sh[0], a[1] - sh[1]), math.hypot(b[0] - sh[0], b[1] - sh[1])
+    ang, r = a0 + d * s, r0 + (r1 - r0) * s
+    return (sh[0] + r * math.cos(ang), sh[1] + r * math.sin(ang))
 
 
 def _pulse(t, period, on=0.18, phase=0.0):
@@ -107,8 +139,8 @@ def pose(action: str, mark: dict, t: float, R: float, ground: float, f: int, see
         p["near"] = _arm(T(0.02, 0.24), wr, R, f)
         p["far"] = _arm(T(-0.06, 0.26), (wr[0] - f * 0.30 * R, wr[1] + 0.05 * R), R, f)
         p["hands"] = ["fist", "fist"]
-        if 0.70 <= u < 0.80:   # the jolt
-            p["head"] = (p["head"][0], p["head"][1] + 0.06 * R)
+        if 0.70 <= u < 0.84:   # the jolt (in and out: not a jump)
+            p["head"] = (p["head"][0], p["head"][1] + 0.06 * R * math.sin(math.pi * (u - 0.70) / 0.14))
         return p, eyes
 
     if action == "throwing":   # wind up, hurl, follow through; the phone flies on and shatters against the wall
@@ -116,28 +148,29 @@ def pose(action: str, mark: dict, t: float, R: float, ground: float, f: int, see
         T = _T(p)
         cyc = 2.6
         u = ((t + seed * 0.21) % cyc) / cyc
-        back, front = T(-0.95, -0.55), T(1.45, 0.45)
-        if u < 0.30:
-            wr = _lerp(T(0.70, 1.20), back, smooth(u / 0.30))
-        elif u < 0.38:
-            wr = _lerp(back, front, smooth((u - 0.30) / 0.08))
+        back, front, low, sh0 = T(-0.95, -0.55), T(1.45, 0.45), T(0.70, 1.20), T(0.02, 0.24)
+        if u < 0.30:   # (drawn down, back and up behind his head: round the shoulder, not through it)
+            wr = _swing(sh0, low, back, smooth(u / 0.30), over=False)
+        elif u < 0.41:   # (over the shoulder, the elbow leading)
+            wr = _swing(sh0, back, front, smooth((u - 0.30) / 0.11))
         elif u < 0.70:
             wr = front
         else:
-            wr = _lerp(front, T(0.70, 1.20), smooth((u - 0.70) / 0.30))
-        p = _lean(p, 0.05 + (0.25 if 0.32 < u < 0.70 else 0.0), (0.22, -1.25))
+            wr = _lerp(front, low, smooth((u - 0.70) / 0.30))
+        lunge = smooth((u - 0.26) / 0.10) * (1 - smooth((u - 0.66) / 0.20)) if 0.26 < u < 0.86 else 0.0
+        p = _lean(p, 0.05 + 0.25 * lunge, (0.22, -1.25))   # (into the throw and back: never in one frame)
         T = _T(p)
-        p["near"] = _arm(T(0.02, 0.24), wr, R, f, out=True)
+        p["near"] = _arm(T(0.02, 0.24), wr, R, f)
         p["hands"] = ["fist", "fist"]
-        if u < 0.34:
+        if u < 0.40:   # (let go as the hand comes through, not halfway)
             p["hold"] = {"kind": "phone", "at": wr}
         else:   # in flight, then the crash
-            q = clamp((u - 0.34) / 0.12)
+            q = clamp((u - 0.40) / 0.12)
             start = T(1.45, 0.40)
             end = (start[0] + f * 3.6 * R, start[1] - 0.20 * R)
             at = (start[0] + (end[0] - start[0]) * q, start[1] + (end[1] - start[1]) * q - math.sin(math.pi * q) * 0.8 * R)
             p["hold"] = {"kind": "flying", "at": at if q < 1 else end, "spin": q * 9.0 * f,
-                         "burst": clamp((u - 0.46) / 0.40) if u >= 0.46 else 0.0}
+                         "burst": clamp((u - 0.52) / 0.40) if u >= 0.52 else 0.0}
         return p, eyes
 
     if action == "punching_wall":   # a punch every second and a half; the wall cracks where it lands
@@ -220,11 +253,11 @@ def pose(action: str, mark: dict, t: float, R: float, ground: float, f: int, see
         cyc = 3.2
         u = ((t + seed * 0.07) % cyc) / cyc
         clock = (hx - f * 1.55 * R, hy + 0.35 * R)
-        slap = smooth((u - 0.45) / 0.10) * (1 - smooth((u - 0.62) / 0.18)) if 0.45 <= u < 0.80 else 0.0
+        slap = smooth((u - 0.36) / 0.22) * (1 - smooth((u - 0.62) / 0.24)) if 0.36 <= u < 0.86 else 0.0
         sh = p["near"][0]
         rest = (sh[0] + f * 0.6 * R, sh[1] + 0.4 * R)
-        p["near"] = _arm(sh, _lerp(rest, (clock[0], clock[1] - 0.25 * R), slap), R, -f, out=True)
-        p["hold"] = {"kind": "alarm", "at": clock, "ringing": u < 0.5 or u > 0.9, "t": t}
+        p["near"] = _arm(sh, _swing(sh, rest, (clock[0], clock[1] - 0.25 * R), slap), R, f)   # (up and over his head)
+        p["hold"] = {"kind": "alarm", "at": clock, "ringing": u < 0.57 or u > 0.9, "t": t}
         p["hands"] = [p["hands"][0], "open"]
         return p, eyes
 
@@ -244,7 +277,7 @@ def pose(action: str, mark: dict, t: float, R: float, ground: float, f: int, see
         hx, hy = p["head"]
         bag = T(1.05, 1.55)
         u = ((t + seed * 0.19) % 2.2) / 2.2
-        q = smooth(u / 0.25) if u < 0.25 else (1.0 if u < 0.45 else (1 - smooth((u - 0.45) / 0.30) if u < 0.75 else 0.0))
+        q = smooth(u / 0.32) if u < 0.32 else (1.0 if u < 0.48 else (1 - smooth((u - 0.48) / 0.34) if u < 0.82 else 0.0))
         wr = _lerp((bag[0], bag[1] - 0.30 * R), (hx + f * 0.85 * R, hy + 0.55 * R), q)
         p["near"] = _arm(T(0.02, 0.24), wr, R, f)
         p["far"] = _arm(T(-0.06, 0.26), (bag[0] - f * 0.25 * R, bag[1] + 0.05 * R), R, f)
@@ -300,7 +333,7 @@ def pose(action: str, mark: dict, t: float, R: float, ground: float, f: int, see
         p = S.pose_stand(x, gnd, f, R, lift=0.40)
         T = _T(p)
         q = _pulse(t + seed * 0.09, 1.8, on=0.45)
-        p["near"] = _arm(T(0.02, 0.24), _lerp(T(0.60, 0.95), T(1.30, 0.20), q), R, f, out=True)
+        p["near"] = _arm(T(0.02, 0.24), _lerp(T(0.60, 0.95), T(1.30, 0.20), q), R, f)
         p["hands"] = ["fist", "open"]
         return p, eyes
 
@@ -363,9 +396,10 @@ def pose(action: str, mark: dict, t: float, R: float, ground: float, f: int, see
             p = S.pose_stand(x, gnd, f, R, slump=0.3)
         T = _T(p)
         top = reach if reach else T(1.30, 1.40)
-        u = ((t + seed * 0.05) % 0.9) / 0.9
-        flick = math.sin(math.pi * u)
-        p["near"] = _arm(T(0.02, 0.24), (top[0] + f * (0.05 + 0.35 * u) * R, top[1] - (0.10 + 0.25 * flick) * R), R, f)
+        u = ((t + seed * 0.05) % 1.1) / 1.1
+        go = smooth(u / 0.55) if u < 0.55 else 1 - smooth((u - 0.55) / 0.45)   # (across with a note, back for the next)
+        flick = math.sin(math.pi * min(1.0, u / 0.55))
+        p["near"] = _arm(T(0.02, 0.24), (top[0] + f * (0.05 + 0.35 * go) * R, top[1] - (0.10 + 0.25 * flick) * R), R, f)
         p["far"] = _arm(T(-0.06, 0.26), (top[0] - f * 0.25 * R, top[1] - 0.12 * R), R, f)
         p["hold"] = {"kind": "money_piles", "at": (top[0], top[1] - 0.02 * R), "f": f}
         p["hands"] = ["fist", "open"]
@@ -413,9 +447,12 @@ def pose(action: str, mark: dict, t: float, R: float, ground: float, f: int, see
         elif u < 0.5:
             pen = _lerp((base[0] + f * 0.12 * R, base[1] + 0.15 * R), (base[0] + f * 0.42 * R, base[1] - 0.25 * R),
                         smooth((u - 0.25) / 0.25))
-        else:
+        elif u < 0.7:
             pen = (base[0] + f * 0.42 * R, base[1] - 0.25 * R)
-        p["near"] = _arm(T(0.02, 0.24), pen, R, f, out=True)
+        else:   # (on to the next row's start: never a jump there)
+            nxt = (pt[0] - f * 0.40 * R, pt[1] - 0.55 * R + ((row + 1) % 3) * 0.45 * R)
+            pen = _lerp((base[0] + f * 0.42 * R, base[1] - 0.25 * R), nxt, smooth((u - 0.7) / 0.3))
+        p["near"] = _arm(T(0.02, 0.24), pen, R, f)
         p["hold"] = {"kind": "pen", "at": pen}
         return p, eyes
 

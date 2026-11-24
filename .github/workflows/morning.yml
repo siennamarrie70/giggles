@@ -4,9 +4,9 @@
 # in config/channel.yaml) and that YouTube has room to upload, or the day's numbers. Most hours there's nothing, and the
 # run ends in about a minute. When there is, it installs the video-making packages and makes the story (python
 # tools/jobs.py morning): Agent 1 picks the theme, Agent 2 writes the story and its moments with their bubbles (the films
-# are silent since 2026-11-19: no narrator), Agent 3 draws the film and its short version, Agent 4 reviews them, and
-# Agent 5 uploads the film scheduled for its slot (17:30, series.post_at), its short version as a Short 3 hours later;
-# then it stops. So the story after one that went public at 17:30 is made within the hour.
+# are silent since 2026-11-19: no narrator), Agent 3 draws it (a Short upright), Agent 4 reviews it, and
+# Agent 5 uploads each video for its slot (tools/slots.py: two Shorts a night x3, then a long story; 21:00 and 03:00 IST);
+# then it stops. So the video a newly free slot needs is made within the hour.
 # "Run workflow" on the Actions tab starts it by hand (no check first); with "test" it writes, makes and reviews one
 # story and uploads nothing.
 # Keys come from the repository's secrets (Settings -> Secrets and variables -> Actions), each given only to the steps

@@ -463,9 +463,9 @@ def _chore_label(name: str, kwargs: dict) -> str:
         return "Agents 1-2: writing the next story"
     if name == "publish":
         turned_down = (((db.get_video(kwargs["video_id"]) or {}).get("plan") or {}).get("review") or {}).get("held")
-        return (f"Agents 3-4: making story #{kwargs['video_id']} again (the Reviewer turned it down)" if turned_down
-                else f"Agents 3-4: making and reviewing story #{kwargs['video_id']}")
-    return "Agent 6: reading the numbers"
+        return (f"Agents 4-5: making story #{kwargs['video_id']} again (the Reviewer turned it down)" if turned_down
+                else f"Agents 4-5: making and reviewing story #{kwargs['video_id']}")
+    return "Agent 7: reading the numbers"
 
 
 def _post_due_reels() -> None:
@@ -473,7 +473,7 @@ def _post_due_reels() -> None:
     own."""
     if publisher.reels_due():
         try:
-            _start_task("reel", "Agent 5: posting to Instagram", lambda p: jobs.run_job("instagram", progress=p))
+            _start_task("reel", "Agent 6: posting to Instagram", lambda p: jobs.run_job("instagram", progress=p))
         except HTTPException:
             pass  # a Reel is going out already; the next minute looks again
 
@@ -483,7 +483,7 @@ def _read_due_numbers() -> None:
     nothing from 2026-10-26 to 28: there was always something to make)."""
     if jobs.stats_due():
         try:
-            _start_task("stats", "Agent 6: reading the numbers", lambda p: jobs.run_job("stats", progress=p))
+            _start_task("stats", "Agent 7: reading the numbers", lambda p: jobs.run_job("stats", progress=p))
         except HTTPException:
             pass  # reading them already
 
@@ -561,7 +561,8 @@ def _slot_video(v: dict | None, live: dict | None = None) -> dict | None:
     short = plan.get("short_upload") or {}
     # (a story stopped or deleted on YouTube: when, and the time it had then: publisher.take_off)
     off = plan.get(v["status"]) if v["status"] in ("stopped", "deleted") else None
-    return {"id": v["id"], "status": v["status"], "title": meta.get("title") or _draft_title(v) or v["theme"],
+    return {"id": v["id"], "status": v["status"], "form": series.form_of(v),
+            "title": meta.get("title") or _draft_title(v) or v["theme"],
             "theme": (plan.get("brief") or {}).get("theme") or v["theme"], "youtube_id": v["youtube_id"],
             "publish_at": v["publish_at"], "slot": v["slot"], "platforms": publisher.platforms(v, live),
             "when": v["publish_at"] or (off or {}).get("publish_at") or (off or {}).get("slot") or v["slot"],
@@ -586,22 +587,26 @@ def _autopilot_state(cfg: dict) -> dict:
     going = _going(last, now)
     upcoming = jobs.slot_board(now, now + timedelta(days=2), sched, now)
     try:
-        next_open = slots.iso(jobs.next_open_slot(jobs.MANUAL_LEAD, now, sched))
+        found = jobs.next_open_slot(jobs.MANUAL_LEAD, now, sched)
+        next_open, next_open_form = slots.iso(found), slots.form(found, sched)
     except RuntimeError:
-        next_open = None
+        next_open = next_open_form = None
     here = autopilot_here()
     return {
         "here": here,
-        "schedule": {k: sched[k] for k in ("timezone", "post_at", "make_at", "ahead", "stories_ahead")},
+        "schedule": {k: sched[k] for k in ("timezone", "post_at", "make_at", "ahead", "stories_ahead", "start",
+                                           "short_days", "shorts_at", "long_at")},
         "check": db.latest_note("autopilot:check"),  # (the last check's verdict: is a story being made, or what it waits for)
         "run": {"starts": slots.iso(slots.opens(day[0], sched)), "slots": len(board),  # (when its story could start)
                 "scheduled": sum(1 for s in board if s["state"] in ("scheduled", "posted")),
                 "running": going, "last": _run_json(last)},
         # (the run going in the cloud, as the progress bar's task; on a PC that runs the autopilot itself, it's its own)
         "cloud": _cloud_task(last) if going and not here else None,
-        "slots": [{"at": slots.iso(s["slot"]), "state": s["state"], "video": _slot_video(s["video"])} for s in board],
+        "slots": [{"at": slots.iso(s["slot"]), "state": s["state"], "form": s["form"], "video": _slot_video(s["video"])}
+                  for s in board],
         "next": upcoming and {"at": slots.iso(upcoming[0]["slot"]), "state": upcoming[0]["state"]},
-        "next_open": next_open,
+        "next_open": next_open, "next_open_form": next_open_form,  # ("Make the Short for Sat 21:00 now")
+        "next_to_make": _turn_brief(jobs.next_to_make(now, sched)),  # (what "Write the next Short" writes for)
         "last_check": db.last_beat("autopilot"),
     }
 
@@ -671,6 +676,7 @@ def _agents(planned: list[dict]) -> list[dict]:
     passed = [v for v in planned if reviewer.passed(v["plan"])]
     book = playbook()
     metric = {"theme": (len(stories), "themes chosen"), "story": (len(planned), "stories waiting"),
+              "visuals": (len(db.visuals()), "new silhouettes in the library"),
               "animator": (len(films), "films made for the queue"),
               "reviewer": (len(passed), "films passed, ready to post"),
               "publisher": (len(scheduled), "films scheduled ahead"),
@@ -735,9 +741,9 @@ def state():
 def _series_state() -> dict:
     """The stories' settings, for every page (the Overview, the Studio, the Stories page)."""
     cfg = series.settings()
-    return {"post_at": cfg.get("post_at"), "short_after_hours": series.short_after_hours(),
+    return {"post_at": cfg["cycle"]["long_at"], "short_after_hours": series.short_after_hours(),
             "short_seconds": list(story_film.SHORT_SECONDS), "minutes": list(series.minutes()),
-            "themes": series.themes()}
+            "short_minutes": list(series.minutes("short")), "cycle": cfg["cycle"], "themes": series.themes()}
 
 
 @router.post("/api/pause")
@@ -746,8 +752,16 @@ async def set_pause(request: Request):
     paused = bool((await _json(request)).get("paused"))
     db.set_paused(paused)
     if not ON_VERCEL:
-        set_key(str(ROOT / ".env"), "PAUSED", "true" if paused else "false")
         os.environ["PAUSED"] = "true" if paused else "false"
+        for attempt in (1, 2):   # (.env mirrors the switch; Windows refuses the swap while another program reads it)
+            try:
+                set_key(str(ROOT / ".env"), "PAUSED", os.environ["PAUSED"])
+                break
+            except OSError as e:
+                if attempt == 2:
+                    print(f"The pause switch is saved, but .env couldn't be updated: {e}", flush=True)
+                else:
+                    time.sleep(0.3)
     return {"paused": jobs.paused()}
 
 
@@ -851,7 +865,8 @@ def _story_json(v: dict) -> dict:
               for p in story.get("places") or []]
     cast = [{"id": c["id"], "role": c.get("role"), "words": _person_words(c)} for c in story.get("cast") or []]
     return {
-        "story": True, "theme": brief.get("theme"), "kind": brief.get("kind"), "why_now": brief.get("why_now"),
+        "story": True, "theme": brief.get("theme"), "kind": brief.get("kind"), "form": series.form_of(v),
+        "why_now": brief.get("why_now"),
         "brief": brief.get("instruction"), "core_message": story.get("core_message"),
         "places": places, "cast": cast, "missing": story.get("missing") or [],
         "board_notes": story.get("board_notes") or [],
@@ -1070,7 +1085,7 @@ async def instagram_action(video_id: int, request: Request):
         _local_only("Making a short version for Instagram")
         if not reel["can"]["schedule"]:
             raise HTTPException(409, f"{reel['why'] or 'Its Reel is waiting or posted already'}.")
-        return _start_task("remake", f"Agent 3: making story #{video_id}'s short version again for Instagram",
+        return _start_task("remake", f"Agent 4: making story #{video_id}'s short version again for Instagram",
                            lambda p: publisher.run_remake(video, progress=p), video_id)
     if action == "now":
         _local_only("Posting to Instagram")
@@ -1114,14 +1129,12 @@ SCHEDULE_DAYS = 7       # the Schedule page's "Will be posted" shows this many d
 POSTED_MOST = 200       # ...and its "Posted" at most this many stories, newest first
 LIVE_DAYS = 7           # YouTube is asked how the posts of the last week stand (older ones show what the dashboard knows)
 SCHEDULE_PARTS = jobs.SLOT_PARTS + ("stopped", "deleted")
-QUEUE_PARTS = jobs.SLOT_PARTS + ("review.passed", "review.held", "review.override", "render.id", "render.look")
+QUEUE_PARTS = jobs.SLOT_PARTS  # (with the review's and the film's marks: how far a waiting story is made)
 
 
 def _queue() -> list[dict]:
-    """The stories written and waiting for a slot, in the order the autopilot takes them (publisher.choose: the oldest
-    first, not held by the Reviewer, and not drawn in an earlier look)."""
-    return [v for v in db.planned_videos(parts=QUEUE_PARTS) if db.ready(v)
-            and (not (v["plan"].get("render") or {}).get("id") or (v["plan"].get("render") or {}).get("look") == series.LOOK)]
+    """The stories written and waiting for a turn, in the order the autopilot takes them (jobs.waiting)."""
+    return jobs.waiting()
 
 
 def _queued_json(v: dict) -> dict:
@@ -1129,6 +1142,88 @@ def _queued_json(v: dict) -> dict:
     review, made = v["plan"].get("review") or {}, (v["plan"].get("render") or {}).get("id")
     return {**_slot_video(v), "made": bool(made), "passed": bool(review.get("passed") or review.get("override")),
             "created_at": v["created_at"]}
+
+
+LINE_NIGHTS = 8  # the Studio's line: from this round's first night, two rounds (four nights each, by the plan)
+
+
+def _turn_story(v: dict) -> dict:
+    """A story on the Studio's line, read in part: as a slot shows it, and how far it's made (the line's tracker:
+    script, pictures, film, review, uploaded)."""
+    plan = v["plan"]
+    review, render = plan.get("review") or {}, plan.get("render") or {}
+    return {**_slot_video(v), "created_at": v["created_at"], "written": bool(plan.get("draft") or plan.get("metadata")),
+            "boarded": bool(plan.get("metadata")), "made": bool(render.get("id")),
+            "passed": bool(review.get("passed") or review.get("override")), "held": bool(review.get("held")),
+            "earlier": bool(render.get("id") and render.get("look") != series.LOOK)}
+
+
+def _turn_brief(t: dict | None) -> dict | None:
+    """A turn in a word: its time, its form, where it stands and when its making opens."""
+    return t and {"at": slots.iso(t["slot"]), "form": t["form"], "state": t["state"], "opens": slots.iso(t["opens"])}
+
+
+@router.get("/api/line")
+def line_page():
+    """The Studio's line (jobs.line): the turns from this round's first night through the next round, in posting order,
+    each with its night and its story (uploaded or being made for it, or the written one waiting for it) and how far
+    that is made; the next turn no story is for yet (what "Write the next Short" writes for); the stories written that
+    no turn in view takes yet; how many of the next turns are ready; and this round's count."""
+    sched = slots.plan(load_config())
+    now = datetime.now(timezone.utc)
+    ahead_slots = slots.between(now - jobs.LATE_GRACE, now + timedelta(days=3), sched)
+    # (the night of the next video still to go out: at 04:43 on the 24th, the 24th, not the night gone by)
+    tonight = slots.posting_day(ahead_slots[0], sched) if ahead_slots else slots.shown_day(now, sched)
+    k = slots.cycle_day(tonight, sched)
+    first = tonight - timedelta(days=k - 1) if k else tonight
+    last = first + timedelta(days=LINE_NIGHTS - 1)
+    planned = db.planned_videos(parts=jobs.SLOT_PARTS)
+    pending = jobs.waiting(planned)
+    turns = jobs.line(now, sched, start=slots.day_slots(first, sched)[0] - timedelta(seconds=1),
+                      end=slots.day_slots(last, sched)[-1] + timedelta(seconds=1), pending=pending)
+    used = {t["queued"]["id"] for t in turns if t["queued"]}
+    ahead = int(sched.get("stories_ahead") or 1) if sched.get("ahead") else 1
+    coming = [t for t in turns if t["state"] not in ("posted", "missed")][:ahead]
+    nights = int(sched["short_days"]) + 1
+    this_round = [t for t in turns if k and t["night"] < first + timedelta(days=nights)]
+    make = jobs.next_to_make(turns=turns) or jobs.next_to_make(now, sched)
+    shown = [{**_turn_brief(t), "night": t["night"].isoformat(), "night_no": t["night_no"],
+              "story": _turn_story(t["video"] or t["queued"]) if (t["video"] or t["queued"]) else None,
+              "queued": bool(t["queued"])} for t in turns]
+    # (an upload holding none of the plan's turns, e.g. one scheduled at the old time before the plan began: shown on
+    # its night as it is, marked "extra", so nothing uploaded goes missing from the Studio)
+    held = {t["video"]["id"] for t in turns if t["video"]}
+    night_starts = datetime.combine(first, slots.DAY_STARTS, tzinfo=sched["tz"])
+    for v in db.slot_holders(slots.iso(night_starts), slots.iso(slots.day_slots(last, sched)[-1]), parts=jobs.SLOT_PARTS):
+        at = slots.parse(v["publish_at"] or v["slot"])
+        if v["id"] in held or not at:
+            continue
+        night = slots.posting_day(at, sched)
+        shown.append({"at": slots.iso(at), "form": series.form_of(v), "opens": None, "night": night.isoformat(),
+                      "night_no": slots.cycle_day(night, sched), "queued": False, "extra": True, "story": _turn_story(v),
+                      "state": "posted" if v["status"] == "scheduled" and at <= now else v["status"]})
+    shown.sort(key=lambda t: t["at"])
+    return {
+        "turns": shown,
+        "tonight": tonight.isoformat(),
+        "next_to_make": _turn_brief(make),
+        "later": [_turn_story(v) for v in planned if v["id"] not in used],
+        "ahead": {"n": ahead, "ready": sum(1 for t in coming if t["video"] or t["queued"])},
+        "round": {"night": k, "nights": nights, **{form: {
+            "posted": sum(1 for t in this_round if t["form"] == form and t["state"] == "posted"),
+            "all": sum(1 for t in this_round if t["form"] == form)} for form in series.FORMS}} if k else None,
+        "start": sched["cycle_start"].isoformat() if sched.get("cycle_start") else None,
+        "minutes": {form: list(series.minutes(form)) for form in series.FORMS},
+    }
+
+
+@router.get("/api/videos/{video_id}")
+def video_page(video_id: int):
+    """One story whole (the Studio's line can show one older than the latest 60)."""
+    video = db.get_video(video_id)
+    if not video:
+        raise HTTPException(404, "There's no such story.")
+    return _video_json(video)
 
 
 @router.get("/api/schedule")
@@ -1142,16 +1237,14 @@ def schedule_page():
     scheduled = db.scheduled_videos(days=0, parts=SCHEDULE_PARTS)
     scheduled = [v for v in scheduled if v["publish_at"] and slots.parse(v["publish_at"]) > now]
     posted = db.posted_history(POSTED_MOST, parts=SCHEDULE_PARTS)
-    board = jobs.slot_board(now - jobs.LATE_GRACE, now + timedelta(days=SCHEDULE_DAYS), sched, now)
-    queue = iter(_queue())
-    coming = []
-    for s in board:
-        if s["state"] in ("posted", "scheduled", "missed"):  # (in "Posted" and "Scheduled")
-            continue
-        queued = None if s["state"] == "making" else next(queue, None)  # (publisher.choose's order)
-        coming.append({"at": slots.iso(s["slot"]), "state": s["state"], "opens": slots.iso(slots.opens(s["slot"], sched)),
-                       "video": _slot_video(s["video"]) if s["video"] else None,
-                       "queued": _queued_json(queued) if queued else None})
+    pending = _queue()
+    turns = jobs.line(now, sched, end=now + timedelta(days=SCHEDULE_DAYS), pending=pending)  # (the Studio's line too)
+    used = {t["queued"]["id"] for t in turns if t["queued"]}
+    coming = [{"at": slots.iso(t["slot"]), "state": t["state"], "form": t["form"], "opens": slots.iso(t["opens"]),
+               "video": _slot_video(t["video"]) if t["video"] else None,
+               "queued": _queued_json(t["queued"]) if t["queued"] else None}
+              for t in turns if t["state"] not in ("posted", "scheduled", "missed")]  # (in "Posted" and "Scheduled")
+    queue = (v for v in pending if v["id"] not in used)
     recent = slots.iso(now - timedelta(days=LIVE_DAYS))
     live = _youtube_now([v["youtube_id"] for v in scheduled]
                         + [v["youtube_id"] for v in posted if v["status"] == "scheduled" and v["publish_at"] >= recent])
@@ -1196,7 +1289,7 @@ def thumb_wide(video_id: int):
 
 @router.get("/api/review")
 def review_page():
-    """Agent 4's page: what it checks, the stories it turned down (being made again by themselves), its recent reviews
+    """Agent 5's page: what it checks, the stories it turned down (being made again by themselves), its recent reviews
     and the lessons it has taught."""
     history = list(db.latest_note("review:history") or [])[::-1]
     titles = {}
@@ -1414,6 +1507,52 @@ def missing():
     return {"pieces": sorted(pieces, key=lambda p: (-len(p["stories"]), p["what"]))}
 
 
+@router.get("/api/visuals")
+def made_visuals():
+    """The silhouettes Agent 3 (Visuals) made for the library, newest first: each its words, kind, the story it was made
+    for, when, and its preview."""
+    return {"visuals": [{"name": v["name"], "kind": v["kind"], "says": v["says"], "layer": v.get("layer") or "",
+                         "made_for": v.get("made_for") or "", "made_at": v.get("made_at"),
+                         "preview": f"/media/visual/{quote(v['name'])}.png?v={quote(str(v.get('made_at') or ''))}"}
+                        for v in reversed(db.visuals())]}
+
+
+@router.post("/api/visuals/{name}/remove")
+def remove_made_visual(name: str):
+    """A made silhouette out of the library: no later story uses it (a story made with it keeps its own copy)."""
+    if not re.fullmatch(r"[a-z0-9_]{1,40}", name) or not db.remove_visual(name):
+        raise HTTPException(404, "There's no such visual in the library.")
+    if "visual_recipes" in sys.modules:   # (drawn in this process: forgotten here too; online nothing is drawn or imported)
+        sys.modules["visual_recipes"].forget([name])
+    return made_visuals()
+
+
+@router.get("/media/visual/{name}.png", include_in_schema=False)
+def visual_preview(name: str):
+    """A made visual drawn alone (a removed one too: a story may still use it): the picture kept with it when it was
+    made; one without is drawn here and kept (online, where nothing is drawn: 404 until then)."""
+    if not re.fullmatch(r"[a-z0-9_]{1,40}", name):
+        raise HTTPException(404)
+    png = db.visual_preview(name)
+    if png is None:
+        rec = next((v for v in db.visuals(removed=True) if v["name"] == name), None)
+        if rec is None or ON_VERCEL:
+            raise HTTPException(404)
+        import io
+
+        import numpy as np
+        from PIL import Image
+
+        import visual_recipes
+
+        rgb, _ = visual_recipes.preview(rec)
+        buf = io.BytesIO()
+        Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8)).save(buf, "PNG")
+        png = buf.getvalue()
+        db.set_visual_preview(name, png)
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
 @router.delete("/api/topics/{topic_id}")
 def drop_topic(topic_id: int):
     found = next((t for t in db.list_topics("waiting", limit=500) if t["id"] == topic_id), None)
@@ -1483,12 +1622,21 @@ async def save_series(request: Request):
     _local_only("Settings")
     body = await _json(request)
     try:
-        post_at = str(body.get("post_at") or "").strip()
-        slots.validate(load_config().get("schedule") or {}, post_at)
-        hours = _number(body.get("short_after_hours", body.get("teaser_after_hours")),  # (its name until 2026-11-16)
-                        "Short version after", 0, 12, whole=False)
-        low = _number((body.get("minutes") or [3, 4])[0], "Shortest", 2, 8, whole=False)
-        high = _number((body.get("minutes") or [3, 4])[1], "Longest", low, 10, whole=False)
+        sent = body.get("cycle") if isinstance(body.get("cycle"), dict) else {}
+        cycle = {**series.settings()["cycle"], **sent}
+        if body.get("post_at") and not sent.get("long_at"):  # (a page from before the plan: its one time, the long story's)
+            cycle["long_at"] = str(body["post_at"]).strip()
+        checked = slots.validate(load_config().get("schedule") or {}, cycle)
+        cycle = {k: checked[k] for k in ("start", "short_days", "shorts_at", "long_at")}
+        hours = _number(body.get("short_after_hours", body.get("teaser_after_hours", series.short_after_hours())),
+                        "Short version after", 0, 12, whole=False)  # (stories made before the plan; teaser: until 11-16)
+        minutes = body.get("minutes") or [3, 4]
+        if not isinstance(minutes, list) or len(minutes) != 2:
+            raise ValueError("A long story's length: its shortest and its longest, in minutes.")
+        low = _number(minutes[0], "A long story's shortest", 2, 8, whole=False)
+        high = _number(minutes[1], "A long story's longest", low, 10, whole=False)
+        short_low = _number((body.get("short_minutes") or [2, 3])[0], "A Short's shortest", 1, 3, whole=False)
+        short_high = _number((body.get("short_minutes") or [2, 3])[1], "A Short's longest", short_low, 3, whole=False)
         themes = {}
         for kind in ("vices", "virtues"):
             found = []
@@ -1520,7 +1668,12 @@ async def save_series(request: Request):
         cfg = data.setdefault("series", {})
         cfg.pop("enabled", None)  # (retired 2026-11-16: the stories are all the channel makes)
         cfg.pop("teaser_after_hours", None)  # (its name until 2026-11-16)
-        cfg["post_at"] = Q(post_at)
+        cfg.pop("post_at", None)  # (one story a day until 2026-11-23: now the plan's long story's time)
+        plan_cfg = cfg.setdefault("cycle", {})
+        plan_cfg["start"], plan_cfg["short_days"] = Q(cycle["start"]), cycle["short_days"]
+        plan_cfg["shorts_at"], plan_cfg["long_at"] = flow(cycle["shorts_at"]), Q(cycle["long_at"])
+        cfg["short_minutes"] = CommentedSeq([int(x) if x == int(x) else x for x in (short_low, short_high)])
+        cfg["short_minutes"].fa.set_flow_style()
         cfg["short_after_hours"] = int(hours) if hours == int(hours) else hours
         cfg["minutes"] = CommentedSeq([int(x) if x == int(x) else x for x in (low, high)])
         cfg["minutes"].fa.set_flow_style()
@@ -1542,12 +1695,13 @@ async def start_task(kind: str, request: Request):
     body = await _json(request)
     video_id = body.get("video_id")
     if kind == "prepare":
-        return _start_task(kind, "Agents 1-2: writing a new story", lambda p: jobs.run_job("prepare", count=1, progress=p))
+        return _start_task(kind, "Agents 1-3: writing the story for the next turn",
+                           lambda p: jobs.run_job("prepare", count=1, progress=p))
     if kind == "render":
         video = _planned_or_409(video_id)
         if not series.current(video):
             raise HTTPException(409, "This was made by an earlier version of the channel: it can't be made again.")
-        return _start_task(kind, f"Agents 3-4: making and reviewing story #{video_id}",
+        return _start_task(kind, f"Agents 4-5: making and reviewing story #{video_id}",
                            lambda p: jobs.run_job("publish", dry_run=True, video_id=video_id, now=True, progress=p),
                            video_id)
     if kind == "publish":
@@ -1556,18 +1710,18 @@ async def start_task(kind: str, request: Request):
             raise HTTPException(409, "Connect YouTube first (the Channels page).")
         if not db.ready(video):
             raise HTTPException(409, "The Reviewer turned this story down: it's being made again (see the Studio).")
-        return _start_task(kind, f"Agent 5: uploading story #{video_id}",
+        return _start_task(kind, f"Agent 6: uploading story #{video_id}",
                            lambda p: jobs.run_job("publish", video_id=video_id, progress=p), video_id)
     if kind == "autopilot":
         if not youtube_auth.is_configured():
             raise HTTPException(409, "Connect YouTube first (the Channels page).")
         return _start_task(kind, "Making the next story now", _make_next_now)
     if kind == "stats":
-        return _start_task(kind, "Agent 6: reading the numbers", lambda p: jobs.run_job("stats", learn=True, progress=p))
+        return _start_task(kind, "Agent 7: reading the numbers", lambda p: jobs.run_job("stats", learn=True, progress=p))
     if kind == "instagram":
         if not instagram.is_configured():
             raise HTTPException(409, "Connect Instagram first (the Channels page).")
-        return _start_task(kind, "Agent 5: posting to Instagram", lambda p: jobs.run_job("instagram", progress=p))
+        return _start_task(kind, "Agent 6: posting to Instagram", lambda p: jobs.run_job("instagram", progress=p))
     if kind == "narrator-sample":
         voice = body.get("voice")
         if voice not in narrator.VOICES:
@@ -1578,7 +1732,7 @@ async def start_task(kind: str, request: Request):
     if kind == "short":
         if not youtube_auth.is_configured():
             raise HTTPException(409, "Connect YouTube first (the Channels page).")
-        return _start_task(kind, f"Agent 5: sending story #{video_id}'s short version",
+        return _start_task(kind, f"Agent 6: sending story #{video_id}'s short version",
                            lambda p: publisher.upload_short(int(video_id), progress=p), video_id)
     if kind == "connect":
         if not CLIENT_FILE.exists():
@@ -1802,7 +1956,7 @@ def _validated(s: dict) -> dict:
     if contact and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", contact):
         raise ValueError("Contact email doesn't look like an email address.")
     # (a setting a page doesn't send keeps its value: an older page has no "ahead" switch)
-    schedule = slots.validate({**(load_config().get("schedule") or {}), **sent}, series.settings().get("post_at"))
+    schedule = slots.validate({**(load_config().get("schedule") or {}), **sent}, series.settings()["cycle"])
     return {"name": name, "contact": contact, "schedule": schedule}
 
 

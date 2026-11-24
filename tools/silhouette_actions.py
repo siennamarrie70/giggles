@@ -14,7 +14,7 @@ dashboard and Gemini).
 import math
 
 import silhouette as S
-from silhouette import clamp, ease_in_out, ik, smooth, spine
+from silhouette import clamp, ease_in_out, smooth, spine
 import silhouette_words as W
 import silhouette_habits as H
 
@@ -37,6 +37,8 @@ EYES = {
     "waving": ("happy", (1.0, 0.0)), "phone_call": ("worried", (1.0, 0.1)), "at_door": ("worried", (1.0, 0.0)),
     "standing": ("open", (1.0, 0.0)), "walking": ("open", (1.0, 0.0)), "sitting": ("open", (1.0, 0.1)),
     "at_window": ("soft", (1.0, -0.15)), "carrying_box": ("tired", (1.0, 0.1)), "holding": ("open", (1.0, 0.1)),
+    "bench_press": ("determined", (0.3, -0.8)), "pullups": ("determined", (1.0, -0.4)),
+    "jump_rope": ("determined", (1.0, 0.1)),
 }
 
 EYES.update(H.EYES)
@@ -49,12 +51,9 @@ def _uv(pose):
 
 
 def _elbow(sh, wr, R, f, out=False):
-    """The elbow of an arm from the shoulder sh to the wrist wr: bending down (out=False) or forward and out."""
-    l1, l2 = 1.22 * R, 1.10 * R
-    k1, k2 = ik(sh, wr, l1, l2, 1), ik(sh, wr, l1, l2, -1)
-    if out:
-        return k1 if f * (k1[0] - k2[0]) > 0 else k2
-    return k1 if k1[1] > k2[1] else k2
+    """The elbow of an arm from the shoulder sh to the wrist wr: bending like a real arm's, never jumping across the arm
+    between frames (out=True: raised and out); tools/silhouette_habits.py's."""
+    return H._elbow(sh, wr, R, f, out)
 
 
 def _arm_to(sh, wr, R, f, out=False):
@@ -105,6 +104,46 @@ def pose_lie_floor(x, ground, f, R) -> dict:
     """Lying on the floor on his back, his head at x, his body towards f."""
     p = S.pose_lie(x, ground - 1.04 * R, f, R, arms="rest")
     p["floor"] = True
+    return p
+
+
+def pose_bench(mark, t, R, ground, f, seed=0) -> dict:
+    """A bench press: lying on the weight bench (its pad's top at mark["top"], his head at mark["x"], his body towards
+    f), knees bent and feet on the floor, both hands pushing the barbell up off his chest and lowering it slowly."""
+    xh = mark.get("x", 0.0)
+    p = S.pose_lie(xh, mark.get("top", ground - 2.0 * R) - 1.0 * R, f, R)
+    H = p["H"]
+    p["legs"] = [(H, (H[0] + f * (1.30 - lag) * R, H[1] - 0.45 * R),
+                  (H[0] + f * (1.65 - lag) * R, ground)) for lag in (0.0, 0.14)]
+    p["flat_feet"] = True
+    u = ((t + seed * 0.13) % 2.6) / 2.6
+    q = ease_in_out(u / 0.35) if u < 0.35 else (1.0 if u < 0.45 else
+                                                 (1 - ease_in_out((u - 0.45) / 0.45) if u < 0.90 else 0.0))
+    sh = p["near"][0]
+    low, high = (sh[0] + f * 0.30 * R, sh[1] - 0.55 * R), (sh[0] + f * 0.08 * R, sh[1] - 2.10 * R)
+    wr = (low[0] + (high[0] - low[0]) * q, low[1] + (high[1] - low[1]) * q)
+    p["near"] = _arm_to(sh, wr, R, f)
+    p["hold"] = {"kind": "barbell", "at": wr}
+    p["hands"] = ["fist", "fist"]
+    return p
+
+
+def pose_pullup(mark, t, R, f, seed=0) -> dict:
+    """Pull-ups: hanging from the bar (its height mark["top"], at mark["x"]), facing f, pulling up till his chin is over
+    it and lowering himself slowly; his knees bent, his feet crossed behind him."""
+    bx, top = mark.get("x", 0.0), mark["top"]
+    u = ((t + seed * 0.17) % 2.8) / 2.8
+    q = ease_in_out(u / 0.32) if u < 0.32 else (1.0 if u < 0.42 else
+                                                 (1 - ease_in_out((u - 0.42) / 0.40) if u < 0.82 else 0.0))
+    sy = top + (2.10 - 1.15 * q) * R            # his shoulders: hanging .. pulled up
+    p = S.pose_stand(bx - f * 0.10 * R, sy + 5.347 * R, f, R, lift=0.35 + 0.25 * q)   # (his feet hang above the floor)
+    H = p["H"]
+    p["legs"] = [(H, (H[0] + f * 0.30 * R, H[1] + 1.30 * R), (H[0] - f * 0.45 * R, H[1] + 2.45 * R)),
+                 (H, (H[0] + f * 0.22 * R, H[1] + 1.35 * R), (H[0] - f * 0.35 * R, H[1] + 2.50 * R))]
+    T, _ = _uv(p)
+    p["near"] = _arm_to(p["near"][0], (bx + f * 0.12 * R, top), R, f)
+    p["far"] = _arm_to(T(-0.06, 0.26), (bx - f * 0.10 * R, top), R, f)
+    p["hands"] = ["fist", "fist"]
     return p
 
 
@@ -217,6 +256,10 @@ def pose(action: str, mark: dict, t: float, R: float, ground: float, seed: int =
     if action == "pushups":
         return S.pose_pushup(mark["x"], gnd, f, R, phase=math.tau * t / 1.7 + seed), eyes
 
+    if action == "bench_press" and kind == "bench":
+        return pose_bench(mark, t, R, gnd, f, seed), eyes
+    if action == "pullups" and kind == "bar":
+        return pose_pullup(mark, t, R, f, seed), eyes
     if kind == "sit" or kind == "drive":
         return _sitting(action, mark, t, R, gnd, f, breath, eyes, seed, item)
     return _standing(action, mark, t, R, gnd, f, breath, eyes, seed, item)
@@ -326,7 +369,7 @@ def _cry(p, t, R, f, seed):
     T, uv = _uv(p)
     hx, hy = p["head"]
     u = (t + seed * 0.43) % 3.2
-    q = smooth(u / 0.5) if u < 0.5 else (1.0 if u < 1.6 else (1 - smooth((u - 1.6) / 0.6) if u < 2.2 else 0.0))
+    q = smooth(u / 0.8) if u < 0.8 else (1.0 if u < 1.7 else (1 - smooth((u - 1.7) / 0.8) if u < 2.5 else 0.0))
     rest = T(0.60, 1.55) if not p.get("sitting") else T(0.70, 1.30)
     cheek = (hx + f * 0.55 * R, hy + 0.55 * R)
     wr = (rest[0] + (cheek[0] - rest[0]) * q, rest[1] + (cheek[1] - rest[1]) * q)
@@ -373,6 +416,28 @@ def _standing(action, mark, t, R, gnd, f, breath, eyes, seed, item):
         p["near"] = _arm_to(p["near"][0], wr, R, f, out=True)
         p["hold"] = {"kind": "wrench", "at": wr, "to": (wr[0] + f * 0.50 * R, wr[1] - 0.10 * R)}
         return p, eyes
+    if action == "jump_rope":   # skipping: a little hop each time the rope passes under his feet
+        ph = (t * 1.8 + seed * 0.1) % 1.0
+        hop = 0.14 * R * math.sin(math.pi * (ph - 0.40) / 0.30) if 0.40 <= ph < 0.70 else 0.0
+        p = S.pose_stand(x, gnd - hop, f, R, lift=0.05 + breath)
+        T, uv = _uv(p)
+        a = math.tau * ph                        # (the rope: 0 over his head, pi under his feet)
+        c = T(0.62, 1.70)
+        hand = (c[0] + f * 0.10 * R * math.cos(a), c[1] + 0.10 * R * math.sin(a))
+        p["near"] = _arm_to(p["near"][0], hand, R, f)
+        p["far"] = _arm_to(T(-0.06, 0.26), (hand[0] - f * 0.22 * R, hand[1] - 0.04 * R), R, f)
+        p["hands"] = ["fist", "fist"]
+        top_, mid = p["head"][1] - R, (x + f * 0.10 * R, (p["head"][1] - R + gnd) / 2)
+        ry = (mid[1] - top_ + 0.35 * R) if math.cos(a) > 0 else (gnd - mid[1])
+        apex = (mid[0] + f * 1.6 * R * math.sin(a), mid[1] - ry * math.cos(a))
+        d = (apex[0] - hand[0], apex[1] - hand[1])
+        ln = math.hypot(*d) or 1.0
+        n = (-d[1] / ln, d[0] / ln)
+        loop = [(hand[0] + d[0] * (1 - math.cos(math.tau * s)) / 2 + n[0] * ln * 0.30 * math.sin(math.tau * s),
+                 hand[1] + d[1] * (1 - math.cos(math.tau * s)) / 2 + n[1] * ln * 0.30 * math.sin(math.tau * s))
+                for s in (k / 24 for k in range(25))]
+        p["far_hold" if f * math.sin(a) < 0 else "hold"] = {"kind": "rope", "loop": loop}   # (behind him or before)
+        return p, eyes
     if action == "boxing":
         bag = mark.get("target", (x + f * 2.3 * R, gnd - 4.9 * R))
         p = _stance(x, gnd, f, R, lift=0.05 + breath)
@@ -381,7 +446,7 @@ def _standing(action, mark, t, R, gnd, f, breath, eyes, seed, item):
         guard = T(0.95, -0.25)
         hit = (bag[0] - f * 0.55 * R, bag[1])
         wr = (guard[0] + (hit[0] - guard[0]) * q, guard[1] + (hit[1] - guard[1]) * q)
-        p["near"] = _arm_to(p["near"][0], wr, R, f, out=q > 0.5)
+        p["near"] = _arm_to(p["near"][0], wr, R, f)
         p["far"] = _arm_to(T(-0.06, 0.26), T(0.80, -0.10), R, f)
         p["hands"] = ["fist", "fist"]
         return p, eyes
@@ -461,7 +526,7 @@ def _standing(action, mark, t, R, gnd, f, breath, eyes, seed, item):
         p["hands"] = ["fist", "open"]
         return p, eyes
     if action == "at_door":
-        knock = t if t < 1.6 else 0.0
+        knock = t if t < 4 / 2.6 else 0.0   # (four knocks, ending where the hand started: no jump)
         return S.pose_stand(x, gnd, f, R, lift=breath, arms="knock", knock=knock), eyes
     # standing, with what the action does to the arms
     arms = "pockets" if action == "at_window" else "hang"

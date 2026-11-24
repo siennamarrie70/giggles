@@ -143,6 +143,10 @@ def fit(action: str, name: str, m) -> int:
         return 1 if kind == "stand" and m.get("ground") is not None else 0   # (on a stage)
     if need == "mirror":
         return 2 if "mirror" in use else 0
+    if need == "bench":
+        return 2 if kind == "bench" else 0
+    if need == "bar":
+        return 2 if kind == "bar" else 0
     if need in ("door", "stove", "bag", "screen"):
         return 0
     return int(kind in ("stand", "sit", "walk", "drive", "kneel"))   # any: standing, sitting, walking, at the wheel
@@ -202,7 +206,8 @@ def _crowded(marks: dict, taken, R: float) -> set:
 
 ADAPT = {"sit": "sitting", "drive": "driving", "lie": "lying_awake", "walk": "walking", "run": "running",
          "stand": "standing", "floor": "floor", "kneel": "kneeling", "pushup": "pushups",
-         "treadmill": "treadmill"}   # what someone does on a mark their action can't be done on
+         "treadmill": "treadmill", "bench": "bench_press", "bar": "pullups"}   # what someone does on a mark their action
+#                                                                                  can't be done on
 
 
 def fallback(marks: dict, action: str, taken=()) -> str | None:
@@ -221,21 +226,37 @@ HEIGHTS = {"short": 0.92, "average": 1.0, "tall": 1.06}
 
 def look_spec(person: dict) -> dict:
     """The storyboard's words for someone's look as silhouette.look_from takes them."""
-    out = {k: person.get(k) for k in ("cloth", "hair", "hair_color", "jacket_color", "apron_color", "beard_color")
-           if person.get(k)}
+    out = {k: person.get(k) for k in ("cloth", "hair", "hair_color", "jacket_color", "apron_color", "beard_color",
+                                      "scarf_color", "backpack_color") if person.get(k)}
     out["extras"] = [e for e in person.get("extras") or [] if e in W.EXTRAS]
     b, h = person.get("build"), person.get("height")
     out["build"] = BUILDS.get(b, b if isinstance(b, (int, float)) else 1.0)
     out["size"] = HEIGHTS.get(h, h if isinstance(h, (int, float)) else 1.0)
+    for k in ("child", "young_him"):   # (the library's children: W.ROLES)
+        if person.get(k):
+            out[k] = True
     return out
 
 
 _LOOKS: dict = {}
 
 
+WORKOUTS = ("pushups", "lifting", "boxing", "treadmill", "bench_press", "pullups", "jump_rope")
+
+
+def _him_look(him: dict, action: str) -> dict | None:
+    """His look in a shot (None: his hoodie): the gym's fitted T-shirt at a workout, his suit when the storyboard dresses
+    him in it (his new life); fit from his first workout after the realization on (agents/storyboard.py marks it)."""
+    outfit = "gym" if action in WORKOUTS else ("suit" if him.get("outfit") == "suit" else "")
+    key = "_".join(["him"] + [w for w in (outfit, "fit" if him.get("fit") else "") if w])
+    return {"him": key} if key != "him" else None
+
+
 def _look(spec: dict | None) -> S.Look:
     if not spec:
         return S.LOOKS["him"]
+    if "him" in spec:   # (his other looks: fit, the gym's T-shirt, the suit)
+        return S.HIM_LOOKS.get(spec["him"], S.LOOKS["him"])
     key = json.dumps(spec, sort_keys=True)
     if key not in _LOOKS:
         _LOOKS[key] = S.look_from(spec)
@@ -294,7 +315,7 @@ def people(story: dict, shot: dict, info: dict) -> list[dict]:
         if isinstance(m, dict) and fit(action, name, m) == 0 and m.get("kind") in ADAPT:
             action = ADAPT[m["kind"]]   # (what can really be done there: standing or a hug on a car's seat is sitting)
         cast = None if who == "him" else cast_of(story, who)
-        p = {"who": who, "look": None if who == "him" else (cast or {}).get("look") or {}, "action": action,
+        p = {"who": who, "look": _him_look(d, action) if who == "him" else (cast or {}).get("look") or {}, "action": action,
              "mark": _mark(info, name), "mark_name": name, "item": d.get("item") or None,
              "eyes": d.get("eyes") or None, "seed": seed + 31 * k, "pair": None,
              "marks": [m for m in (d.get("marks") or []) if m in MK.MARKS][:2],
@@ -403,9 +424,24 @@ def _shift_to(center, height, size, info, boxes, floor=None):
     return c
 
 
+def _figure_xs(pose: dict) -> list[float]:
+    """Across, where a person is (world units): their head, their body from the shoulders to the hips, their arms. An
+    upright frame, narrow, keeps all of it in (their legs may go under its bottom)."""
+    R = pose["R"]
+    hx = pose["head"][0]
+    xs = [hx - 1.12 * R, hx + 1.12 * R]
+    T = pose.get("T")
+    if T is not None:
+        xs += [float(T(u, v)[0]) for u in (-1.15, 1.15) for v in (0.0, 1.3, 2.55)]
+    for arm in (pose.get("near"), pose.get("far")):
+        xs += [float(q[0]) for q in arm or ()]
+    return xs
+
+
 def sights(p: dict) -> dict:
     """What a shot's people show over its length: {who: {"head": their head's boxes (with the hair) at moments through
-    the shot, "neck": where their shoulders begin then, "things": what their hands work at (the screen pointed at, the
+    the shot, "figure": the same boxes as wide as their whole figure (body and arms too), "neck": where their shoulders
+    begin then, "things": what their hands work at (the screen pointed at, the
     desk's or the table's top they reach, what they hold), "walks": walking through, "R"}}."""
     s = p["seconds"]
     n = max(3, int(s * 2) + 1)
@@ -419,8 +455,11 @@ def sights(p: dict) -> dict:
             hx, hy = pose["head"]
             up = 1.50 if a["look"].hair == "bun" else 1.14
             up = max([up] + [MK.REACH.get(m, 0.0) for m in a.get("marks") or ()])   # (and the marks over it)
-            d = out.setdefault(who, {"head": [], "neck": [], "things": [], "walks": who in walkers, "R": R})
+            d = out.setdefault(who, {"head": [], "figure": [], "neck": [], "things": [], "walks": who in walkers,
+                                     "R": R})
             d["head"].append((hx - 1.12 * R, hy - up * R, hx + 1.12 * R, hy + 1.06 * R))
+            xs = _figure_xs(pose)
+            d["figure"].append((min(xs) - 0.15 * R, hy - up * R, max(xs) + 0.15 * R, hy + 1.06 * R))
             d["neck"].append(float(pose["S"][1]))
             hold = pose.get("hold") or {}
             if hold.get("at") is not None:
@@ -449,7 +488,8 @@ def _fit(p: dict, info: dict, size, center, H: float, framing: str, sight: dict,
     me = sight.get(who)
     if me is None:
         return None
-    need = list(me["head"]) + list(me["things"])
+    part = "figure" if size[1] > size[0] else "head"   # (upright, narrow: whoever it shows whole across, body too)
+    need = list(me[part]) + list(me["things"])
     others = {w: d for w, d in sight.items() if w != who and not d["walks"]}
     if framing == "medium":   # (whoever stands or sits by him, in the frame's middle part, shares it whole)
         v0 = _view_box(center, H, size, info)
@@ -457,7 +497,7 @@ def _fit(p: dict, info: dict, size, center, H: float, framing: str, sight: dict,
         for d in others.values():
             hb = _union(d["head"])
             if abs((hb[0] + hb[2]) / 2 - mid) < span:
-                need += d["head"]
+                need += d[part]
     floor = p["ground"] + 140.0
     top = info["height"] * 0.985
     for grow in (1.0, 1.1, 1.22, 1.36, 1.52, 1.7, 1.9, 2.15):
@@ -468,21 +508,21 @@ def _fit(p: dict, info: dict, size, center, H: float, framing: str, sight: dict,
         if c is None:
             continue
         v = _view_box(c, h, size, info)
-        cut = [w for w, d in others.items() if any(_cut(b, v) for b in d["head"])]
+        cut = [w for w, d in others.items() if any(_cut(b, v) for b in d[part])]
         if not cut:
             return c, h
-        both = _shift_to(c, h, size, info, need + [b for w in cut for b in others[w]["head"]], floor)   # take them in
+        both = _shift_to(c, h, size, info, need + [b for w in cut for b in others[w][part]], floor)   # take them in
         if both is not None:
             vb = _view_box(both, h, size, info)
-            if not any(_cut(b, vb) for d in others.values() for b in d["head"]):
+            if not any(_cut(b, vb) for d in others.values() for b in d[part]):
                 return both, h
         for w in cut:   # or slide away from them, keeping what must show
-            hb = _union(others[w]["head"])
+            hb = _union(others[w][part])
             gap = (v[2] - v[0]) * 0.012
             dx = (hb[0] - gap - v[2]) if (hb[0] + hb[2]) / 2 > (v[0] + v[2]) / 2 else (hb[2] + gap - v[0])
             c3 = (c[0] + dx, c[1])
             v3 = _view_box(c3, h, size, info)
-            if all(_inside(x, v3) for x in need) and not any(_cut(b, v3) for d in others.values() for b in d["head"]):
+            if all(_inside(x, v3) for x in need) and not any(_cut(b, v3) for d in others.values() for b in d[part]):
                 return c3, h
     return None
 
@@ -525,22 +565,26 @@ def _fit_detail(p: dict, info: dict, size, center, H: float, sight: dict):
 
 
 def _slide_upright(p: dict, info: dict, size, c, sight: dict, who: str):
-    """An upright wide frame (the place's height, narrow) slid along so nobody's head is cut by its sides: whoever its
-    edge cuts is taken in whole when they fit beside him, else left out."""
+    """An upright wide frame (the place's height, narrow) slid along so nobody is cut by its sides (head or body):
+    whoever its edge cuts is taken in whole when they fit beside him, else left out."""
     h = info["height"]
-    me = (sight.get(who) or {}).get("head") or []
+    me = (sight.get(who) or {}).get("figure") or []
     others = [d for w, d in sight.items() if w != who and not d["walks"]]
+    if me:   # (his own figure first: whole inside when it can be)
+        whole = _shift_to(c, h, size, info, me)
+        if whole is not None:
+            c = (whole[0], c[1])
     for _ in range(3):
         v = _view_box(c, h, size, info)
-        cut = [d for d in others if any(_cut(b, v) for b in d["head"])]
+        cut = [d for d in others if any(_cut(b, v) for b in d["figure"])]
         if not cut:
             return c
         d = cut[0]
-        both = _shift_to(c, h, size, info, me + d["head"])
+        both = _shift_to(c, h, size, info, me + d["figure"])
         if both is not None:
             c = (both[0], c[1])
             continue
-        hb = _union(d["head"])
+        hb = _union(d["figure"])
         gap = (v[2] - v[0]) * 0.012
         dx = (hb[0] - gap - v[2]) if (hb[0] + hb[2]) / 2 > (v[0] + v[2]) / 2 else (hb[2] + gap - v[0])
         moved = (c[0] + dx, c[1])
@@ -588,15 +632,21 @@ def _frame_it(p: dict, shot: dict, info: dict, size) -> None:
             return
         H = FRAME_HEIGHT[framing] if info["kind"] not in VEHICLES else info["height"] * 0.62
         width = H * (size[0] / size[1])
-        heads = [(hx, hy)]
+        heads, near = [(hx, hy)], [subj["who"]]
         if framing == "medium":   # whoever is with him, when they fit in the frame
             for q in p["people"]:
                 if q is not subj:
                     x2, y2, *_ = _head_at(p, q, when)
                     if abs(x2 - hx) < width * 0.62:
                         heads.append((x2, y2))
+                        near.append(q["who"])
         if lying:
             cx, cy = hx + f * 2.4 * p["R"], hy + 0.05 * H
+        elif upright and info["kind"] not in VEHICLES:   # (upright, narrow: whoever it shows in its middle, whole
+            sight = sight or sights(p)                   # across; room left before him would cut his back off)
+            figs = [b for w in near for b in (sight.get(w) or {}).get("figure") or []]
+            fig = _union(figs) if figs else (hx - 1.0, hy, hx + 1.0, hy)
+            cx, cy = (fig[0] + fig[2]) / 2, min(y for _, y in heads) + H * HEAD_AT[framing]
         elif len(heads) > 1:
             xs = [x for x, _ in heads]
             cx, cy = (min(xs) + max(xs)) / 2, min(y for _, y in heads) + H * HEAD_AT[framing]
@@ -654,12 +704,15 @@ def frame_problems(p: dict, size, info: dict | None = None) -> list[str]:
     h = p["height"] if p["height"] is not None else info["height"]
     v = _view_box(center, h, size, info)
     subject = (_subject(p) or {}).get("who")
+    upright = size[1] > size[0] and p["framing"] in ("medium", "close")
     out = []
     for who, d in sight.items():
         if d["walks"]:
             continue
         if any(_cut(b, v) for b in d["head"]):
             out.append(f"{who}'s head is cut by the frame's edge")
+        elif upright and any(_cut(b, v) for b in d["figure"]):   # (an upright Short's narrow frame: whole across)
+            out.append(f"{who}'s body is cut by the frame's side")
         elif any(b[2] > v[0] and b[0] < v[2] and b[3] <= v[1] and v[1] < n + 0.30 * d["R"]
                  for b, n in zip(d["head"], d["neck"])):
             out.append(f"{who} is shown without their head")
@@ -854,7 +907,7 @@ def state(p: dict, obj, t: float, flags: dict | None = None) -> dict:
         gone = S.window(tt, 4.4, 5.0) if seconds > 6.5 and not flags.get("label_in") else 0.0
         st["label"] = (p["label"], q, gone)
     if p.get("bubbles") and not flags.get("no_bubbles"):
-        st["bubbles"] = _bubbles_at(p, obj, tt, acts, st["cam"])
+        st["bubbles"] = _bubbles_at(p, obj, tt, acts, st["cam"], _label_box(obj, st.get("label")))
     lamp, et = 1.0, tt - p["event_at"]
     if p["event"] == "lamp_off" and et >= 0:
         lamp = 1 - S.smooth(S.window(et, 0.0, 0.12))
@@ -872,7 +925,19 @@ def state(p: dict, obj, t: float, flags: dict | None = None) -> dict:
     return st
 
 
-def _bubbles_at(p: dict, obj, t: float, acts: list[dict], cam) -> list[dict]:
+def _label_box(obj, label) -> tuple | None:
+    """Where the shot's label is on the screen while it shows (px): the bubbles keep off it."""
+    text, q, *gone = label or ("", 0.0)
+    if not text or q <= 0 or (gone and gone[0] >= 1):
+        return None
+    W, H = obj.size
+    px = getattr(obj, "label_px", 54)
+    spr = S.label_sprite(text, px)
+    y = obj.finish.bar + px * (1.6 if H > W else 1.25)
+    return (W / 2 - spr.shape[1] / 2, y - spr.shape[0] / 2, W / 2 + spr.shape[1] / 2, y + spr.shape[0] / 2)
+
+
+def _bubbles_at(p: dict, obj, t: float, acts: list[dict], cam, label_box=None) -> list[dict]:
     """The shot's bubbles showing at t, each by its speaker's head on screen (tools/silhouette_bubbles.draw places them,
     off every face, and they keep that place beside the head); an earlier one dimmed while a later one is read."""
     layer = obj.people.get("main") if isinstance(getattr(obj, "people", None), dict) else None
@@ -899,10 +964,28 @@ def _bubbles_at(p: dict, obj, t: float, acts: list[dict], cam) -> list[dict]:
         item = {"kind": b["kind"], "text": b["text"], "picture": b["picture"], "head": (sx, sy),
                 "r": a["pose"]["R"] * view.z, "f": a["pose"]["f"], "age": t - b["start"], "left": b["end"] - t,
                 "dim": 1.0 if any(o is not b and o["start"] > b["start"] for o in showing) else 0.0,
-                "avoid": faces, "keep": keep, "key": key}
+                "avoid": faces + ([label_box] if label_box else []), "keep": keep, "key": key}
         if key in keep:
             item["at"] = (sx + keep[key][0], sy + keep[key][1])
         out.append(item)
+    return out
+
+
+def screen_boxes(obj, st: dict) -> list[tuple]:
+    """Where each person in the frame is on the screen at a moment (st: state()'s), head and body: [(x0, y0, x1, y1)]
+    px (the closing line of an upright frame keeps off them)."""
+    layer = obj.people.get("main") if isinstance(getattr(obj, "people", None), dict) else None
+    view = obj.cam.view(getattr(layer, "depth", 0.72), *st["cam"])
+    out = []
+    for a in st.get("actors") or []:
+        pose = a["pose"]
+        pts = [pose["head"], pose["S"], pose["H"]] + [q for leg in pose.get("legs") or () for q in leg]
+        pts += [q for arm in (pose.get("near"), pose.get("far")) for q in arm or ()]
+        on = [view.pt(*q) for q in pts]
+        hx, hy = view.pt(*pose["head"])
+        r = pose["R"] * view.z
+        xs, ys = [x for x, _ in on] + [hx - 1.2 * r, hx + 1.2 * r], [y for _, y in on] + [hy - 1.3 * r]
+        out.append((min(xs) - 0.3 * r, min(ys), max(xs) + 0.3 * r, max(ys) + 0.2 * r))
     return out
 
 

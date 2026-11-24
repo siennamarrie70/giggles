@@ -1206,6 +1206,7 @@ class CarInside(Vehicle):
              "back_seat": {"kind": "sit", "x": -470.0, "seat": 238.0, "f": 1, "slot": "bed", "ground": 330.0}}
 
     def __init__(self, spec, size, light="night", weather="clear", effects=(), center=None, seed="car", height=None):
+        self.luxury = bool((spec or {}).get("luxury"))   # (cream leather, wood and chrome, a glowing dashboard)
         super().__init__(spec, size, light, weather, effects, center, seed, height)
         self.sweep = Dynamic(self.cam, 0.72, add=True)
 
@@ -1221,13 +1222,16 @@ class CarInside(Vehicle):
         p.poly(rect(-1600, 116, 3200, 8), mix(inner, "#FFFFFF", 0.06))
 
     def _back(self, p: Paint):
-        seat = hexc("#2A2632")
+        seat = hexc("#B8A27E") if self.luxury else hexc("#2A2632")
         for sx in (-120, -545):   # the seats' backs behind the driver and the back seat
             p.poly(rr(sx - 30, -40, 62, 290, 20), seat)
             p.poly(rr(sx - 22, -100, 48, 64, 14), seat)
             p.poly(rr(sx - 20, 225, 200, 40, 12), seat)
         p.poly(np.array([(170, 80), (560, 60), (600, 330), (170, 330)], float), hexc("#1E1A26"))   # the dashboard
         p.poly(rect(172, 78, 390, 4), hexc("#5A5068"), 0.7)
+        if self.luxury:   # a wood strip along the dash, a chrome line on it
+            p.poly(rect(172, 100, 390, 10), hexc("#6A4A2E"))
+            p.poly(rect(172, 99, 390, 2), hexc("#D8D0C0"), 0.8)
 
     def _mid(self, p: Paint):
         p.poly(tube([(205, 30), (232, 74), (250, 100)], 9.0), hexc("#141018"))      # the wheel's column
@@ -1245,6 +1249,8 @@ class CarInside(Vehicle):
         p.poly(np.array([(330, -185), (420, -185), (620, 152), (520, 152)], float), body)          # the front pillar
         p.poly(rr(-40, 230, 70, 14, 6), mix(body, "#FFFFFF", 0.15))                                 # the door's handle
         p.poly(tube([(-300, 150), (526, 150)], 3.0), mix(body, "#FFFFFF", 0.35), 0.7)               # the sill's edge
+        if self.luxury:
+            p.poly(tube([(-300, 160), (526, 160)], 5.0), hexc("#C8CCD8"), 0.85)                      # chrome
         p.poly(rr(470, 30, 110, 70, 14), body)                                                       # the mirror
         p.poly(rr(478, 38, 94, 54, 10), hexc("#3A3446"))
 
@@ -1252,6 +1258,9 @@ class CarInside(Vehicle):
         on = self.L["lamp"] or self.rain
         p.glow(240, 92, 80, 30, (0.35, 0.75, 0.85) if on else (0.5, 0.5, 0.6), 0.30 if on else 0.08)
         p.glow(330, 92, 40, 20, (1.0, 0.6, 0.3), 0.20 if on else 0.05)
+        if self.luxury:   # the dash's screens, the ambient light strip
+            p.glow(260, 96, 120, 26, (0.55, 0.75, 1.0), 0.35)
+            p.glow(150, 60, 420, 24, (0.62, 0.45, 1.0), 0.16)
 
     def rim_dir(self, x):
         return (1.0, -0.4)

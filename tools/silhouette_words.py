@@ -142,11 +142,11 @@ HABIT_EFFECTS = {  # how the whole picture feels when a habit grips him
     "red_pulse": "the picture's edges flushing red with his heartbeat (rage)",
     "pink_haze": "a pink haze over the picture (lust, infatuation)",
     "green_tint": "the picture turned sickly green (envy, jealousy)",
-    "grey_drain": "the colour drained out of the picture (self-pity, a grey life)",
     "tunnel": "tunnel vision: the dark closing in on him (a craving's grip, or total focus)",
     "shake": "the camera shaking (rage, panic, a blow)",
     "timelapse": "time racing: day to night and back, the sun sweeping the wall, the clock spinning (no sense of time)",
     "notifications": "notifications popping up all round the picture (the phone's pull)",
+    # never "grey_drain" (2026-11-24: the owner saw the pictures go grey instead of their real colours) or "shadows"
 }
 EFFECTS.update(HABIT_EFFECTS)
 
@@ -173,6 +173,8 @@ PROPS = {
     "door": ("home", "a door (closed, or open with light behind it)", 300, "back", "in", True, None),
     "rug": ("home", "a rug on the floor", 520, "floor", "in", False, None),
     "fireplace": ("home", "a fireplace with a fire burning, a mantel", 360, "back", "in", False, (-180, 180, 312)),
+    "panorama_window": ("home", "a floor-to-ceiling glass wall over the city's lights (a penthouse, a top-floor office)",
+                        900, "back", "in", True, None),
     # on the walls
     "photos": ("wall", "framed photos", 230, "wall", "in", False, None),
     "poster": ("wall", "a big framed picture", 200, "wall", "in", False, None),
@@ -209,12 +211,19 @@ PROPS = {
     "punching_bag": ("health", "a heavy punching bag hanging from the ceiling", 170, "mid", "both", True, None),
     "treadmill": ("health", "a treadmill", 340, "mid", "in", False, None),
     "gym_mat": ("health", "an exercise mat on the floor", 330, "floor", "in", False, None),
+    "weight_bench": ("health", "a weight bench, a barbell on its rack (he lies on it to press)", 300, "mid", "in", False,
+                     None),
+    "pullup_bar": ("health", "a pull-up bar on a tall frame", 220, "mid", "in", True, None),
     # outdoors
     "tree": ("outdoors", "a big leafy tree", 360, "back", "out", True, None),
     "pine": ("outdoors", "a pine tree", 240, "back", "out", True, None),
     "house": ("outdoors", "a small house: pitched roof, chimney, lit windows at night", 520, "back", "out", True, None),
     "shopfront": ("outdoors", "a shop's front: a lit window, an awning, a door", 520, "back", "out", True, None),
     "car": ("outdoors", "a parked car (its lights on at night)", 860, "mid", "out", False, None),
+    "sports_car": ("outdoors", "a sleek sports car, low and wide, gleaming (his new life; its lights on at night)", 880,
+                   "mid", "out", False, None),
+    "luxury_car": ("outdoors", "a long black luxury car, chrome and polish (his new life)", 960, "mid", "out", False,
+                   None),
     "ambulance": ("outdoors", "an ambulance, its roof lights pulsing red and blue", 940, "mid", "out", False, None),
     "bus_stop": ("outdoors", "a bus stop shelter with a bench", 420, "mid", "out", True, None),
     "bench": ("outdoors", "a park bench", 360, "mid", "both", False, None),
@@ -247,8 +256,10 @@ PROPS = {
     "plate": ("small", "a plate of food", 70, "small", "in", False, None),
     "photo_frame": ("small", "a standing photo frame", 40, "small", "in", False, None),
     "trophy": ("small", "a trophy", 50, "small", "in", False, None),
+    "gold": ("small", "gold bars stacked", 70, "small", "both", False, None),
     # small things on the floor
     "suitcase": ("small", "a packed suitcase standing on the floor", 90, "floor_small", "both", False, None),
+    "safe": ("small", "a heavy safe standing open: gold and money inside", 120, "floor_small", "in", False, None),
     "bags": ("small", "shopping bags on the floor", 110, "floor_small", "both", False, None),
     "boxes": ("small", "moving boxes stacked on the floor", 170, "floor_small", "in", False, None),
     "guitar": ("small", "a guitar leaning on the wall", 70, "floor_small", "in", False, None),
@@ -314,6 +325,9 @@ ACTIONS = {
     "lifting": ("lifting dumbbells", "stand"),
     "boxing": ("punching a heavy bag", "bag"),
     "treadmill": ("running on a treadmill", "treadmill"),
+    "bench_press": ("lying on a weight bench, pressing a barbell", "bench"),
+    "pullups": ("doing pull-ups on a bar", "bar"),
+    "jump_rope": ("skipping with a jump rope", "stand"),
     "driving": ("driving, both hands on the wheel", "drive"),
     "cleaning": ("sweeping the floor with a broom", "stand"),
     "wiping": ("wiping a table or a counter with a cloth", "table"),
@@ -377,14 +391,71 @@ ITEMS = ("bag", "suitcase", "flowers", "gift", "trophy", "money", "cup", "bottle
 PAIRS = ("hugging", "handshake", "arguing")
 
 # the parts a person's look is made from (agents/animator.py's storyboard designs each person from them)
-HAIRS = ("none", "short", "long", "bun")
+HAIRS = ("none", "short", "long", "bun", "ponytail", "curly", "pigtails")
 HAIR_COLORS = {"black": "#1E141B", "brown": "#4A3328", "grey": "#A9A3B0", "white": "#D8D4DC", "auburn": "#6A3A2E",
                "blonde": "#B89A6A"}
 CLOTH_COLORS = {"teal": "#2B6470", "plum": "#7E5A68", "rose": "#7A4A5E", "charcoal": "#30323E", "brown": "#5A4636",
                 "white": "#C9CBD6", "olive": "#6B5A3A", "slate": "#4A4058", "navy": "#2E3A5A", "wine": "#6A2E3A",
                 "mustard": "#8A6A2E", "grey": "#5A5A66", "cream": "#B8AC9A", "forest": "#2E4A3A", "blue": "#3D5A80",
-                "black": "#1E1A22"}
-EXTRAS = ("beard", "glasses", "cap", "helmet", "apron", "dress", "jacket", "suit", "coat", "stethoscope")
+                "black": "#1E1A22", "red": "#8A2E30", "orange": "#A0582A", "pink": "#B0607E"}
+EXTRAS = ("beard", "glasses", "cap", "helmet", "apron", "dress", "jacket", "suit", "coat", "stethoscope", "watch", "scarf",
+          "backpack")
+
+# the library's characters: who they are to him, and the look code draws them in (each its own at a glance); the
+# children (CHILD_ROLES) only in calm, safe family moments, never in a story of lust or romance, never in the thumbnail
+ROLES = {
+    "girlfriend": ("his girlfriend: an auburn ponytail, a rose top, slim",
+                   {"hair": "ponytail", "hair_color": "auburn", "cloth": "rose", "extras": [], "build": "slim",
+                    "height": "average"}),
+    "wife": ("his wife: brown hair in a bun, a wine dress", {"hair": "bun", "hair_color": "brown", "cloth": "wine",
+                                                              "extras": ["dress"], "build": "slim", "height": "average"}),
+    "father": ("his father: grey hair, a grey beard, glasses, brown clothes, broad",
+               {"hair": "short", "hair_color": "grey", "beard_color": "grey", "cloth": "brown",
+                "extras": ["beard", "glasses"], "build": "broad", "height": "average"}),
+    "mother": ("his mother: grey hair in a bun, glasses, plum clothes", {"hair": "bun", "hair_color": "grey", "cloth": "plum",
+                                                                         "extras": ["glasses"], "build": "average",
+                                                                         "height": "short"}),
+    "best_friend": ("his best friend: black curls, a mustard top under a navy jacket, broad",
+                    {"hair": "curly", "hair_color": "black", "cloth": "mustard", "jacket_color": "navy",
+                     "extras": ["jacket"], "build": "broad", "height": "average"}),
+    "friend": ("a friend: blonde, a cap, forest green clothes, tall",
+               {"hair": "short", "hair_color": "blonde", "cloth": "forest", "extras": ["cap"], "build": "average",
+                "height": "tall"}),
+    "rival": ("his rival: slick black hair, a black suit, a gold watch, tall",
+              {"hair": "short", "hair_color": "black", "cloth": "white", "jacket_color": "black", "extras": ["suit", "watch"],
+               "build": "average", "height": "tall"}),
+    "colleague": ("a colleague: brown hair, glasses, a scarf, blue clothes, slim",
+                  {"hair": "short", "hair_color": "brown", "cloth": "blue", "scarf_color": "mustard",
+                   "extras": ["glasses", "scarf"], "build": "slim", "height": "average"}),
+    "boss": ("his boss: grey hair, a charcoal suit, broad and tall",
+             {"hair": "short", "hair_color": "grey", "cloth": "charcoal", "extras": ["suit"], "build": "broad",
+              "height": "tall"}),
+    "coach": ("a coach or trainer: bald, a black beard, a cap, a red tracksuit, broad and tall",
+              {"hair": "none", "beard_color": "black", "cloth": "red", "extras": ["beard", "cap"], "build": "broad",
+               "height": "tall"}),
+    "mentor": ("an older mentor: white hair, a white beard, glasses, cream clothes",
+               {"hair": "short", "hair_color": "white", "beard_color": "white", "cloth": "cream",
+                "extras": ["beard", "glasses"], "build": "average", "height": "average"}),
+    "doctor": ("a doctor: grey hair, glasses, a white coat, a stethoscope",
+               {"hair": "short", "hair_color": "grey", "cloth": "white", "extras": ["coat", "stethoscope", "glasses"],
+                "build": "average", "height": "average"}),
+    "son": ("his son, a boy: short black hair, a blue top, a backpack",
+            {"hair": "short", "hair_color": "black", "cloth": "blue", "backpack_color": "orange", "extras": ["backpack"],
+             "build": "average", "height": 0.70, "child": True}),
+    "daughter": ("his daughter, a girl: brown pigtails, a pink dress",
+                 {"hair": "pigtails", "hair_color": "brown", "cloth": "pink", "extras": ["dress"], "build": "slim",
+                  "height": 0.66, "child": True}),
+    "little_brother": ("his little brother: black curls, a red top",
+                       {"hair": "curly", "hair_color": "black", "cloth": "red", "extras": [], "build": "average",
+                        "height": 0.72, "child": True}),
+    "little_sister": ("his little sister: a blonde ponytail, plum clothes",
+                      {"hair": "ponytail", "hair_color": "blonde", "cloth": "plum", "extras": [], "build": "slim",
+                       "height": 0.70, "child": True}),
+    "young_him": ("himself as a boy, in a memory: a small teal hoodie",
+                  {"hair": "none", "hair_color": "black", "cloth": "teal", "extras": [], "build": "average", "height": 0.68,
+                   "child": True, "young_him": True}),
+}
+CHILD_ROLES = tuple(k for k, (_, look) in ROLES.items() if look.get("child"))
 
 # --- a habit shown big: the exaggerated pieces and each topic's kit of them ---------------------------------------------------
 MARKS = {  # comic marks round a head (tools/silhouette_marks.py draws them)
@@ -416,6 +487,12 @@ SCREENS = {  # what his phone's screen shows, turned to us (tools/silhouette_ico
     "rival": "someone else's perfect life: a smug man and his new car",
     "game": "a game, bright and loud",
     "chart_up": "a chart going up",
+    "call": "an incoming call: a photo, a name, the green and red buttons, ringing",
+    "missed": "missed calls piling up, in red",
+    "alarm": "an alarm going off: the time in big digits, snooze and stop",
+    "feed": "the endless feed of short videos, swiping on and on: the distraction",
+    "texts": "texts piling up unanswered: \"Where are you??\"",
+    "video": "a video playing (when he should be doing something else)",
 }
 PICTURES = {  # what a thought bubble can show instead of words (tools/silhouette_icons.py draws them)
     "heart": "a heart: love, desire", "broken_heart": "a broken heart: a love lost", "lips": "red lips: a kiss, desire",
@@ -447,6 +524,11 @@ PICTURES = {  # what a thought bubble can show instead of words (tools/silhouett
     "laughing": "people laughing: being judged, mocked", "target": "a target hit: focus, a goal reached",
     "shield": "a shield: courage, protection", "star": "a star: success, fame", "drop": "a drop: a tear, sweat",
     "puff": "a puff of smoke", "cloud_rain": "a rain cloud: sadness",
+    "call": "his phone ringing: a call", "missed_calls": "missed calls piling up",
+    "phone_alarm": "his phone's alarm going off", "feed": "a phone's endless feed of short videos: the distraction",
+    "texts": "texts piling up: \"Where are you??\"", "watch": "a gold watch: success, time well used",
+    "sports_car": "a sleek sports car: the dream, success", "flex": "a flexed arm: strength, a fit body",
+    "safe": "a safe full of gold and money: wealth", "skyline": "a city's skyline at night: the top, the big life",
 }
 
 IDEAS = {  # a few ideas for showing big the topics of the owner's list (Settings): a starting point the storyboard is
@@ -462,7 +544,7 @@ IDEAS = {  # a few ideas for showing big the topics of the owner's list (Setting
     "laziness": {"kind": "weakness", "eyes": ["droopy"], "marks": ["zzz", "drool", "flies"],
                  "actions": ["sprawled", "snoozing", "watching_tv", "snacking", "asleep"], "screens": [],
                  "things": ["dish_pile", "clothes_floor", "pizza_boxes", "overflowing_bin", "cobwebs", "alarm_clock"],
-                 "effects": ["timelapse", "grey_drain"], "pictures": ["bed", "tv", "pizza", "clock_spin", "calendar"],
+                 "effects": ["timelapse"], "pictures": ["bed", "tv", "pizza", "clock_spin", "calendar"],
                  "words": ["lazy", "laziness", "sloth", "idle", "apath", "lethargy", "unmotivat", "wasted"]},
     "ego": {"kind": "weakness", "eyes": ["smug"], "marks": ["sparkles"],
             "actions": ["arms_crossed", "admiring", "waving_off", "posing"], "screens": ["likes"],
@@ -487,7 +569,7 @@ IDEAS = {  # a few ideas for showing big the topics of the owner's list (Setting
               "pictures": ["fist", "bomb", "volcano", "grawlix", "broken_phone", "bolt"],
               "words": ["anger", "angry", "rage", "temper", "fury", "furious", "wrath", "hostil", "outburst"]},
     "self-pity": {"kind": "weakness", "eyes": ["sobbing"], "marks": ["raincloud"],
-                  "actions": ["curled_up", "sulking", "crying"], "screens": [], "things": [], "effects": ["grey_drain"],
+                  "actions": ["curled_up", "sulking", "crying"], "screens": [], "things": [], "effects": [],
                   "pictures": ["broken_heart", "cloud_rain", "him", "cross"],
                   "words": ["self-pity", "pity", "victim", "sorry for himself", "blame", "despair", "hopeless"]},
     "the phone": {"kind": "weakness", "eyes": ["spirals"], "marks": ["notify"], "actions": ["doomscrolling", "lying_awake"],

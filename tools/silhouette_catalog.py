@@ -109,7 +109,6 @@ EFFECT_SHOTS = [
     ("red pulse", {"kind": "room", "wall": "plum", "floor": "wood", "window": "big", "view": "city", "lamp": True, "things": ["sofa", "coffee_table"]}, ["red_pulse"], ("shouting", "spot")),
     ("pink haze", {"kind": "room", "wall": "plum", "floor": "wood", "window": "big", "view": "city", "lamp": True, "things": ["sofa", "coffee_table"]}, ["pink_haze"], ("staring", "sofa")),
     ("green tint", {"kind": "room", "wall": "plum", "floor": "wood", "window": "big", "view": "city", "lamp": True, "things": ["sofa", "coffee_table"]}, ["green_tint"], ("clenching", "spot")),
-    ("grey drain", {"kind": "room", "wall": "plum", "floor": "wood", "window": "big", "view": "city", "lamp": True, "things": ["sofa", "coffee_table"]}, ["grey_drain"], ("sulking", "sofa")),
     ("tunnel", {"kind": "room", "wall": "plum", "floor": "wood", "window": "big", "view": "city", "lamp": True, "things": ["sofa", "coffee_table"]}, ["tunnel"], ("doomscrolling", "sofa")),
     ("shake", {"kind": "room", "wall": "plum", "floor": "wood", "window": "big", "view": "city", "lamp": True, "things": ["sofa", "coffee_table"]}, ["shake", "red_pulse"], ("shaking_fists", "spot")),
     ("timelapse", {"kind": "room", "wall": "plum", "floor": "wood", "window": "big", "view": "city",
@@ -122,10 +121,11 @@ EFFECT_SHOTS = [
 OUT_PLACE = {"house": "houses", "fence": "houses", "mailbox": "houses", "tree": "nature", "pine": "nature",
              "grave": "nature", "campfire": "nature", "rock": "nature", "railing": "bridge"}
 ACTION_BY_KIND = {"lie": "asleep", "sit": "sitting", "stand": "standing", "kneel": "kneeling", "pushup": "pushups",
-                  "treadmill": "treadmill", "drive": "driving"}
+                  "treadmill": "treadmill", "drive": "driving", "bench": "bench_press", "bar": "pullups"}
 ACTION_BY_USE = {"cooking": "cooking", "typing": "typing", "mirror": "mirror", "boxing": "boxing", "lifting": "lifting",
                  "fixing": "fixing", "speaking": "speaking", "at_door": "at_door", "wiping": "wiping", "eating": "eating",
-                 "kneeling": "kneeling", "treadmill": "treadmill", "asleep": "asleep"}
+                 "kneeling": "kneeling", "treadmill": "treadmill", "asleep": "asleep", "bench_press": "bench_press",
+                 "pullups": "pullups"}
 # an action in a place that fits it: (place, mark, item)
 ACTION_PLACE = {
     "standing": ("living room", "spot", None), "walking": ("city street", "walk", None),
@@ -164,9 +164,18 @@ ACTION_PLACE = {
     "grabbing": ("kitchen", "spot", None), "rising": ("bedroom", "bed_edge", None),
     "ticking": ("meeting room", "screen", None), "watering": ("living room", "spot", None),
     "meditating": ("bedroom", "floor", None),
+    "bench_press": ("home gym", "bench_press", None), "pullups": ("home gym", "bar", None),
+    "jump_rope": ("home gym", "spot", None),
 }
 EXTRA_PLACES = {"gym mat": {"kind": "room", "wall": "grey", "floor": "concrete", "window": "big", "view": "city",
-                            "things": ["gym_mat", "weights"]}}
+                            "things": ["gym_mat", "weights"]},
+                "home gym": {"kind": "room", "wall": "grey", "floor": "concrete", "window": "big", "view": "city",
+                             "things": ["weight_bench", "pullup_bar"], "wall_things": ["mirror"]},
+                "penthouse": {"kind": "room", "wall": "slate", "floor": "wood", "window": "none",
+                              "things": ["sofa", "panorama_window", "plant"], "small": ["gold"]},
+                "his sports car": {"kind": "street", "things": ["sports_car"]},
+                "his luxury car": {"kind": "street", "things": ["luxury_car"]},
+                "a luxury car inside": {"kind": "car", "luxury": True}}
 CAST = [("him", None), ("short hair", {"hair": "short", "cloth": "navy"}),
         ("grey hair, glasses", {"hair": "short", "hair_color": "grey", "extras": ["glasses"], "cloth": "cream"}),
         ("beard", {"hair": "short", "hair_color": "brown", "extras": ["beard"], "cloth": "forest", "build": 1.15}),
@@ -678,8 +687,8 @@ INTRO = {
               "pictures for his thought bubbles. Lust stays symbolic: hearts, sweat, a censored pink screen under 18+, "
               "never a body.",
     "effects": "Fire, smoke, emergency lights, party lights, a spotlight, snow and fog; and how a whole picture can feel "
-               "(a red pulse, a pink haze, a green tint, the colour drained, tunnel vision, a shaking camera, a time-lapse, "
-               "notifications popping up, creeping shadows): by day and by night.",
+               "(a red pulse, a pink haze, a green tint, tunnel vision, a shaking camera, a time-lapse, "
+               "notifications popping up): by day and by night.",
     "motion": "What moves: the effects, the world sliding past a car, a train and a bus, and some of the actions.",
 }
 

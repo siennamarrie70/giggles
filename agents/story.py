@@ -84,6 +84,34 @@ RULES = (("everyone in the story is an adult: no children or teenagers, not even
          ("keep it clean for YouTube: nothing explicit (show desire through its signs and its cost)", EXPLICIT),
          ("no gore, weapons, self-harm or suicide", GORE),
          ("no real brands or companies", BRANDS))
+ROMANCE = re.compile(r"\b(lust\w*|porn\w*|romanc\w*|dating|affairs?|cheat(?:s|ed|ing)?|seduc\w*|infatuat\w*|"
+                     r"sexual\w*|flirt\w*|one-night|hook-?ups?)\b", re.I)
+KIDS = re.compile(ADULTS.pattern + r"|\b(sons?|daughters?|(?:little|younger|baby) (?:brothers?|sisters?))\b", re.I)
+KID_DANGER = re.compile(r"\b(hit(?:s|ting)?|punch\w*|slap\w*|beat(?:s|ing|en)?|kick\w*|fight\w*|shout\w*|scream\w*|"
+                        r"yell\w*|rage|drunk\w*|drink(?:s|ing)?|alcohol\w*|beer|wine|whisk(?:e)?y|vodka|bottles?|fire|"
+                        r"burn\w*|crash\w*|accident\w*|hospital\w*|blood\w*|weapons?|knife|knives|danger\w*|kidnap\w*|"
+                        r"abus\w*|threat\w*|kiss\w*|sexy|lust\w*|porn\w*)\b", re.I)
+KIDS_RULE = "children only in calm, safe family moments (never with violence, shouting, alcohol, danger or romance)"
+
+
+def kids_allowed(story: dict) -> bool:
+    """Children can be in this story (calm, safe family moments only): never in one about lust or romance."""
+    return not ROMANCE.search(" ".join(str(story.get(k) or "") for k in ("topic", "instruction", "theme",
+                                                                           "central_theme", "title", "core_message",
+                                                                           "habit")))
+
+
+def kids_rule(story: dict, short: bool = False) -> str:
+    """What the writers are told about children (the owner's rule, 2026-11-23): his son or daughter, a little brother or
+    sister, himself as a boy, in calm, safe family moments only; adults only in a story of lust or romance."""
+    if not kids_allowed(story):
+        return ("everyone is an adult (no children or teenagers, not even in a memory)" if short else
+                "Everyone in the story is an adult: no children or teenagers, not even in a memory or a flashback.")
+    return (KIDS_RULE if short else
+            "Children may appear only in calm, safe family moments: his son or daughter, a little brother or sister, "
+            "himself as a boy in a memory. Never with violence, shouting, alcohol, danger or anything romantic. Everyone "
+            "else is an adult.")
+
 
 SCRIPT_SCHEMA = {"type": "object", "properties": {
     "title": {"type": "string", "description": "Title: a compelling, curiosity-driven YouTube title"},
@@ -106,10 +134,18 @@ def _plain_words(text: str) -> int:
     return len(str(text).split())
 
 
-def rules_broken(text: str) -> list[str]:
-    """The channel's rules a text breaks, in words for Gemini (or you), with what to take out."""
+def rules_broken(text: str, kids: bool = False) -> list[str]:
+    """The channel's rules a text breaks, in words for Gemini (or you), with what to take out. kids (kids_allowed): this
+    story can have children, and then only a child near violence, alcohol, danger or romance breaks it (sentence by
+    sentence)."""
     out = []
     for name, pattern in RULES:
+        if kids and pattern is ADULTS:
+            near = sorted({m.group(0).lower() for sentence in re.split(r"(?<=[.!?])\s+", text) if KIDS.search(sentence)
+                           for m in KID_DANGER.finditer(sentence)})
+            if near:
+                out.append(f"{KIDS_RULE}: take out {', '.join(near[:6])} where the children are")
+            continue
         found = sorted({m.group(0).lower() for m in pattern.finditer(text)})
         if found:
             out.append(f"{name}: take out {', '.join(found[:6])}")
@@ -122,19 +158,29 @@ def _writer() -> str:
     return prompts.load("script_writer")
 
 
-def facts(brief: dict, recent: list[dict] | None = None) -> str:
-    """What the channel adds under the brief: facts for this script (your prompt is never changed)."""
+def facts(brief: dict, recent: list[dict] | None = None, form: str = "long") -> str:
+    """What the channel adds under the brief: facts for this script (your prompt is never changed), at the length of
+    its form (a Short: 2-3 minutes; a long story: 3-4)."""
     from agents import theme
 
     recent = theme.recent_stories() if recent is None else recent
+    L = limits(form)
     lines = [
         "The main character is a man, an adult. (The channel's animation always draws him the same way, so don't "
         "describe his looks or his clothes.) Give him his own background, job, age, personality and relationships.",
-        "Everyone in the story is an adult: no children or teenagers, not even in a memory or a flashback.",
-        f"Length: the full script is about {AIM[0]}-{AIM[1]} words (it fills a 3-4 minute film).",
+        kids_rule(brief),
+        f"Length: the full script is about {L['aim'][0]}-{L['aim'][1]} words (it fills a {L['minutes']} minute "
+        f"{L['film']})." + (" It's a Short, watched upright on phones: tell the whole story with a few places and "
+                            "people, every moment counting." if form == "short" else ""),
         "Our film shows the story in pictures, without a narrator: what the people say to each other and what he "
         "thinks appears in speech and thought bubbles. Write the full script as your format asks, and give the people "
         "real moments to speak to each other and to think, so it can be shown.",
+        "What our film can show well, where it fits this story (never force it): his phone ringing with a call, "
+        "missed calls piling up, the phone's alarm going off, the endless feed of short videos pulling him in, texts "
+        "piling up unanswered (\"Where are you??\"), a video playing when he should be busy; when he changes: training "
+        "(push-ups, weights, the bench press, pull-ups, a jump rope, the heavy bag, the treadmill) and growing fit and "
+        "strong; the life he builds: a sports car, a luxury car, a gold watch, a sharp suit, a penthouse over the "
+        "city's lights, a safe of gold, a trophy.",
         "No headings, stage labels, sound cues or directions in the full script.",
         "No real people, brands or companies. Keep it clean for YouTube: nothing explicit, no gore, no self-harm.",
     ]
@@ -227,10 +273,13 @@ def estimate(lines: list[dict]) -> float:
 
 
 # --- the script ----------------------------------------------------------------------------------------------------------
-def check_script(raw: dict, brief: dict, titles: list[str] | None = None) -> tuple[dict, list[str], list[str]]:
+def check_script(raw: dict, brief: dict, titles: list[str] | None = None,
+                 form: str = "long") -> tuple[dict, list[str], list[str]]:
     """The script as code can take it (headings dropped, cut into lines), what's wrong with it (problems: it goes back)
-    and what could be better (notes), in words for Gemini."""
+    and what could be better (notes), in words for Gemini. Its length is its form's (limits)."""
     problems, notes = [], []
+    L = limits(form)
+    aim, most = L["aim"], L["words"]
     script, dropped = clean_script(raw.get("full_script"))
     if dropped:
         notes.append("the full script is read aloud as it is: no headings or labels in it (taken out: "
@@ -240,11 +289,11 @@ def check_script(raw: dict, brief: dict, titles: list[str] | None = None) -> tup
     message = _clean(raw.get("core_message"))
     closing = _clean(raw.get("closing_line")).strip(" \"'")
     words = _plain_words(script)
-    if not WORDS[0] <= words <= WORDS[1]:
-        problems.append(f"the full script has {words} words: write about {AIM[0]}-{AIM[1]} (it fills a 3-4 minute "
-                        "film)")
-    elif not AIM[0] - 20 <= words <= AIM[1] + 30:
-        notes.append(f"the full script has {words} words: about {AIM[0]}-{AIM[1]} fits 3-4 minutes best")
+    if not most[0] <= words <= most[1]:
+        problems.append(f"the full script has {words} words: write about {aim[0]}-{aim[1]} (it fills a "
+                        f"{L['minutes']} minute {L['film']})")
+    elif not aim[0] - 20 <= words <= aim[1] + 30:
+        notes.append(f"the full script has {words} words: about {aim[0]}-{aim[1]} fits {L['minutes']} minutes best")
     if not title or SR.too_long(title, TITLE_CHARS) or len(title.split()) < 2:
         problems.append(f"the title: 2 or more words, at most {TITLE_CHARS} characters (no word over {SR.WORD_CHARS})")
     if re.search(r"[#@]|https?:|[\U0001F300-\U0001FAFF]", title):
@@ -258,12 +307,14 @@ def check_script(raw: dict, brief: dict, titles: list[str] | None = None) -> tup
     if not CLOSING_WORDS[0] <= _plain_words(closing) <= CLOSING_WORDS[1] or SR.too_long(closing, CLOSING_CHARS):
         problems.append(f"the final closing line: one sentence of {CLOSING_WORDS[0]}-{CLOSING_WORDS[1]} words, at most "
                         f"{CLOSING_CHARS} characters")
-    problems += rules_broken(" ".join([title, theme, message, script, closing]))
+    problems += rules_broken(" ".join([title, theme, message, script, closing]),
+                             kids=kids_allowed({**brief, "title": title, "theme": theme, "core_message": message}))
     lines = split_lines(script, closing)
     if lines and " ".join(x["text"] for x in lines if not x["closing"]) != " ".join(script.split()):
         problems.append("(code) the lines don't keep the script's words")  # (never expected: split_lines keeps them)
     seconds = estimate(lines)
-    story = {"format": "script", "look": "silhouette", "brief": brief.get("instruction") or "",
+    story = {"format": "script", "look": "silhouette", "form": form if form in ("short", "long") else "long",
+             "brief": brief.get("instruction") or "",
              "mode": brief.get("mode") or "", "topic": brief.get("topic") or "", "theme": theme,
              "kind": brief.get("kind") or "", "title": title, "core_message": message, "script": script,
              "closing_line": closing, "lines": lines, "words": words, "estimate": round(seconds, 1)}
@@ -275,15 +326,16 @@ def _draft(raw: dict) -> str:
                       ensure_ascii=False)
 
 
-def write(brief: dict, progress=log) -> dict:
-    """The script for the brief (Agent 1's): {"story", "script", "metadata"}. Raises when no try keeps the rules."""
+def write(brief: dict, progress=log, form: str = "long") -> dict:
+    """The script for the brief (Agent 1's) at its form's length (a Short: 2-3 minutes; a long story: 3-4): {"story",
+    "script", "metadata"}. Raises when no try keeps the rules."""
     from agents import theme
 
     system = _writer()
     recent = theme.recent_stories()
     titles = [(v["plan"].get("story") or {}).get("title") or (v["plan"].get("metadata") or {}).get("title")
               for v in recent]
-    base = f"{brief['instruction']}\n\n{facts(brief, recent)}"
+    base = f"{brief['instruction']}\n\n{facts(brief, recent, form)}"
     best, complaints, raw = None, [], {}
     for attempt in range(TRIES):
         prompt = base + ("\n\nYour last draft is below, with these problems. Write it again with every one fixed, keeping "
@@ -291,7 +343,7 @@ def write(brief: dict, progress=log) -> dict:
         progress("Writing the script" + (f" (again: {len(complaints)} problems)" if complaints else ""))
         raw = llm.generate_json([prompt], SCRIPT_SCHEMA, system, careful=True, thinking="MEDIUM", timeout_ms=300_000,
                                patient=True)
-        story, problems, notes = check_script(raw, brief, titles)
+        story, problems, notes = check_script(raw, brief, titles, form)
         complaints = problems + notes
         if best is None or (len(problems), len(notes)) < (len(best[1]), len(best[2])):
             best = (story, problems, notes)
@@ -318,6 +370,20 @@ MOMENTS = (28, 45)              # the film's moments (a shot each; the storyboar
 MOMENT_STAGE_LEAST = 2          # moments in every stage at least
 BUBBLES_LEAST = 18              # bubbles in the whole film at least
 READ_SECONDS = (95.0, 195.0)    # all its bubbles' reading time (silhouette_words.read_seconds): with the pictures, 3-4 min
+SHORT_WORDS = (230, 400)        # a Short's script (2-3 minutes, your plan of 2026-11-23): its words at least and at most
+SHORT_AIM = (280, 340)          # ...what the facts ask for
+SHORT_MOMENTS = (18, 28)        # ...its moments
+SHORT_BUBBLES_LEAST = 12        # ...its bubbles at least
+SHORT_READ_SECONDS = (70.0, 115.0)  # ...their reading time: with the pictures, 2-3 minutes (never 3:00: YouTube's Shorts)
+
+
+def limits(form: str | None) -> dict:
+    """The lengths a story of this form is written to: a Short ("short": 2-3 minutes, upright) or a long story (3-4)."""
+    if form == "short":
+        return {"words": SHORT_WORDS, "aim": SHORT_AIM, "moments": SHORT_MOMENTS, "bubbles": SHORT_BUBBLES_LEAST,
+                "read": SHORT_READ_SECONDS, "minutes": "2-3", "film": "short film"}
+    return {"words": WORDS, "aim": AIM, "moments": MOMENTS, "bubbles": BUBBLES_LEAST, "read": READ_SECONDS,
+            "minutes": "3-4", "film": "film"}
 PEOPLE_MOST = 8
 PICTURE_WORDS_MOST = 4          # the words a picture bubble may carry under its picture
 MOMENT_LEAD, MOMENT_TAIL = 0.5, 0.8   # a moment's shot before its first bubble and after its last (tools/story_film.py)
@@ -348,7 +414,9 @@ def _moments_schema() -> dict:
         "kind": {"type": "string", "enum": list(SR.BUBBLE_KINDS)},
         "text": {"type": "string", "description": f"the words: at most {SR.BUBBLE_WORDS} (a picture bubble: up to "
                                                   f"{PICTURE_WORDS_MOST}, or empty)"},
-        "picture": {"type": "string", "enum": [""] + list(SR.PICTURES)}},
+        "picture": {"type": "string", "enum": [""] + list(SR.PICTURES)},
+        "wish": {"type": "string", "description": "a picture bubble whose picture isn't in PICTURES: the closest in "
+                                                  "picture, and here what it should show (2-4 plain words); else empty"}},
         "required": ["who", "kind", "text", "picture"]}
     moment = {"type": "object", "properties": {
         "stage": {"type": "string", "enum": STAGES},
@@ -364,6 +432,7 @@ def _moments_schema() -> dict:
 
 
 def _moments_system(story: dict) -> str:
+    L = limits(story.get("form"))
     pictures = "; ".join(f"{k} ({v})" for k, v in SR.PICTURES.items())
     kinds = "; ".join(f"{k}: {v}" for k, v in SR.BUBBLE_KINDS.items())
     return f"""You turn a short story into the moments of a silent animated film. The film has no narrator and no
@@ -379,8 +448,8 @@ Its closing line ("{story.get('closing_line')}") ends the film on screen by itse
 
 WHAT YOU WRITE
 1. people: everyone besides him who appears (id: a short name like wife, boss, mother, friend; role: who they are to
-   him, a few words). Everyone is an adult. At most {PEOPLE_MOST}.
-2. moments: the story told in {MOMENTS[0]}-{MOMENTS[1]} moments, in order, through its six stages (hook, incident, collapse,
+   him, a few words). {kids_rule(story)} At most {PEOPLE_MOST}.
+2. moments: the story told in {L['moments'][0]}-{L['moments'][1]} moments, in order, through its six stages (hook, incident, collapse,
    rock_bottom, transformation, payoff), every stage at least {MOMENT_STAGE_LEAST + 1} moments. Each moment is one picture:
    - stage;
    - shows: what we see, in one plain sentence (where he is, what he does, who is with him, the time if it matters);
@@ -398,12 +467,15 @@ WHAT YOU WRITE
    - Use a picture bubble where a picture says it faster than words: what he craves, fears, misses, wants, dreams of.
      A picture bubble carries up to {PICTURE_WORDS_MOST} words under its picture, or none.
    - The habit or struggle is shown big, like a cartoon, in the pictures and the bubbles: what it does to him, plainly.
-   - The bubbles together take {READ_SECONDS[0]:.0f}-{READ_SECONDS[1]:.0f} seconds to read (each: one second to find it,
-     then 2.5 words a second), so that with the pictures the film runs 3-4 minutes. At least {BUBBLES_LEAST} bubbles.
+   - The bubbles together take {L['read'][0]:.0f}-{L['read'][1]:.0f} seconds to read (each: one second to find it,
+     then 2.5 words a second), so that with the pictures the film runs {L['minutes']} minutes. At least {L['bubbles']}
+     bubbles.
    - Swearing appears only as #@%! in a shout, never spelt out.
 4. PICTURES (for picture bubbles; use these words exactly): {pictures}
+   When none of them shows what the moment needs, pick the closest and write in wish what it should show (2-4 plain
+   words): it's drawn new for the film.
 
-ALWAYS: everyone is an adult (no children or teenagers, not even in a memory); nothing explicit (desire shown only by its
+ALWAYS: {kids_rule(story, short=True)}; nothing explicit (desire shown only by its
 symbols: hearts, lips, a censored phone screen); no gore, weapons or self-harm; no real brands, people or places."""
 
 
@@ -471,7 +543,11 @@ def check_moments(raw: dict, story: dict) -> tuple[list[dict], list[dict], list[
                 problems.append(f"{where}: the closing line is never a bubble (it ends the film on screen by itself)")
             if speaker not in who:
                 who.append(speaker)
-            bubbles.append({"who": speaker, "kind": kind, "text": text, "picture": picture if kind == "picture" else ""})
+            bubble = {"who": speaker, "kind": kind, "text": text, "picture": picture if kind == "picture" else ""}
+            wish = " ".join(_clean(b.get("wish") or "").split()[:5]).strip(" .\"'")[:40]
+            if kind == "picture" and wish and not re.search(r"[#@<>{}]|https?:", wish):   # (no picture fits: Agent 3,
+                bubble["wish"] = wish                                                       # Visuals, draws it new)
+            bubbles.append(bubble)
         if len(bubbles) > 2:
             notes.append(f"{where}: at most 2 bubbles in a moment (the rest left out)")
             bubbles = bubbles[:2]
@@ -479,20 +555,22 @@ def check_moments(raw: dict, story: dict) -> tuple[list[dict], list[dict], list[
         count += len(bubbles)
         moments.append({"text": shows, "stage": stage, "who": who or ["him"], "bubbles": bubbles})
     n = len(moments)
-    if not MOMENTS[0] <= n <= MOMENTS[1]:
-        (problems if n < MOMENTS[0] - 4 or n > MOMENTS[1] + 6 else notes).append(
-            f"{n} moments: tell it in {MOMENTS[0]}-{MOMENTS[1]}")
+    L = limits(story.get("form"))
+    least, most = L["moments"]
+    if not least <= n <= most:
+        (problems if n < least - 4 or n > most + (3 if story.get("form") == "short" else 6) else notes).append(
+            f"{n} moments: tell it in {least}-{most}")
     for stage in STAGES:
         got = sum(1 for m in moments if m["stage"] == stage)
         if got < MOMENT_STAGE_LEAST:
             problems.append(f"the {STAGE_NAMES[stage].lower()} has {got} moments: at least {MOMENT_STAGE_LEAST + 1}")
-    if count < BUBBLES_LEAST:
-        problems.append(f"{count} bubbles: the people talk and think more (at least {BUBBLES_LEAST})")
-    if not READ_SECONDS[0] <= reading <= READ_SECONDS[1]:
-        problems.append(f"the bubbles take {reading:.0f} s to read: aim for {READ_SECONDS[0]:.0f}-{READ_SECONDS[1]:.0f} s "
-                        + ("(more of them, or fuller)" if reading < READ_SECONDS[0] else "(fewer, or shorter)"))
+    if count < L["bubbles"]:
+        problems.append(f"{count} bubbles: the people talk and think more (at least {L['bubbles']})")
+    if not L["read"][0] <= reading <= L["read"][1]:
+        problems.append(f"the bubbles take {reading:.0f} s to read: aim for {L['read'][0]:.0f}-{L['read'][1]:.0f} s "
+                        + ("(more of them, or fuller)" if reading < L["read"][0] else "(fewer, or shorter)"))
     problems += rules_broken(" ".join([p["role"] for p in people] + [m["text"] for m in moments]
-                                      + [b["text"] for m in moments for b in m["bubbles"]]))
+                                      + [b["text"] for m in moments for b in m["bubbles"]]), kids=kids_allowed(story))
     return moments, people, problems, notes
 
 
@@ -519,7 +597,7 @@ def write_moments(story: dict, progress=log) -> dict:
             break
         progress("Moments' problems: " + "; ".join(complaints[:5]))
     moments, people, problems, notes = best
-    hard = [p for p in problems if any(w in p for w in ("adult", "explicit", "gore", "brand", "real "))]
+    hard = [p for p in problems if any(w in p for w in ("adult", "children only", "explicit", "gore", "brand", "real "))]
     if hard or not moments:
         raise RuntimeError("the moments keep breaking the rules: " + "; ".join((hard or problems)[:4]))
     if problems:
@@ -534,6 +612,26 @@ def write_moments(story: dict, progress=log) -> dict:
     return story
 
 
+LONG_TITLE_END = " | An animated short film"  # a long story's title on YouTube: its topic in capitals, then this (your
+#   format, 2026-11-24: "PROCRASTINATION | An animated short film"); a Short keeps its own title (your script writer's)
+HEADLINE_WORDS, HEADLINE_CHARS = 5, 34          # the topic part of a long story's title, at most
+
+
+def headline(story: dict) -> str:
+    """A long story's topic for its YouTube title, in capitals: the one you set on the dashboard (story["headline"]),
+    else the brief's topic ("the phone": "THE PHONE"), else, when the brief left the topic to your script writer, the
+    first part of the central theme it named ("Harsh Gossip and Kindness": "HARSH GOSSIP")."""
+    words = story.get("headline") or story.get("topic") or re.split(
+        r"\s+(?:and|&|vs\.?|versus|or)\s+|[,;:(/]", story.get("theme") or "")[0]
+    return " ".join(str(words).split()[:HEADLINE_WORDS]).strip(" .-|").upper()
+
+
+def youtube_title(story: dict) -> str:
+    """The video's title on YouTube: a long story's is its topic in capitals and LONG_TITLE_END; a Short's is its own."""
+    top = headline(story) if story.get("form") != "short" else ""
+    return f"{top}{LONG_TITLE_END}" if top else story["title"]
+
+
 def metadata(story: dict) -> dict:
     """The video's title, description (the storyboard's, or the core message; the Publisher adds the chapters and the
     credits), tags and hashtags."""
@@ -543,7 +641,7 @@ def metadata(story: dict) -> dict:
     hashtags = list(dict.fromkeys([*(cfg.get("hashtags") or []), f"#{word}" if word else ""]))
     tags = list(dict.fromkeys([theme.lower(), "motivation", "animation", "short film", "animated story",
                                "self improvement", "motivational story", *(story.get("tags") or [])]))[:15]
-    return {"title": story["title"], "description": story.get("description") or story.get("core_message") or "",
+    return {"title": youtube_title(story), "description": story.get("description") or story.get("core_message") or "",
             "tags": [t for t in tags if t], "hashtags": [h for h in hashtags if h],
             "thumbnail_text": " ".join(w for w in ((story.get("thumbnail") or {}).get("lead", ""),
                                                    (story.get("thumbnail") or {}).get("punch", "")) if w)
@@ -586,6 +684,9 @@ def stage_of(shot: dict) -> str:
 
 # --- the short version ------------------------------------------------------------------------------------------------------
 SHORT_BUBBLE_WORDS = 9          # words in one of its bubbles at most (read on a phone)
+SHORT_LABELS = 2                # time captions ("MONTHS LATER") it may add where it jumps in time
+LABEL_WORDS = 3                 # ...each at most this many words
+STRANGER_REWRITES = 2           # times the stranger's read may send it back to be made clearer (2026-11-23)
 SHORT_READ = (20.0, 38.0)       # its bubbles' reading time in all: with the title, the pictures and the closing line, 45-58 s
 
 
@@ -599,7 +700,9 @@ def _short_schema() -> dict:
     return {"type": "object", "properties": {
         "shots": {"type": "array", "items": {"type": "object", "properties": {
             "shot": {"type": "integer", "description": "the film's shot number (1 = its first)"},
-            "bubbles": {"type": "array", "items": bubble, "description": "0-2: its bubbles in the short version"}},
+            "bubbles": {"type": "array", "items": bubble, "description": "0-2: its bubbles in the short version"},
+            "label": {"type": "string", "description": "only where time jumps before this shot: a small time caption "
+                                                       "(\"MONTHS LATER\", \"3:00 AM\"), at most 3 words; else empty"}},
             "required": ["shot", "bubbles"]}}},
         "required": ["shots"]}
 
@@ -633,9 +736,21 @@ The short version:
 - Give each its bubbles: the film's own, made shorter (at most {SHORT_BUBBLE_WORDS} words each, at most 2 a shot), or none
   where the picture says it. Only someone in that shot can speak or think in it. The first shot's bubble is the hook: it
   makes a stranger scrolling past stop.
+- It must make sense to a stranger scrolling past who never saw the film: who each person is, what happens, and why
+  he changes, from the short version alone (it's what most people will ever see of the story). So:
+  - keep a cause with its effect: the incident before what it costs him, his realization with what brings it on;
+  - a reply only with the line it answers (in the same shot or the one just before it);
+  - a person who matters is placed the first time we see them, by how they're spoken to ("Mom, ...", "Sir, ...",
+    "Babe, ...") or by what the picture shows;
+  - no bubble about something the short version doesn't show, and none that suggests what the story doesn't mean (a
+    line that, out of the film, reads as something else);
+  - where time jumps between two of your shots, give the later one a label: a small time caption ("MONTHS LATER",
+    "3:00 AM", "A YEAR LATER"), at most 3 words; at most {SHORT_LABELS} labels in the short version.
+- A bubble may be reworded, not only shortened, to carry what the skipped shots told, in that person's own voice (a
+  line they would say or think there; never a narrator's caption).
 - The bubbles together take {SHORT_READ[0]:.0f}-{SHORT_READ[1]:.0f} seconds to read (one second to find each, then 2.5 words a
   second).
-- Swearing only as #@%! in a shout. Always: everyone is an adult, nothing explicit, no gore, weapons or self-harm, no
+- Swearing only as #@%! in a shout. Always: {kids_rule(story, short=True)}; nothing explicit, no gore, weapons or self-harm, no
   real brands."""
 
 
@@ -684,7 +799,11 @@ def check_short(raw: dict, story: dict) -> tuple[dict, list[str], list[str]]:
             if kind == "say" and not here - {who}:
                 kind = "think"
             bubbles.append({"who": who, "kind": kind, "text": text, "picture": picture if kind == "picture" else ""})
-        picked.append({"shot": k, "bubbles": bubbles})
+        label = _clean(s.get("label") or "").strip(" \"'.").upper()
+        if label and (len(label.split()) > LABEL_WORDS or SR.too_long(label, 28)):
+            problems.append(f"shot {k}: the label \"{label[:30]}\" is a small time caption: {LABEL_WORDS} words at most")
+            label = ""
+        picked.append({"shot": k, "bubbles": bubbles, **({"label": label} if label else {})})
     if [p["shot"] for p in picked] != sorted(p["shot"] for p in picked):
         notes.append("the shots go in the film's order")
         picked.sort(key=lambda p: p["shot"])
@@ -714,17 +833,79 @@ def check_short(raw: dict, story: dict) -> tuple[dict, list[str], list[str]]:
     elif seconds < story_film.SHORT_SECONDS[0] - 3:
         notes.append(f"it would run only about {seconds:.0f} s: aim for {story_film.SHORT_SECONDS[0]:.0f}-"
                      f"{story_film.SHORT_SECONDS[1]:.0f} (a bubble or a shot more)")
-    problems += rules_broken(" ".join(b["text"] for p in picked for b in p["bubbles"]))
+    labelled = [p for p in picked if p.get("label")]
+    if len(labelled) > SHORT_LABELS:
+        notes.append(f"at most {SHORT_LABELS} labels (time captions): only where time jumps (the first {SHORT_LABELS} kept)")
+        for p in labelled[SHORT_LABELS:]:
+            p.pop("label")
+    problems += rules_broken(" ".join([b["text"] for p in picked for b in p["bubbles"]]
+                                      + [p["label"] for p in picked if p.get("label")]), kids=kids_allowed(story))
     short["estimate"] = round(seconds, 1)
     return short, problems, notes
 
 
+STRANGER = """You scroll YouTube Shorts. This one is a silent animated short: black silhouettes, the hero a man in a teal
+hoodie, no narrator (what people say or think shows in bubbles over their heads). You've never seen the story it comes
+from. Below is everything it shows, shot by shot: what each shot shows, a time caption at the top if there is one, and
+its bubbles (who (say, think, shout or picture): "words").
+
+Read it as that first-time viewer. Retell the story you understood, in two sentences. Then list only what would really
+confuse or mislead you: a person you can't place, a line that answers something you didn't see, a jump you can't
+follow, a reason you can't find, a bubble that reads as something the story can't mean. Not matters of taste. An empty
+list if it's clear."""
+READ_SCHEMA = {"type": "object", "properties": {
+    "retold": {"type": "string", "description": "the story as you understood it, in two sentences"},
+    "problems": {"type": "array", "items": {"type": "object", "properties": {
+        "shot": {"type": "integer", "description": "the shot's number above (1 = the first)"},
+        "what": {"type": "string", "description": "what confuses or misleads you there, and why"}},
+        "required": ["shot", "what"]}}},
+    "required": ["retold", "problems"]}
+
+
+def short_words(story: dict, short: dict) -> str:
+    """The short version as a stranger meets it: each of its shots in order (what it shows, its time caption, its
+    bubbles) and the closing line."""
+    out = []
+    for j, p in enumerate(short["shots"]):
+        base = story["shots"][int(p["shot"]) - 1]
+        label = p.get("label") or (base.get("label") or "").upper()
+        out.append(f"{j + 1}. {f'[caption: {label}] ' if label else ''}{scene_words(base)} | {_bubble_words(p['bubbles'])}")
+    return "\n".join(out) + f"\nAt the end, on screen by itself: \"{story.get('closing_line') or ''}\""
+
+
+def read_short(story: dict, short: dict) -> dict:
+    """The stranger's read (2026-11-23: short versions were misleading out of the film): one quick Gemini call reads the
+    short version alone, as someone who never saw the film: {"retold", "problems": [{"shot" (the short's, 1 = its
+    first), "what"}]}. A read that fails finds nothing: it never stops a short version."""
+    try:
+        raw = llm.generate_json([short_words(story, short)], READ_SCHEMA, STRANGER, patient=True)
+    except Exception as e:
+        return {"retold": "", "problems": [], "error": str(e)[:200]}
+    problems = [{"shot": p["shot"] if isinstance(p.get("shot"), int) else None, "what": _clean(p.get("what"))[:240]}
+                for p in raw.get("problems") or [] if _clean(p.get("what"))]
+    return {"retold": _clean(raw.get("retold"))[:400], "problems": problems[:6]}
+
+
+def _confusions(short: dict, read: dict) -> list[str]:
+    """The stranger's confusions, as problems for the writer (in the film's shot numbers too)."""
+    out = []
+    for p in read["problems"]:
+        j = p["shot"]
+        where = (f"your shot {j} (the film's shot {short['shots'][j - 1]['shot']})"
+                 if j and 1 <= j <= len(short["shots"]) else "your short version")
+        out.append(f"a stranger who never saw the film was confused at {where}: {p['what']}")
+    return out
+
+
 def write_short(story: dict, progress=log, complaint: str | None = None) -> dict:
-    """The short version of a finished story: {"shots": [{"shot" (the film's, 1 = its first), "bubbles"}], "bubbles",
-    "reading", "estimate", "notes"}. `complaint`: what was wrong with the last one. Raises when no try keeps the rules."""
+    """The short version of a finished story: {"shots": [{"shot" (the film's, 1 = its first), "bubbles", "label"
+    (a time caption, where it jumps)}], "bubbles", "reading", "estimate", "notes", "read" (the stranger's)}. Each one
+    that keeps the rules is read by a stranger (read_short); what confuses goes back to be made clearer, at most
+    STRANGER_REWRITES times, and the clearest is kept. `complaint`: what was wrong with the last one. Raises when no try
+    keeps the rules."""
     system = _short_system(story)
-    best, complaints = None, [complaint] if complaint else []
-    for attempt in range(SHORT_TRIES):
+    best, score, complaints, rewrites = None, None, [complaint] if complaint else [], 0
+    for attempt in range(SHORT_TRIES + STRANGER_REWRITES):
         prompt = (f"Make the short version of \"{story['title']}\".\n"
                   + ("\nYour last answer had these problems. Make it again with every one fixed:\n- "
                      + "\n- ".join(complaints) + "\n" if complaints else ""))
@@ -732,11 +913,21 @@ def write_short(story: dict, progress=log, complaint: str | None = None) -> dict
         raw = llm.generate_json([prompt], _short_schema(), system, careful=True, thinking="MEDIUM", timeout_ms=180_000,
                                patient=True)
         short, problems, notes = check_short(raw, story)
-        complaints = problems + notes
-        if best is None or (len(problems), len(notes)) < (len(best[1]), len(best[2])):
-            best = (short, problems, notes)
-        if not problems and (not notes or attempt):  # (small notes are worth one more try, not two)
+        unclear = []
+        if not problems:   # (it keeps the rules: does it make sense on its own?)
+            short["read"] = read_short(story, short)
+            unclear = _confusions(short, short["read"])
+            progress(f"A stranger's read: \"{short['read']['retold'][:160]}\""
+                     + (f" (confused by {len(unclear)})" if unclear else " (clear)"))
+        if best is None or (len(problems), len(unclear), len(notes)) < score:
+            best, score = (short, problems, notes), (len(problems), len(unclear), len(notes))
+        if not problems and not unclear and (not notes or attempt):  # (small notes are worth one more try, not two)
             break
+        if not problems and unclear:
+            if rewrites >= STRANGER_REWRITES:
+                break   # (still unclear after the rewrites: the clearest one is kept)
+            rewrites += 1
+        complaints = problems + unclear + notes
         progress("Short version problems: " + "; ".join(complaints[:5]))
     short, problems, notes = best
     if problems:
@@ -765,7 +956,13 @@ def apply_edits(plan: dict, edits: dict) -> dict:
     story = json.loads(json.dumps(plan["story"]))
     if not story.get("shots"):
         raise ValueError("This story has no storyboard yet: its bubbles come with it.")
-    if "title" in edits:
+    if "title" in edits and story.get("form") != "short":  # (a long story: you set its topic, LONG_TITLE_END follows)
+        top = re.sub(r"\|\s*an animated short film\s*$", "", _clean(edits["title"]), flags=re.I).strip(" \"'|")
+        if not top or len(top.split()) > HEADLINE_WORDS or SR.too_long(top, HEADLINE_CHARS):
+            raise ValueError(f"The title: its topic, 1 to {HEADLINE_WORDS} words and {HEADLINE_CHARS} characters at most "
+                             f"(“{LONG_TITLE_END.strip(' |')}” follows it by itself).")
+        story["headline"] = top.upper()
+    elif "title" in edits:
         title = _clean(edits["title"]).strip(" \"'")
         if len(title.split()) < 2 or SR.too_long(title, TITLE_CHARS):
             raise ValueError(f"The title: 2 words or more, {TITLE_CHARS} characters at most (no word over "
@@ -793,7 +990,7 @@ def apply_edits(plan: dict, edits: dict) -> dict:
             raise ValueError(f"The closing line: {CLOSING_WORDS[0]} to {CLOSING_WORDS[1]} words, {CLOSING_CHARS} "
                              f"characters at most (no word over {SR.WORD_CHARS}).")
         story["closing_line"] = closing
-    problems = rules_broken(" ".join([story["title"], story["closing_line"]]
+    problems = rules_broken(" ".join([story["title"], story.get("headline") or "", story["closing_line"]]
                                      + [b["text"] for s in story["shots"] for b in s.get("bubbles") or []]))
     if problems:
         raise ValueError("The channel's rules: " + "; ".join(problems))
@@ -801,7 +998,7 @@ def apply_edits(plan: dict, edits: dict) -> dict:
     return {**plan, "brief": plan.get("brief") or {}, "story": story, "edited_at": _now_iso(),
             "script": {**(plan.get("script") or {}), "lines": lines_of(story), "seconds": story["estimate"],
                        "case_title": story["title"]},
-            "metadata": {**(plan.get("metadata") or {}), "title": story["title"]}}
+            "metadata": {**(plan.get("metadata") or {}), "title": youtube_title(story)}}
 
 
 def _now_iso() -> str:
@@ -810,8 +1007,9 @@ def _now_iso() -> str:
     return db.now_iso()
 
 
-def run(brief: dict, progress=log) -> dict:
-    return act("story", f"Write the script: {brief.get('instruction', '')[:80]}", write, brief, progress=progress)
+def run(brief: dict, progress=log, form: str = "long") -> dict:
+    what = "a Short's script" if form == "short" else "the script"
+    return act("story", f"Write {what}: {brief.get('instruction', '')[:80]}", write, brief, progress=progress, form=form)
 
 
 def main() -> int:

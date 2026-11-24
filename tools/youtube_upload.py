@@ -86,6 +86,28 @@ def publish_now(video_id: str) -> dict:
     return {"public": True} if _set_privacy(video_id, "public", "Publishing it now") else {"gone": True}
 
 
+def reschedule(video_id: str, publish_at: str) -> dict:
+    """Moves a scheduled video's publish time (it stays private until then): {"moved": True}. Left as it is: one that's
+    public already ({"public": True}), one made private or unlisted in YouTube Studio with no publish time ({"hidden":
+    True}: giving it one would make it public), and one that isn't on YouTube any more ({"gone": True})."""
+    items = youtube_auth.yt_get("videos", {"part": "status", "id": video_id}).get("items") or []
+    if not items:
+        return {"gone": True}
+    now = items[0]["status"]
+    if now.get("privacyStatus") == "public":
+        return {"public": True}
+    if now.get("privacyStatus") != "private" or not now.get("publishAt"):
+        return {"hidden": True}
+    status = {k: v for k, v in now.items() if k in WRITABLE_STATUS}
+    status.update(privacyStatus="private", publishAt=publish_at,
+                  selfDeclaredMadeForKids=bool(status.get("selfDeclaredMadeForKids", False)))
+    resp = requests.put(VIDEOS_URL, params={"part": "status"}, json={"id": video_id, "status": status}, timeout=30,
+                        headers={"Authorization": f"Bearer {youtube_auth.get_access_token()}"})
+    if resp.status_code != 200:
+        raise _refused(resp, "Moving its publish time")
+    return {"moved": True}
+
+
 def statuses(video_ids: list[str]) -> dict[str, dict]:
     """How each video stands on YouTube now, by its id: its privacy, publish time and upload state (uploaded, i.e.
     still processing; processed; rejected or failed, with YouTube's reason). A video that isn't returned was deleted."""

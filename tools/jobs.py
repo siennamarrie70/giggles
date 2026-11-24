@@ -1,8 +1,8 @@
 """
-The jobs that run the channel on its posting schedule, by calling the six agents (agents/) in order: one motivation
-story a day, public at series.post_at (17:30 in India), and its short version (the whole story in under a minute) as a
-Short series.short_after_hours later. GitHub
-Actions looks every hour (.github/workflows/morning.yml: `due`, then `morning` when there's something to do); the
+The jobs that run the channel on its posting schedule, by calling the six agents (agents/) in order: your plan of
+2026-11-23 (tools/slots.py): two Shorts of 2-3 minutes a night (21:00 and 03:00 in India, each also a Reel) for three
+nights, then a night with one long story of 3-4 minutes (21:00, YouTube only). Each slot is made with a video of its
+form (plan["form"]). GitHub Actions looks every hour (.github/workflows/morning.yml: `due`, then `morning` when there's something to do); the
 dashboard on this computer runs the same jobs while its database is the local one.
 
   due        the cloud's hourly check, with only the dashboard's packages installed: is there anything for a run to do
@@ -10,9 +10,9 @@ dashboard on this computer runs the same jobs while its database is the local on
   morning    the autopilot's run: the next story, made and scheduled once its slot is due (as soon as the story before
              it is public: schedule.ahead) and the free quotas allow it (quota_short); then one summary to your phone and
              the day's numbers
-  autopilot  the day's slot (or, with --now / the dashboard's "Make the 17:30 video now", the next open one) -> the oldest
-             story ready to go up (or a new one, written on the spot) -> Agent 3 makes the film and its short version and
-             Agent 4 reviews them (unless that's done; a film that fails goes back to Agent 3, at most twice, then it's
+  autopilot  the slot that's due (or, with --now / the dashboard's "Make the next video now", the next open one) -> the
+             oldest story of its form ready to go up (or a new one, written on the spot) -> Agent 3 makes it and
+             Agent 4 reviews it (unless that's done; a film that fails goes back to Agent 3, at most twice, then it's
              made again by itself until it passes: unmade()) -> Agent 5 uploads it, scheduled to go public on the minute
              of its slot, and its short version after it
   prepare    Agents 1 and 2 write a story: the theme and title, then the story and its moments with their bubbles
@@ -99,7 +99,7 @@ import series  # noqa: E402
 import slots  # noqa: E402
 import youtube_auth  # noqa: E402
 import youtube_upload  # noqa: E402
-from agents import analyst, animator, publisher, reviewer, story, storyboard, theme  # noqa: E402
+from agents import analyst, animator, publisher, reviewer, story, theme, visuals  # noqa: E402,F401
 from common import background_priority, env, hide_secrets_in_crashes, is_true, redact  # noqa: E402
 
 LATE_GRACE = timedelta(minutes=60)     # a slot stays due this long after it (the story then goes live at once)
@@ -122,12 +122,17 @@ LIMIT_STOP = "YouTube's daily upload limit"
 MAX_TRIES = 6                          # stories tried in one run before it stops (something's wrong every time)
 RUN_LIMIT = timedelta(hours=5, minutes=40)  # a run stops before GitHub's 6-hour job limit
 REELS_EVERY = 60                       # seconds: how often the cloud's morning run looks for Reels due (_reels_beside)
-SLOT_PARTS = ("metadata.title", "draft.title", "brief.theme", "instagram", "short_upload")  # what the schedule shows of a
-                                                                                            # story (db.LIGHT)
+SLOT_PARTS = ("metadata.title", "draft.title", "brief.theme", "instagram", "short_upload", "form", "review.passed",
+              "review.held", "review.override", "render.id", "render.look")  # what the schedule
+                                                                                                    # shows (db.LIGHT)
+AHEAD_LOOK = timedelta(days=9)          # how far ahead the slots are looked at for one that's due (opens decides)
 PAUSE_CHECK = timedelta(minutes=10)    # while a run waits, the dashboard's pause switch (in the database) is read this
                                        # often: every read wakes the database
 REELS_FINISH = timedelta(minutes=10)   # ...and how long it waits, at its end, for a Reel being posted
 QUOTA_WAIT = "it waits for the free quotas"  # (a run stopped for them: not a failure, a later check starts it)
+GEMINI_DOWN = {"quota": "Gemini's free requests ran out (a later check tries again, the story's brief kept)",
+               "busy": "Gemini is overloaded (Google's servers; a later check tries again, the story's brief kept)"}
+KEPT_BRIEF_AGE = timedelta(days=2)  # a brief kept while Gemini was down (keep_brief) is written within this, or dropped
 STORY_TIME = timedelta(hours=2)        # what a run keeps for a story after waiting for the free quotas (its moments,
                                        # storyboard, film and review): it waits only when that's still there after
 QUOTA_WAITS = 6                        # waits for the free quotas in one run, at most
@@ -217,40 +222,92 @@ def slot_board(start: datetime, end: datetime, sched: dict, now: datetime | None
     time has come), due (it has opened: tools/slots.py opens), open (it opens later) or missed."""
     now = now or _now()
     holders = db.slot_holders(slots.iso(start - sched["every"]), slots.iso(end + sched["every"]), parts=SLOT_PARTS)
-    board = []
+    board, taken = [], set()
     for slot in slots.between(start, end, sched):
-        key = slots.iso(slot)
-        # Rows from before slots existed have only a publish time: they hold the nearest slot.
-        video = next((v for v in holders if v["slot"] == key or not v["slot"] and v["publish_at"]
-                      and abs(slots.parse(v["publish_at"]) - slot) < sched["every"] / 2), None)
+        key, form = slots.iso(slot), slots.form(slot, sched)
+        # A story holds its slot. One whose slot is on an earlier clock (the time was changed: retime moves it; until
+        # then, and for one gone public, its night is still taken) or from before slots existed (only a publish time)
+        # holds the nearest slot of its form that night.
+        night = slots.posting_day(slot, sched)
+        video = next((v for v in holders if v["slot"] == key), None) or next(
+            (v for v in sorted(holders, key=lambda v: abs(slots.parse(v["slot"] or v["publish_at"]) - slot))
+             if v["id"] not in taken and series.form_of(v) == form and not slots.parse(v["slot"] or v["publish_at"]) in
+             slots.day_slots(night, sched) and slots.posting_day(slots.parse(v["slot"] or v["publish_at"]), sched) == night),
+            None)
         if video:
+            taken.add(video["id"])
             live = video["status"] == "scheduled" and slots.parse(video["publish_at"]) <= now
             state = "posted" if live else video["status"]
         elif slot < now - LATE_GRACE:
             state = "missed"
         else:
             state = "late" if slot <= now else "due" if now >= slots.opens(slot, sched) else "open"
-        board.append({"slot": slot, "state": state, "video": video})
+        board.append({"slot": slot, "state": state, "video": video, "form": form})
     return board
 
 
 def due_slot(now: datetime | None = None, sched: dict | None = None) -> datetime | None:
     """The earliest slot that needs a story now, if any: one no story holds that has opened (tools/slots.py opens: up to
-    schedule.stories_ahead slots ahead)."""
+    schedule.stories_ahead slots ahead). Its form (a Short or a long story) is slots.form."""
     now, sched = now or _now(), sched or slots.plan()
-    ahead = sched["every"] * max(1, int(sched.get("stories_ahead") or 1)) if sched.get("ahead") else timedelta(days=1)
-    return next((s["slot"] for s in slot_board(now - LATE_GRACE, now + ahead, sched, now)
+    return next((s["slot"] for s in slot_board(now - LATE_GRACE, now + AHEAD_LOOK, sched, now)
                  if s["state"] in ("late", "due")), None)
 
 
-def next_open_slot(lead: timedelta, now: datetime | None = None, sched: dict | None = None) -> datetime:
-    """The earliest slot at least `lead` from now that no story holds."""
+def next_open_slot(lead: timedelta, now: datetime | None = None, sched: dict | None = None,
+                   form: str | None = None) -> datetime:
+    """The earliest slot at least `lead` from now that no story holds (of `form`: a Short's or a long story's)."""
     now, sched = now or _now(), sched or slots.plan()
-    found = next((s["slot"] for s in slot_board(now + lead, now + timedelta(days=8), sched, now)
-                  if s["state"] in ("due", "open")), None)
+    found = next((s["slot"] for s in slot_board(now + lead, now + timedelta(days=12), sched, now)
+                  if s["state"] in ("due", "open") and form in (None, s["form"])), None)
     if not found:
-        raise RuntimeError("every slot of the next week is taken")
+        raise RuntimeError(f"every {slots.FORM_WORDS.get(form, 'video')} slot of the next week and a half is taken")
     return found
+
+
+LINE_AHEAD = timedelta(days=12)  # how far along the line of turns the next story's turn is looked for (next_to_make)
+
+
+def waiting(rows: list[dict] | None = None) -> list[dict]:
+    """The stories written and waiting for a turn, in the order the autopilot takes them (publisher.choose: the oldest
+    first, not held by the Reviewer, not drawn in an earlier look), read in part (SLOT_PARTS); `rows`: the waiting
+    rows already read."""
+    rows = db.planned_videos(parts=SLOT_PARTS) if rows is None else rows
+    return [v for v in rows if db.ready(v) and (not (v["plan"].get("render") or {}).get("id")
+                                                or (v["plan"].get("render") or {}).get("look") == series.LOOK)]
+
+
+def line(now: datetime | None = None, sched: dict | None = None, start: datetime | None = None,
+         end: datetime | None = None, pending: list[dict] | None = None) -> list[dict]:
+    """The turns from `start` (an hour ago) to `end` (LINE_AHEAD on) in posting order (tools/slots.py: two Shorts a
+    night for three nights, then a long story), each with its form, its night and which night of its round that is
+    (slots.cycle_day), where it stands (slot_board: posted, scheduled, making, late, due, open or missed), when its
+    making opens (slots.opens) and its story: the one holding it (uploaded, or being made for it) or, for a turn no
+    story holds, the written one the autopilot takes for it at its turn (`queued`: the oldest waiting story of its form,
+    as publisher.choose takes them). The Studio, the Schedule page and prepare all read it, so a story is only ever
+    written for the next turn's form. `pending`: waiting(), already read."""
+    now, sched = now or _now(), sched or slots.plan()
+    pending = waiting() if pending is None else pending
+    turns, used = [], set()
+    for s in slot_board(start or now - LATE_GRACE, end or now + LINE_AHEAD, sched, now):
+        queued = None
+        if s["state"] in ("late", "due", "open"):  # (no story holds it)
+            queued = next((v for v in pending if v["id"] not in used and series.form_of(v) == s["form"]), None)
+            if queued:
+                used.add(queued["id"])
+        night = slots.posting_day(s["slot"], sched)
+        turns.append({**s, "queued": queued, "night": night, "night_no": slots.cycle_day(night, sched),
+                      "opens": slots.opens(s["slot"], sched)})
+    return turns
+
+
+def next_to_make(now: datetime | None = None, sched: dict | None = None,
+                 turns: list[dict] | None = None) -> dict | None:
+    """The first turn in the line no story is for yet (none uploaded, being made, or written and waiting for it): the
+    next story written is of its form (prepare). None when every turn of the next LINE_AHEAD has one. `turns`: the
+    line, already read (from before now: its turns gone by aren't open)."""
+    turns = line(now, sched) if turns is None else turns
+    return next((t for t in turns if t["state"] in ("late", "due", "open") and not t["queued"]), None)
 
 
 def check(progress=_log) -> datetime | None:
@@ -260,7 +317,78 @@ def check(progress=_log) -> datetime | None:
     for row in db.release_stale(slots.iso(_now() - STALE_CLAIM)):
         progress(f"Story #{row['id']} was interrupted while being made; it's now {row['status']}")
     publisher.expire_reels(progress)
+    if youtube_auth.is_configured():  # (the cloud's hourly check has no YouTube keys: due() starts a run for it)
+        retime(progress)
     return due_slot()
+
+
+RETIME_LEAD = timedelta(minutes=30)  # a story this close to going public isn't moved (YouTube is about to publish it)
+
+
+def retime_moves(now: datetime | None = None, sched: dict | None = None) -> list[tuple[dict, datetime]]:
+    """Stories whose time isn't on the schedule's clock any more (the time was changed: Settings, or channel.yaml;
+    2026-11-23: the plan's 21:00), uploaded ones still to go public and ones being made, each with the slot of its form
+    its night has now (the nearest, for a night of two Shorts; none, for a night of the other form: it stays where it
+    is). None is moved within RETIME_LEAD of going public, nor to a time that close, nor to a slot another story holds."""
+    now, sched = now or _now(), sched or slots.plan()
+    holders = db.slot_holders(slots.iso(now + RETIME_LEAD), slots.iso(now + timedelta(days=60)), parts=("form",))
+    held: dict[str, set] = {}  # (a time -> the stories on it)
+    for v in holders:
+        for t in {v["slot"], v["publish_at"]} - {None}:
+            held.setdefault(t, set()).add(v["id"])
+    moves = []
+    for v in holders:
+        when = v["publish_at"] if v["status"] == "scheduled" else v["slot"]
+        if not when or slots.parse(when) <= now + RETIME_LEAD:
+            continue
+        old = slots.parse(when)
+        night = slots.posting_day(old, sched)
+        same = [s for s in slots.day_slots(night, sched) if slots.form(s, sched) == series.form_of(v)]
+        if not same or old in same:
+            continue
+        new = min(same, key=lambda s: abs(s - old))
+        if new > now + RETIME_LEAD and not held.get(slots.iso(new), set()) - {v["id"]}:
+            moves.append((v, new))
+            held.setdefault(slots.iso(new), set()).add(v["id"])
+    return moves
+
+
+def retime(progress=_log, now: datetime | None = None, sched: dict | None = None) -> list[int]:
+    """Moves the stories retime_moves finds to their slot on the clock. An uploaded one: its video on YouTube (a story
+    made before the plan: its short version too, series.short_after_hours after it), its Reel (a Short's, or the short
+    version's) with it, its slot and publish time here.
+    One being made: only its slot (so its day doesn't get a second story; its run uploads it at the old time and the
+    next check moves it). A video public already, or made private in YouTube Studio, is left as it is. Never fails a
+    check: a story that can't be moved is said and stays where it was."""
+    sched = sched or slots.plan()
+    moved = []
+    for light, new in retime_moves(now, sched):
+        v = db.get_video(light["id"])
+        at = f"{new.astimezone(sched['tz']):%a %d %b} {clock(new, sched)}"
+        try:
+            if v["status"] == "making":
+                db.update_video(v["id"], slot=slots.iso(new))
+            else:
+                film = youtube_upload.reschedule(v["youtube_id"], slots.iso(new))
+                if not film.get("moved"):
+                    progress(f"Story #{v['id']} wasn't moved to {at}: on YouTube it's {next(iter(film))} already")
+                    continue
+                plan = v["plan"]
+                if series.form_of(v) == "short" and (plan.get("instagram") or {}).get("status") == "pending":
+                    plan = {**plan, "instagram": {**plan["instagram"], "at": slots.iso(new)}}  # (a Short's Reel: with it)
+                short = plan.get("short_upload") or {}
+                if short.get("youtube_id") and short.get("publish_at") and slots.parse(short["publish_at"]) > _now():
+                    short_at = slots.iso(new + timedelta(hours=series.short_after_hours()))
+                    if youtube_upload.reschedule(short["youtube_id"], short_at).get("moved"):
+                        plan = {**plan, "short_upload": {**short, "publish_at": short_at}}
+                        if (plan.get("instagram") or {}).get("status") == "pending":
+                            plan["instagram"] = {**plan["instagram"], "at": short_at}
+                db.update_video(v["id"], slot=slots.iso(new), publish_at=slots.iso(new), plan=plan)
+            moved.append(v["id"])
+            progress(f"Story #{v['id']} moved to {at}, the schedule's time now")
+        except Exception as e:
+            progress(f"Story #{v['id']} couldn't be moved to {at} ({str(e)[:160]}): it stays at its old time")
+    return moved
 
 
 def tick(progress=_log) -> dict:
@@ -276,7 +404,7 @@ def next_chore() -> tuple[str, dict] | None:
     """What the loop on this computer should do now, most urgent first, or None: the autopilot's run while a slot is due
     and the free quotas its story needs are there, then a waiting story's film, then the day's numbers. (Reels aren't a
     chore: the loop posts them at their time beside whatever is going.)"""
-    if (slot := check()) and not quota_short(publisher.choose(), slot=slot):
+    if (slot := check()) and not quota_short(publisher.choose(slots.form(slot, slots.plan())), slot=slot):
         return "morning", {}
     if waiting := unmade():
         return "publish", {"dry_run": True, "video_id": waiting["id"]}
@@ -318,7 +446,7 @@ def needs_gemini(row: dict | None) -> bool:
     plan = row["plan"]
     kept_by = plan.get("kept_video") or {}
     kept_film = bool(kept_by.get("run") and kept_by.get("render") == (plan.get("render") or {}).get("id"))
-    made = kept_film or (animator.preview_path(row["id"]).exists() and animator.short_made(row))
+    made = kept_film or animator.preview_path(row["id"]).exists()   # (no short version since 2026-11-23)
     return not (made and reviewer.passed(plan))
 
 
@@ -329,8 +457,8 @@ def cant_wait(opens: datetime, slot: datetime | None) -> bool:
 
 
 def quota_short(row: dict | None = None, now: datetime | None = None, slot: datetime | None = None) -> str | None:
-    """What a story needs that isn't there now, in plain words, or None when it's all there: YouTube's room for its two
-    uploads (its daily upload limit) and, for one that still asks Gemini (needs_gemini), the hours stories are made in
+    """What a story needs that isn't there now, in plain words, or None when it's all there: YouTube's room for its
+    upload (its daily upload limit) and, for one that still asks Gemini (needs_gemini), the hours stories are made in
     (story_window), unless waiting for them would leave its `slot` empty (cant_wait). A story is started only when this
     is None, so nothing is spent on one that would have to stop half-way. (The films are silent since 2026-11-19: the
     narrator's free readings no longer count.)"""
@@ -358,12 +486,12 @@ def quota_ready_at(row: dict | None = None, now: datetime | None = None, slot: d
 
 
 def story_name(slot: datetime, sched: dict, first: bool = False) -> str:
-    """A slot's story in words, e.g. "tomorrow's 17:30 story" or "Friday's 17:30 story" (`first`: to begin a sentence,
-    "Tomorrow's 17:30 story")."""
+    """A slot's video in words, e.g. "tomorrow's 21:00 Short" or "Monday's 21:00 long story" (`first`: to begin a
+    sentence, "Tomorrow's 21:00 Short")."""
     word = slots.day_word(slot, sched, _now())
     if word in ("Today's", "Tomorrow's") and not first:
         word = word.lower()
-    return f"{word} {clock(slot, sched)} story"
+    return f"{word} {clock(slot, sched)} {slots.FORM_WORDS[slots.form(slot, sched)]}"
 
 
 def due(progress=_log) -> dict:
@@ -376,7 +504,7 @@ def due(progress=_log) -> dict:
     if paused():
         found = {"work": False, "why": "the autopilot is paused"}
     elif slot := check(progress):
-        row = publisher.choose()
+        row = publisher.choose(slots.form(slot, sched))
         name = story_name(slot, sched, first=True)
         short = quota_short(row, slot=slot)
         ready = quota_ready_at(row, slot=slot) if short else None
@@ -387,6 +515,9 @@ def due(progress=_log) -> dict:
                                           f"about {clock(ready, sched)}", "waits": short}
         else:
             found = {"work": stats_due(), "why": f"{name} is due and waits for {short}", "waits": short}
+    elif not youtube_auth.is_configured() and (moves := retime_moves()):
+        found = {"work": True, "why": f"{len(moves)} {'story moves' if len(moves) == 1 else 'stories move'} to the "
+                                      "schedule's new time"}
     elif stats_due():
         found = {"work": True, "why": "the day's numbers are due"}
     else:
@@ -426,8 +557,7 @@ def to_make(v: dict) -> bool:
     if review.get("held"):  # turned down after the fixes: made again by itself when its time comes
         return (review.get("remake_at") or "") <= db.now_iso()
     made = (animator.preview_path(v["id"]).exists() and (plan.get("render") or {}).get("id")
-            and (plan.get("render") or {}).get("look") == series.LOOK
-            and (animator.short_made(v) or review.get("override")))
+            and (plan.get("render") or {}).get("look") == series.LOOK)   # (no short version since 2026-11-23)
     if made and reviewer.current(plan):
         return False
     failed = plan.get("preview_failed_at")
@@ -449,40 +579,75 @@ def _must_wait(error: BaseException | None) -> bool:
 
 # --- making stories -----------------------------------------------------------
 
-def make_story(progress=_log, on_script=None) -> dict:
-    """The next story: Agent 1 writes the day's brief, Agent 2 (your script writer) the script, Agent 3 its storyboard
-    (agents/storyboard.py: its places, its people, a shot for every line). A brief the story can't be made for (it keeps
+def keep_brief(brief: dict | None, form: str) -> None:
+    """Keeps the brief of a story Gemini couldn't write (it was down: overloaded or out of its free requests, not the
+    brief's fault) for the next try at a story of that form, which writes it first: while Gemini is down every new brief
+    would use one of its few free requests for nothing (the evening of 2026-11-23: 16 briefs in 5 hours, and the
+    stronger models' requests for the day were gone). None: clears it."""
+    try:
+        db.keep_note(f"kept_brief:{form}", brief or {})
+    except Exception as e:
+        _log(f"(the brief wasn't kept for the next try: {str(e)[:120]})")
+
+
+def kept_brief(form: str) -> dict | None:
+    """The brief kept for the next story of `form` (keep_brief), taken: cleared as it's read and kept again only if
+    Gemini fails it again, so a brief that's itself the trouble isn't tried for ever."""
+    try:
+        brief = db.fresh_note(f"kept_brief:{form}", KEPT_BRIEF_AGE)
+        if brief:
+            keep_brief(None, form)
+        return brief or None
+    except Exception:
+        return None
+
+
+def make_story(progress=_log, on_script=None, form: str = "long") -> dict:
+    """The next story of `form` ("short": a Short of 2-3 minutes, upright; "long": a long story of 3-4 minutes): Agent 1
+    writes the brief, Agent 2 (your script writer) the script at the form's length, Agent 3 (Visuals, agents/visuals.py)
+    its pictures: the storyboard from the library (its places, its people, a shot for every line), and any thing or
+    bubble picture the library lacks made new as a silhouette. A brief the story can't be made for (it keeps
     breaking the rules) is swapped for another. `on_script(brief, story)`: told each script as soon as it's written,
-    before Agent 3's storyboard (the Studio shows it meanwhile)."""
+    before Agent 3's storyboard (the Studio shows it meanwhile). A brief kept from a try Gemini couldn't answer
+    (keep_brief) is written first: no new brief is asked of Gemini while it's down."""
     avoid, why = [], []
+    kept = kept_brief(form)
     for attempt in range(THEME_TRIES):
-        brief = theme.run(progress=progress, avoid=avoid)["brief"]
+        if attempt == 0 and kept:
+            brief = kept
+            progress(f"Writing the brief kept from when Gemini couldn't answer (“{brief.get('theme')}”)")
+        else:
+            brief = theme.run(progress=progress, avoid=avoid)["brief"]
         try:
-            written = story.run(brief, progress=progress)
+            written = story.run(brief, progress=progress, form=form)
             if on_script:
                 on_script(brief, written["story"])
-            boarded = storyboard.run(written["story"], progress=progress)
+            boarded = visuals.run(written["story"], progress=progress)   # (Agent 3: its pictures; new ones made)
             written = {"story": boarded, "metadata": story.metadata(boarded),
                        "script": {**written["script"], "lines": story.lines_of(boarded)}}
         except Exception as e:
             if _must_wait(e):
+                if llm.down(e):  # (Gemini itself: no other brief would get past it, so this one is written next time)
+                    keep_brief(brief, form)
                 raise
             progress(f"Snag with “{brief['theme']}” ({str(e)[:160]})"
                      + ("; choosing another theme" if attempt + 1 < THEME_TRIES else ""))
             avoid.append(brief["theme"])
             why.append(f"{brief['theme']}: {str(e)[:120]}")
             continue
-        return {"brief": brief, "story": written["story"], "script": written["script"], "metadata": written["metadata"]}
+        return {"form": form, "brief": brief, "story": written["story"], "script": written["script"],
+                "metadata": written["metadata"]}
     raise RuntimeError(f"no story could be written ({'; '.join(why)})")
 
 
-def _draft_saved(video_id: int, brief: dict, written: dict) -> None:
+def _draft_saved(video_id: int, brief: dict, written: dict, form: str = "long") -> None:
     """A story being made, as soon as its script is written: its draft (plan {"draft"}: its title, theme, core message,
     script and closing line, and the brief) for the Studio and the schedule while Agent 3 designs its pictures. The whole
     plan replaces it when the storyboard is done. Never stops the story: a draft that can't be saved isn't shown."""
     try:
         draft = {k: written.get(k) for k in DRAFT_KEYS} | {"brief": brief.get("instruction") or ""}
-        db.update_video(video_id, theme=written.get("theme") or brief.get("theme") or None, plan={"draft": draft})
+        db.update_video(video_id, theme=written.get("theme") or brief.get("theme") or None,
+                        plan={"form": form, "draft": draft})
     except Exception as e:
         _log(f"(the script's draft wasn't saved for the dashboard: {str(e)[:120]})")
 
@@ -494,8 +659,8 @@ def _saved(plan: dict, video_id: int) -> None:
 
 
 def autopilot(force: bool = False, slot: datetime | None = None, progress=_log) -> dict:
-    """Makes and uploads the story for `slot`, or the earliest slot that's due. With force, takes the next open slot
-    even if it isn't due yet (the dashboard's "Make the 17:30 video now"). A story that fails is tried once more (it goes
+    """Makes and uploads the video for `slot` (a story of the slot's form), or the earliest slot that's due. With force,
+    takes the next open slot even if it isn't due yet (the dashboard's "Make the next video now"). A story that fails is tried once more (it goes
     back to the queue), then another story takes its place, up to STORY_TRIES, with no waiting; what no other story would
     fix (_must_wait) is raised at once."""
     sched = slots.plan()
@@ -518,21 +683,23 @@ def autopilot(force: bool = False, slot: datetime | None = None, progress=_log) 
 
 
 def _fill(slot: datetime, sched: dict, when: str, progress) -> dict:
-    """One try at the slot: the oldest story ready to go up (a failed try puts it back once), or a new one written on the
-    spot; then the Publisher (the Animator and the Reviewer first)."""
-    row = publisher.choose()
+    """One try at the slot: the oldest story of its form ready to go up (a failed try puts it back once), or a new one
+    written on the spot; then the Publisher (the Animator and the Reviewer first)."""
+    form = slots.form(slot, sched)
+    row = publisher.choose(form)
     if row:
         if not db.claim(row["id"], slots.iso(slot)):
             return {"skipped": f"another run is already making the {when} story"}
         progress(f"Using story #{row['id']} for the {when} slot")
         row = db.get_video(row["id"])
     else:
-        video_id = db.insert_video("making", db.fmt(), None, None, {}, slot=slots.iso(slot))
+        video_id = db.insert_video("making", db.fmt(), None, None, {"form": form}, slot=slots.iso(slot))
         if video_id is None:
             return {"skipped": f"another run is already making the {when} story"}
-        progress(f"No story ready: writing one for the {when} slot")
+        progress(f"No {slots.FORM_WORDS[form]} ready: writing one for the {when} slot")
         try:
-            plan = make_story(progress, on_script=lambda brief, written: _draft_saved(video_id, brief, written))
+            plan = make_story(progress, form=form,
+                              on_script=lambda brief, written: _draft_saved(video_id, brief, written, form))
         except Exception as e:
             db.update_video(video_id, status="skipped", error=str(e)[:500])
             raise RuntimeError(f"Couldn't make the {when} story: {e}") from e
@@ -648,6 +815,7 @@ def _morning(progress) -> dict:
     if not youtube_auth.is_configured():
         raise RuntimeError("YouTube isn't connected: connect it on the dashboard's Channels page")
     made, held, tries, failures, day, stopped, pending, waited = [], [], 0, 0, None, None, None, 0
+    gemini_down = None  # (why the last try failed, if it was Gemini that couldn't answer: llm.down)
     while True:
         if paused():
             stopped = "the autopilot is paused"
@@ -659,12 +827,13 @@ def _morning(progress) -> dict:
         pending = slot  # (the story being filled: the one named if the run stops before it's scheduled)
         day = day or slots.posting_day(slot, sched)
         if tries >= MAX_TRIES:
-            stopped = f"{MAX_TRIES} stories were tried and the slot still isn't filled"
+            stopped = (f"{QUOTA_WAIT}: {GEMINI_DOWN[gemini_down]}" if gemini_down  # (a wait, not a failure: a later
+                       else f"{MAX_TRIES} stories were tried and the slot still isn't filled")  # check tries again)
             break
         if _now() - started >= RUN_LIMIT:
             stopped = "it ran out of time"
             break
-        row = publisher.choose()
+        row = publisher.choose(slots.form(slot, sched))
         if short := quota_short(row, slot=slot):  # (nothing started that would have to stop half-way)
             ready = quota_ready_at(row, slot=slot)
             if ready and waited < QUOTA_WAITS and ready + STORY_TIME <= started + RUN_LIMIT:
@@ -708,13 +877,14 @@ def _morning(progress) -> dict:
                          f"{clock(_now() + wait, sched)}, its film kept")
                 _wait(wait.total_seconds())
                 continue
+            gemini_down = llm.down(e)
             failures += 1
             wait = min(RETRY_MOST, RETRY_FIRST * 2 ** min(failures - 1, 8))
             progress(f"The {clock(slot, sched)} story failed ({str(e)[:200]}); the next try in {wait.seconds // 60} "
                      "minutes")
             _wait(wait.total_seconds())
             continue
-        failures = 0
+        failures, gemini_down = 0, None
         if result.get("youtube_id"):
             made.append(result)
         elif result.get("held"):
@@ -765,14 +935,25 @@ def _wait(seconds: float) -> None:
 
 
 def prepare(count: int = 1, progress=_log) -> dict:
-    """Writes `count` stories, which the autopilot picks up oldest first."""
-    planned = []
+    """Writes the story for the next turn in the line no story is for yet (next_to_make), in that turn's form (a Short
+    for a Short's turn, the long story for the long story's), `count` times along the line; the autopilot takes each at
+    its turn. Nothing is written out of turn: when every turn of the next LINE_AHEAD has its story, nothing is."""
+    planned, sched = [], slots.plan()
     for _ in range(count):
-        plan = make_story(progress)
+        turn = next_to_make(sched=sched)
+        if not turn:
+            if not planned:
+                return {"skipped": f"every turn of the next {LINE_AHEAD.days} days has its story: the next one is "
+                                   "written when a turn needs it"}
+            break
+        form, when = turn["form"], f"{slots.day_word(turn['slot'], sched)} {clock(turn['slot'], sched)}"
+        progress(f"Writing the {slots.FORM_WORDS[form]} for {when}, the next turn with no story")
+        plan = make_story(progress, form=form)
         video_id = db.insert_video("planned", db.fmt(), plan["brief"]["theme"], None, plan)
         _saved(plan, video_id)
-        planned.append({"id": video_id, "theme": plan["brief"]["theme"], "title": plan["metadata"]["title"]})
-        progress(f"Saved story #{video_id}: {plan['metadata']['title']}")
+        planned.append({"id": video_id, "theme": plan["brief"]["theme"], "title": plan["metadata"]["title"],
+                        "form": form, "turn": slots.iso(turn["slot"])})
+        progress(f"Saved story #{video_id}: {plan['metadata']['title']} (the {slots.FORM_WORDS[form]} for {when})")
     return {"planned": planned}
 
 
@@ -794,7 +975,8 @@ def publish(dry_run: bool = False, video_id: int | None = None, progress=_log, n
                 row = animator.make_again(row, progress)
             row = reviewer.reviewed(row, progress=progress, now=now)
         except Exception as e:
-            if not isinstance(e, animator.Resting):  # (a resting voice says itself when it's asked again)
+            if not isinstance(e, animator.Resting) and not llm.down(e):  # (a resting voice says itself when asked
+                # again; Gemini down, overloaded or out of its free requests, isn't the story's fault: no try counted)
                 failed = db.get_video(row["id"])
                 tries = int(failed["plan"].get("preview_failures") or 0) + 1
                 db.update_video(row["id"], plan={**failed["plan"], "preview_failed_at": slots.iso(_now()),
@@ -811,7 +993,7 @@ def publish(dry_run: bool = False, video_id: int | None = None, progress=_log, n
     if not db.ready(row):
         raise RuntimeError(f"Story #{row['id']} was turned down by the Reviewer: it's being made again")
     sched = slots.plan()
-    slot = next_open_slot(MANUAL_LEAD, sched=sched)
+    slot = next_open_slot(MANUAL_LEAD, sched=sched, form=series.form_of(row))
     if not db.claim(row["id"], slots.iso(slot)):
         raise RuntimeError(f"Story #{row['id']} couldn't take the {clock(slot, sched)} slot; try again")
     return publisher.run(db.get_video(row["id"]), slot, sched, progress=progress)
@@ -857,7 +1039,7 @@ def keep_videos(progress=_log) -> dict:
     run = kept.this_run()
     if not run:
         return {"skipped": "not a run in the cloud: the videos stay on this computer"}
-    waiting = [v for v in db.scheduled_videos(days=publisher.REEL_DAYS, parts=("instagram",))
+    waiting = [v for v in db.scheduled_videos(days=publisher.REEL_DAYS, parts=("instagram", "form"))
                if (v["plan"].get("instagram") or {}).get("status") == "pending"
                and v["plan"]["instagram"].get("kept_in") == run]
     files = kept.keep([(v["id"], animator.reel_path(v)) for v in waiting])

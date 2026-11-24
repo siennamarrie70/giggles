@@ -406,7 +406,7 @@ class GreenTint(Effect):
 
 
 class GreyDrain(Effect):
-    """Self-pity, a day gone grey: the colour drained out of the picture, a little darker."""
+    """(No longer used: see make.) Self-pity, a day gone grey: the colour drained out of the picture, a little darker."""
     stages = ("front",)
 
     def __init__(self, place, keep=0.25):
@@ -486,9 +486,11 @@ class Notifications(Effect):
         W, H = place.size
         r = rng(seed)
         self.cards = []
+        half = (115 * 1.12 + 24) * min(W, H) / 1080.0   # (a card's half width as it springs in, and a margin)
         for k in range(n):
             side = k % 4
             x = r.uniform(0.06, 0.26) * W if side in (0, 2) else r.uniform(0.74, 0.94) * W
+            x = min(max(x, half), W - half)   # (whole inside: an upright frame is narrow, 6% in cut a card by its side)
             y = r.uniform(0.14, 0.40) * H if side in (0, 1) else r.uniform(0.58, 0.82) * H
             self.cards.append((x, y, k / n, ("heart", "dot", "likes", "notifications", "heart", "dot", "likes")[k % 7]))
         self.u = min(W, H) / 1080.0
@@ -547,7 +549,10 @@ def make(name: str, place, **kw) -> Effect:
     """An effect by its storyboard name (EFFECTS), placed by the place (tools/silhouette_scene.py gives kw)."""
     cls = {"fire": Fire, "smoke": Smoke, "emergency": Emergency, "snow": Snow, "fog": Fog, "party": PartyLights,
            "spotlight": Spotlight, "red_pulse": RedPulse, "pink_haze": PinkHaze, "green_tint": GreenTint,
-           "grey_drain": GreyDrain, "tunnel": Tunnel, "shake": Shake, "timelapse": Timelapse,
+           "tunnel": Tunnel, "shake": Shake, "timelapse": Timelapse,
            "notifications": Notifications,
-           "shadows": Effect}[name]   # (2026-11-21: its giant claw-like shapes looked broken: no longer offered, and drawn as nothing in stories that still name it)
+           # no longer offered, and drawn as nothing in stories that still name them:
+           "shadows": Effect,      # (2026-11-21: its giant claw-like shapes looked broken)
+           "grey_drain": Effect,   # (2026-11-24: the owner saw the pictures go grey instead of their real colours)
+           }[name]
     return cls(place, **kw)

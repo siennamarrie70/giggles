@@ -94,6 +94,9 @@ def _to_part(item) -> types.Part:
     return types.Part.from_text(text=str(item))
 
 
+ALL_FAILED = "All Gemini models failed"  # (how the error starts when no model could answer: down())
+
+
 def generate_json(parts: list, schema: dict | None, system: str, careful: bool = False, thinking: str | None = None,
                   timeout_ms: int | None = None, patient: bool = False, strong: bool = False, progress=None) -> dict:
     """Send text/image parts and get back a dict that follows `schema` (None: any JSON, for a prompt that spells out its
@@ -127,7 +130,20 @@ def generate_json(parts: list, schema: dict | None, system: str, careful: bool =
                 break
     if answer is not None:
         return answer
-    raise RuntimeError("All Gemini models failed: " + " | ".join(failures))
+    raise RuntimeError(f"{ALL_FAILED}: " + " | ".join(failures))
+
+
+def down(error: BaseException | None) -> str | None:
+    """Was it Gemini itself that failed, not what it was asked (no model could answer: each overloaded, too slow or out
+    of its free requests)? "quota": free requests for the day ran out (they come back when Google renews them:
+    renewed_at); "busy": Google's servers were overloaded or too slow (it passes, usually within hours); None:
+    something else. Nothing about the story is wrong then: it waits, its work kept (tools/jobs.py keep_brief)."""
+    while error:
+        text = str(error)
+        if ALL_FAILED in text:
+            return "quota" if "per day" in text.lower() or "PerDay" in text else "busy"
+        error = error.__cause__ or error.__context__
+    return None
 
 
 def renewed_at(now: datetime | None = None) -> datetime:

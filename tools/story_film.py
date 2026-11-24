@@ -50,6 +50,9 @@ SHORT_CLOSING_HOLD = 1.6
 SHORT_SILENT = (1.8, 4.5)          # one of its shots without bubbles
 SHORT_EVENT_SHORTEST = 2.6         # ...one whose event (a head turn) needs the time to happen
 SHORT_COVER_AT = 2.0               # the Reel's cover: a moment of its first shot, the hook's bubble in
+SHORT_STORY_MOST = 178.0           # a Short (a story of its own, your plan of 2026-11-23) never runs this long or more:
+                                   # YouTube's Shorts are up to 3 minutes (a longer upright video is an ordinary one)
+SHORT_STORY_HIGH = 172.0           # ...and its silent shots are fitted to end by this
 
 
 # --- timing ------------------------------------------------------------------------------------------------------------------
@@ -158,16 +161,31 @@ def music_for(story: dict) -> str | None:
 
 
 # --- the film ----------------------------------------------------------------------------------------------------------------
+def short_bounds() -> tuple[float, float]:
+    """A Short's length in seconds (series.short_minutes, 2-3), its end never past SHORT_STORY_HIGH."""
+    low, high = series.minutes("short")
+    return low * 60, min(high * 60, SHORT_STORY_HIGH)
+
+
 def make(story: dict, out: Path, progress=print, beds: float = 0.0) -> dict:
-    """The film: drawn, its bubbles timed for reading, the place's sounds and the music. Returns its timing and
-    chapters."""
+    """The film: drawn, its bubbles timed for reading, the place's sounds and the music. A Short (story["form"]: a
+    story of its own since 2026-11-23) is drawn upright (1080x1920) at 2-3 minutes, without chapters; one whose bubbles
+    take too long to stay under 3:00 even with its quiet shots at their shortest is refused before anything is drawn.
+    Returns its timing and chapters."""
     import silhouette_render
 
-    times = timeline(story)
+    upright = story.get("form") == "short"
+    times = timeline(story, bounds=short_bounds() if upright else None)
+    if upright and sum(t["seconds"] for t in times) >= SHORT_STORY_MOST:  # (its quiet shots as short as they go)
+        times = timeline(story, bounds=short_bounds(), silences=SHORT_SILENT, event_shortest=SHORT_EVENT_SHORTEST)
+        seconds = sum(t["seconds"] for t in times)
+        if seconds >= SHORT_STORY_MOST:
+            raise RuntimeError(f"the Short would run {seconds:.0f} s: at 3:00 or more YouTube doesn't take it as a Short "
+                               "(its bubbles take too long to read)")
     story = {**story, "music": music_for(story)}
-    silhouette_render.render(story, times, Path(out), progress=progress, beds_db=beds)
-    return {"times": times, "seconds": round(sum(t["seconds"] for t in times), 2), "chapters": chapters(story, times),
-            "music": story["music"]}
+    silhouette_render.render(story, times, Path(out), progress=progress, beds_db=beds, upright=upright)
+    return {"times": times, "seconds": round(sum(t["seconds"] for t in times), 2),
+            "chapters": [] if upright else chapters(story, times), "music": story["music"]}
 
 
 # --- the short version -------------------------------------------------------------------------------------------------------
@@ -186,7 +204,7 @@ def short_story(story: dict, short: dict | None = None) -> dict:
         bubbles = [dict(b) for b in s.get("bubbles") or [] if b.get("kind") in W.BUBBLE_KINDS]
         shots.append({**base, "bubbles": bubbles, "line": "", "enter": enter, "seed": k * 101 + 7, "film_shot": k + 1,
                       "seconds": float(base.get("seconds") or SHORT_SILENT[0]) if not bubbles else 0.0,
-                      "shortest": 0.0})
+                      "shortest": 0.0, **({"label": s["label"]} if s.get("label") else {})})  # (its time caption)
     for s in shots:
         s.pop("line_index", None)
     out = {"title": story.get("title") or "", "theme": story.get("theme"), "closing_line": story.get("closing_line") or "",

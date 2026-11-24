@@ -9,17 +9,26 @@ schedule:
   ahead: true                # make the next story as soon as its slot is free (the story before it is public), when the
                              # free quotas allow (tools/jobs.py quota_short), between Gemini's daily renewal (13:30 in
                              # India) and midnight (story_window); false: the morning run makes the day's story
-  stories_ahead: 2           # (ahead on) stories kept ready ahead: 2 = tomorrow's is always made and the next one on its
-                             # way, so one that gets stuck has a spare day before its slot could go empty; 1 = the next one
-  make_at: "07:00"           # (ahead off) the morning run that makes the day's story (at least an hour before it goes public)
+  stories_ahead: 4           # (ahead on) videos kept ready ahead: 4 = about two days' videos made or on their way, so one
+                             # that gets stuck has time before its slot could go empty; 1 = only the next one
+  make_at: "07:00"           # (ahead off) the morning run that makes the day's videos (at least an hour before the first)
 
-series:                      # the channel (your idea since 2026-11-15): one 3-4 minute motivation story a day, drawn in code
-                             # in your silhouette look, its people talking and thinking in bubbles (no narrator since
-                             # 2026-11-19), and its short version: the whole story in under a minute for YouTube Shorts
-                             # and Reels (workflows/produce_long.md)
-  post_at: "17:30"           # when the day's story goes public (the schedule's time zone)
-  short_after_hours: 3       # its short version goes public as a Short this long after it (also its Reel, when Instagram is on)
-  minutes: [3, 4]            # how long a story runs (the Story writer aims inside this)
+series:                      # the channel (your idea since 2026-11-15): motivation stories drawn in code in your
+                             # silhouette look, their people talking and thinking in bubbles (no narrator since
+                             # 2026-11-19). Since 2026-11-23 (your plan) in two kinds: Shorts of 2-3 minutes, upright, on
+                             # YouTube Shorts and Instagram Reels; and long stories of 3-4 minutes on YouTube
+                             # (tools/slots.py, workflows/produce_long.md)
+  cycle:                     # the posting plan: two Shorts a night for short_days nights, then a night with one long
+                             # story, then round again
+    start: "2026-11-24"      # the first night of Shorts (your word, 2026-11-24: 24, 25, 26 Shorts, 27 the long story); every night before it has
+                             # one long story (the stories made before the plan)
+    short_days: 3            # nights of Shorts before each long story's night
+    shorts_at: ["21:00", "03:00"]  # each night's Shorts in order (03:00: the same night, after midnight); each one also
+                             # goes up on Instagram as a Reel at its time
+    long_at: "21:00"         # the long story's time (YouTube only: no short version, no Reel)
+  short_after_hours: 3       # (stories made before the plan) their short version went public as a Short this long after them
+  minutes: [3, 4]            # how long a long story runs (the Story writer aims inside this)
+  short_minutes: [2, 3]      # how long a Short runs (never 3:00 or more: YouTube's longest Short)
   repeat_after_days: 30      # a theme isn't used again within this many days
   themes:                    # the topics Agent 1 briefs your script writer with: a weakness and a virtue in turn
     vices: ["lust", "laziness", "ego", "envy", "comfort", "procrastination", "anger", "self-pity", "the phone", "fear",
@@ -41,7 +50,7 @@ series:                      # the channel (your idea since 2026-11-15): one 3-4
 # The music: every full-length track in assets/music/full/ (the dashboard's Music page), one a story, low from the
 # first second, lifting at his realization; credited in the description (assets/music/tracks.yaml).
 
-instagram:                   # Reels: each story's short version on your Instagram (connect it on the dashboard's Channels page)
-  enabled: true              # true: each short version also goes up as a Reel at its time
+instagram:                   # Reels: each Short on your Instagram too (connect it on the dashboard's Channels page)
+  enabled: true              # true: each Short also goes up as a Reel at its time
   send: "link"               # upload: this computer sends the video (Instagram drops some, tried again over hours);
                              # link: Instagram fetches it from a temporary link (Cloudflare's quick tunnel, tools/tunnel.py)

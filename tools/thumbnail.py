@@ -1,9 +1,10 @@
 """
-The stories' thumbnail (1280x720), in the template of the 2026-11-16 style test the owner saw (from their reference
-picture): him big on the left in the story's chosen moment (outlined like a sticker, the coral rim, lit from the left),
-the story's own place dimmed and softened behind him, comic marks for his mood, the words on the right (a white lead-in,
-the punch big in yellow, a dry-brush underline) and a red arrow from the words to him. The words and the moment are
-Agent 3's (the storyboard's "thumbnail": shot, lead, punch), or yours from the Studio.
+The long stories' thumbnail (1280x720), from the owner's reference picture (2026-11-16; on 2026-11-24 "ARE YOU BURNT
+OUT?": the left changes with the video, the words on the right are always written the same way): him big on the left in
+the story's chosen moment (outlined like a sticker, the coral rim, lit from the left), the story's own place dimmed and
+softened behind him, comic marks for his mood; on the right, always laid out alike, the white lead-in on one line, the
+yellow punch big on two, a dry-brush underline under the last line, and the red arrow hooking from it down to him. The
+words and the moment are the storyboard's ("thumbnail": shot, lead, punch), or yours from the Studio.
 
 Usage:
     python tools/thumbnail.py story.json 11 "ONE TEXT" "DESTROYED EVERYTHING" out.jpg    # shot 11 (1 = the first)
@@ -13,6 +14,7 @@ import argparse
 import json
 import math
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 sys.path[:0] = [str(Path(__file__).resolve().parent)]
@@ -28,6 +30,17 @@ W, H = SR.THUMB
 YELLOW, WHITE, RED = S.hexc("#FFD21E"), S.hexc("#FFFFFF"), S.hexc("#E8221F")
 INK = S.hexc("#09080C")
 SITTING = ("typing", "sitting", "slumped", "head_in_hands", "phone", "lying_awake", "asleep")
+SAT = ((("phone", "scroll", "text", "call", "gaming", "selfie"), "phone"),   # what he does, sitting, in the poses drawn
+       (("cry", "sob", "despair", "head_in"), "head_in_hands"),             # here (the film's own action's words)
+       (("slump", "exhaust", "tired", "collaps"), "slumped"),
+       (("sleep", "nap", "doz"), "asleep"))
+STOOD = ((("carry", "box"), "carrying_box"), (("pushup", "push_up"), "pushups"),   # ...and standing
+         (("run", "jog", "treadmill", "sprint"), "running"), (("walk", "pac"), "walking"), (("kneel", "floor"), "floor"),
+         (("window",), "at_window"), (("knock",), "at_door"), (("cry", "sob", "despair"), "head_in_hands"))
+
+
+def _doing(action: str, table, default: str) -> str:
+    return next((pose for words, pose in table if any(w in action for w in words)), default)
 
 
 # --- small helpers ------------------------------------------------------------------------------------------------------------
@@ -136,13 +149,16 @@ def his_shot(story, shot) -> dict:
     if shot.get("place") and not shot.get("set") and not SB.place_of(story, shot["place"]).get("set"):
         him = shot.get("him") or {}
         action = him.get("action") or "standing"
-        pose = SB.OLD_POSE.get(action, action)
-        if pose not in SR.POSES or pose == "none":
-            pose = "standing"
         place = SB.place_of(story, shot["place"])
         mark = SB.probe(place["spec"], place.get("seed") or place["id"])["marks"].get(him.get("mark") or "")
-        desk = bool(isinstance(mark, dict) and mark.get("reach") and mark.get("kind") == "sit")
+        sits = isinstance(mark, dict) and mark.get("kind") == "sit"
+        desk = bool(sits and mark.get("reach"))
         laptop = desk and mark.get("thing") == "desk"
+        pose = SB.OLD_POSE.get(action, action)
+        if sits and pose not in SITTING:   # (he sits there in the film: here too; at a desk, at its screen, as in your
+            pose = _doing(action, SAT, "typing" if laptop else "sitting")   # reference; 2026-11-24: he stood)
+        elif pose not in SR.POSES or pose == "none":
+            pose = _doing(action, STOOD, "standing")
         mood = him.get("eyes") or A.EYES.get(action, ("open",))[0]
     else:
         old = SB.old_shot(story, shot) if shot.get("place") and not shot.get("set") else shot
@@ -363,7 +379,18 @@ def draw_glow_ticks(frame, at, R, f):
     comp(frame, lay)
 
 
-# --- the words -----------------------------------------------------------------------------------------------------------------
+# --- the words: your reference (2026-11-24), always written the same way -------------------------------------------------
+# The right side never changes; only the words are the story's: the white lead-in on one line, the yellow punch under it
+# on two (one when it's one word), every line ending at the same right edge, slanted heavy capitals with a dry-brush edge
+# in one flat colour; a yellow brush stroke under the last line rising to the right; the red arrow from that line's left
+# hooking down and round to him.
+LEAD_H, PUNCH_H = 0.137, 0.235           # a capital's height, a share of the picture's: the lead-in's, each punch line's
+WORDS_X0, WORDS_X1 = 0.525, 0.965        # the words' column (shares of the width): every line ends at its right edge
+WORDS_MID = 0.49                         # the block's middle, down the picture (a share of its height)
+TILT = 2.0                               # degrees: the block rising a little to the right
+LEAD_SQUEEZE, PUNCH_SQUEEZE = 0.94, 0.82  # the letters narrowed: the lead-in's a little, the punch's more (taller)
+
+
 def word_mask(text, px, font="Rubik[wght].ttf", weight="Black", ss=2):
     f = S.font(font, px * ss, weight)
     l, t, r, b = f.getbbox(text)
@@ -373,26 +400,41 @@ def word_mask(text, px, font="Rubik[wght].ttf", weight="Black", ss=2):
 
 
 def rough(m, ss, amount, seed):
-    """Dry-brush edges: the letter's edge pushed in and out by a fine noise."""
-    e = cv2.GaussianBlur(m, (0, 0), 1.2 * ss)
-    return np.clip((e - 0.5 + amount * noise(m.shape, 1.6 * ss, seed)) * 5.0 + 0.5, 0, 1)
+    """Dry-brush edges: the letter's edge pushed in and out by a noise drawn out sideways (a brush's streaks)."""
+    e = cv2.GaussianBlur(m, (0, 0), 1.1 * ss)
+    n = cv2.GaussianBlur(np.random.default_rng(seed).normal(0, 1, m.shape).astype(np.float32), (0, 0),
+                         sigmaX=4.0 * ss, sigmaY=0.8 * ss)
+    n /= max(1e-6, float(n.std()))
+    return np.clip((e - 0.5 + amount * n) * 5.0 + 0.5, 0, 1)
 
 
-def line_sprite(text, px, color, seed, shear=0.19, ss=2, roughness=0.06, condense=0.90):
+def line_sprite(text, color, seed, squeeze=0.90, shear=0.20, roughness=0.075, px=180, ss=2):
+    """One line of the words in one flat colour: Rubik Black capitals, narrowed, slanted, a dry-brush edge; cropped to
+    its ink (premultiplied RGBA)."""
     m, _ = word_mask(text, px, ss=ss)
-    m = cv2.resize(m, (max(1, int(m.shape[1] * condense)), m.shape[0]), interpolation=cv2.INTER_AREA)
+    m = cv2.resize(m, (max(1, int(m.shape[1] * squeeze)), m.shape[0]), interpolation=cv2.INTER_AREA)
     m = rough(m, ss, roughness, seed)
     h, w = m.shape
     pad = int(h * shear) + 4
     m = cv2.warpAffine(m, np.float32([[1, -shear, pad + shear * h], [0, 1, 0]]), (w + 2 * pad, h),
                        flags=cv2.INTER_LINEAR)
     m = cv2.resize(m, (m.shape[1] // ss, m.shape[0] // ss), interpolation=cv2.INTER_AREA)
-    tone = 1.0 - 0.02 * np.clip(noise(m.shape, 6.0, seed + 5), -1.5, 1.5)[..., None]
     out = np.zeros(m.shape + (4,), np.float32)
-    out[..., :3] = np.asarray(color, np.float32) * tone * m[..., None]
+    out[..., :3] = np.asarray(color, np.float32) * m[..., None]
     out[..., 3] = m
     ys, xs = np.nonzero(m > 0.02)
     return out[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+
+
+@lru_cache(maxsize=4)
+def cap_height(squeeze: float) -> float:
+    """A capital's height in line_sprite's pixels."""
+    return float(line_sprite("H", WHITE, 0, squeeze=squeeze).shape[0])
+
+
+def resized(spr, k):
+    return cv2.resize(spr, (max(1, round(spr.shape[1] * k)), max(1, round(spr.shape[0] * k))),
+                      interpolation=cv2.INTER_AREA)
 
 
 def balance(words):
@@ -403,39 +445,32 @@ def balance(words):
     return [" ".join(ws[:best]), " ".join(ws[best:])]
 
 
-def words_block(lead, punch, box_w, box_h, seed=3):
-    """The words as one sprite: the lead-in (white) over the punch (yellow, about 1.6 times as big), each line as wide as
-    it can be within box_w, the whole block within box_h. Returns (sprite RGBA, each line's box)."""
+def words_lines(lead, punch, size, seed=3) -> list:
+    """The lines at their size: the lead-in (white, LEAD_H high), then the punch's one or two lines (yellow, PUNCH_H,
+    both one size); a line too long for the column is made smaller to fit it."""
+    W, H = size
+    col = (WORDS_X1 - WORDS_X0) * W
     lead, punch = " ".join(lead.upper().split()), " ".join(punch.upper().split())
-    best = None
-    for p_lines in ([punch], balance(punch)) if len(punch.split()) > 1 else ([punch],):
-        lines = ([(lead, WHITE, 1.0)] if lead else []) + [(t, YELLOW, 1.62) for t in p_lines]
-        scaled = []
-        for k, (t, col, rel) in enumerate(lines):
-            s = line_sprite(t, int(150 * rel), col, seed + k)
-            scaled.append((s, min(1.0, box_w / s.shape[1]), rel))
-        total = sum(s.shape[0] * k for s, k, _ in scaled) * 1.10
-        q = min(1.0, box_h / total)
-        score = sum(s.shape[0] * k * q for s, k, rel in scaled if rel > 1.2)
-        if best is None or score > best[0]:
-            best = (score, scaled, q)
-    _, scaled, q = best
-    parts = [cv2.resize(s, (max(1, int(s.shape[1] * k * q)), max(1, int(s.shape[0] * k * q))),
-                        interpolation=cv2.INTER_AREA) for s, k, rel in scaled]
-    gap_px = int(0.10 * np.mean([pp.shape[0] for pp in parts]))
-    bw = max(pp.shape[1] for pp in parts)
-    bh = sum(pp.shape[0] for pp in parts) + gap_px * (len(parts) - 1)
-    pad = 40
-    out = np.zeros((bh + 2 * pad, bw + 2 * pad, 4), np.float32)
-    y, boxes = pad, []
-    for pp in parts:
-        x = pad + (bw - pp.shape[1]) // 2
-        region = out[y:y + pp.shape[0], x:x + pp.shape[1]]
-        S.over(region[..., :3], pp)
-        region[..., 3] = region[..., 3] * (1 - pp[..., 3]) + pp[..., 3]
-        boxes.append((x, y, pp.shape[1], pp.shape[0]))
-        y += pp.shape[0] + gap_px
-    return out, boxes
+    rows = []
+    if lead:
+        s = line_sprite(lead, WHITE, seed, squeeze=LEAD_SQUEEZE)
+        rows.append(resized(s, min(LEAD_H * H / cap_height(LEAD_SQUEEZE), col / s.shape[1])))
+    raw = [line_sprite(t, YELLOW, seed + 1 + i, squeeze=PUNCH_SQUEEZE)
+           for i, t in enumerate(balance(punch) if len(punch.split()) > 1 else [punch])]
+    k = min([PUNCH_H * H / cap_height(PUNCH_SQUEEZE)] + [col / s.shape[1] for s in raw])
+    return rows + [resized(s, k) for s in raw]
+
+
+def over_rgba(dst, spr, x, y):
+    """spr over dst (both premultiplied RGBA), spr's top-left at (x, y)."""
+    h, w = spr.shape[:2]
+    Hh, Ww = dst.shape[:2]
+    x0, y0, x1, y1 = max(0, x), max(0, y), min(Ww, x + w), min(Hh, y + h)
+    if x1 <= x0 or y1 <= y0:
+        return
+    s = spr[y0 - y:y1 - y, x0 - x:x1 - x]
+    a = s[..., 3:4]
+    dst[y0:y1, x0:x1] = dst[y0:y1, x0:x1] * (1 - a) + s
 
 
 def brush_underline(w, thick, seed):
@@ -474,48 +509,45 @@ def rotate_rgba(spr, deg):
     return cv2.warpAffine(spr, M, (nw, nh), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT), M
 
 
-def draw_words(frame, lead, punch, area, tilt=3.0, seed=3):
-    """The words in `area` (x0, y0, x1, y1): returns where the arrow should start (the block's left, at the punch)."""
-    x0, y0, x1, y1 = area
-    spr, boxes = words_block(lead, punch, x1 - x0, (y1 - y0) * 0.88, seed)
-    bx, by, bw, bh = boxes[-1]
-    uw = int(bw * 0.92)
-    ul = brush_underline(uw, max(16, int(bh * 0.21)), seed + 9)
-    uy = by + bh + int(bh * 0.02)
-    ux = bx + (bw - uw) // 2 + int(bw * 0.04)
-    hh = ul.shape[0]
-    if uy + hh > spr.shape[0]:
-        spr = np.concatenate([spr, np.zeros((uy + hh - spr.shape[0] + 4, spr.shape[1], 4), np.float32)], 0)
-    under = np.zeros((hh, uw, 4), np.float32)
+def draw_words(frame, lead, punch, tilt=TILT, seed=3):
+    """The words on the right, always laid out the same way (see above): returns where the arrow starts (the last
+    line's left)."""
+    H, W = frame.shape[:2]
+    rows = words_lines(lead, punch, (W, H), seed)
+    gaps = [(0.012 if k == 0 and lead.strip() else 0.034) * H for k in range(len(rows) - 1)]
+    last = rows[-1]
+    ul = brush_underline(int(last.shape[1] * 0.88), max(14, int(0.042 * H)), seed + 9)
+    under = np.zeros(ul.shape + (4,), np.float32)
     under[..., :3] = YELLOW * ul[..., None]
     under[..., 3] = ul
-    region = spr[uy:uy + hh, ux:ux + uw]
-    S.over(region[..., :3], under)
-    region[..., 3] = region[..., 3] * (1 - ul) + ul
-    spr = outlined(spr, 3.5, soft=0.6)
-    spr, M = rotate_rgba(spr, tilt)
-    sh = np.zeros_like(spr)
-    sh[..., 3] = shifted(cv2.GaussianBlur(spr[..., 3], (0, 0), 7), 8, 10) * 0.75
-    h, w = spr.shape[:2]
-    px, py = int((x0 + x1) / 2 - w / 2), int((y0 + y1) / 2 - h / 2)
-    paste_rgba(frame, sh, px, py)
-    paste_rgba(frame, spr, px, py)
-    first = boxes[1] if lead else boxes[0]
-    q = M @ np.array([first[0] - 10, first[1] + first[3] * 0.85, 1.0])
-    return (px + q[0], py + q[1])
+    under, _ = rotate_rgba(under, 6.0)   # (rising to the right)
+    total = sum(r.shape[0] for r in rows) + sum(gaps) + 0.012 * H + under.shape[0] * 0.75
+    canvas = layer((W, H))
+    y, boxes = WORDS_MID * H - total / 2, []
+    for k, r in enumerate(rows):
+        x, yy = int(round(WORDS_X1 * W - r.shape[1])), int(round(y))
+        over_rgba(canvas, r, x, yy)
+        boxes.append((x, yy, r.shape[1], r.shape[0]))
+        y += r.shape[0] + (gaps[k] if k < len(gaps) else 0.0)
+    bx, by, bw, bh = boxes[-1]
+    over_rgba(canvas, under, int(bx + 0.02 * bw), int(by + bh + 0.012 * H - under.shape[0] * 0.25))
+    canvas = outlined(canvas, 2.5, soft=0.6)
+    M = cv2.getRotationMatrix2D(((WORDS_X0 + WORDS_X1) / 2 * W, WORDS_MID * H), tilt, 1.0)
+    canvas = cv2.warpAffine(canvas, M, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+    comp(frame, shadow(canvas, 7, 9, 7, 0.75))
+    comp(frame, canvas)
+    q = M @ np.array([bx - 0.010 * W, by + 0.22 * bh, 1.0])
+    return float(q[0]), float(q[1])
 
 
-def draw_arrow(frame, start, end, width=26.0, bend=0.35):
-    """The red arrow: a curved shaft from start to end (bowed up), a big head at the end, a dark outline and a shadow."""
+def draw_arrow(frame, start, end, width=None):
+    """The red arrow: from the words' last line down and round to him (a hook, as in your reference), a big head at the
+    end, a dark outline and a shadow."""
+    width = width or 0.034 * frame.shape[0]
     (x0, y0), (x1, y1) = start, end
-    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-    dx, dy = x1 - x0, y1 - y0
-    L = math.hypot(dx, dy)
-    nx, ny = -dy / L, dx / L
-    if ny > 0:
-        nx, ny = -nx, -ny
-    c = (mx + nx * L * bend, my + ny * L * bend)
-    t = np.linspace(0, 1, 40)[:, None]
+    L = math.hypot(x1 - x0, y1 - y0)
+    c = (x0 + (x1 - x0) * 0.08, y1 + 0.06 * L)
+    t = np.linspace(0, 1, 48)[:, None]
     P = (1 - t) ** 2 * np.array([x0, y0]) + 2 * (1 - t) * t * np.array(c) + t ** 2 * np.array([x1, y1])
     tip = P[-1]
     d = P[-1] - P[-4]
@@ -539,9 +571,14 @@ def draw_arrow(frame, start, end, width=26.0, bend=0.35):
 
 # --- the thumbnail ------------------------------------------------------------------------------------------------------------
 def make(story: dict, k: int, seconds: float, lead: str, punch: str, out: Path, rim=True, place_dim=0.50,
-         tilt=3.0) -> Path:
+         tilt=TILT) -> Path:
     """The thumbnail of shot k (0 = the first) at its strongest moment: the place behind, him big, the words, the arrow."""
     shot = {**story["shots"][k], "seed": story["shots"][k].get("seed", k * 101 + 7), "seconds": seconds}
+    kids = {c["id"] for c in story.get("cast") or [] if c.get("child")}   # (never a child in the thumbnail)
+    if kids:
+        shot["others"] = [o for o in shot.get("others") or [] if o.get("who") not in kids]
+        if (shot.get("him") or {}).get("with") in kids:
+            shot["him"] = {**shot["him"], "with": ""}
     at = SR.best_moment(story, k, seconds)
     frame = backdrop(story, shot, at, dim=place_dim)
     xs = np.arange(W, dtype=np.float32)     # (a darker side for the words, a lighter one for him)
@@ -568,7 +605,7 @@ def make(story: dict, k: int, seconds: float, lead: str, punch: str, out: Path, 
     lead, punch = (lead or "").strip(), (punch or "").strip()
     if not punch:   # (one line of words: all of it the punch)
         lead, punch = "", lead
-    start = draw_words(frame, lead, punch, (0.575 * W, 0.07 * H, 0.965 * W, 0.93 * H), tilt=tilt)
+    start = draw_words(frame, lead, punch, tilt=tilt)
     sh_x, sh_y = him["pose"]["T"](-0.75, 0.55)
     draw_arrow(frame, start, (sh_x + 0.30 * R, sh_y))
     out = Path(out)

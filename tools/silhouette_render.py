@@ -152,7 +152,12 @@ def plan(shot: dict, size=SIZE) -> dict:
 
 def plan_for(story: dict, shot: dict, size=SIZE) -> dict:
     """A story's shot resolved for drawing: Agent 3's storyboard shots (2026-11-17: a place of the story's own, built by
-    tools/silhouette_board.py, or one of the sets drawn as before) and the shots of the stories before them (a set each)."""
+    tools/silhouette_board.py, or one of the sets drawn as before) and the shots of the stories before them (a set each).
+    The visuals Agent 3 made for the story (story["visuals"], tools/visual_recipes.py) join the library first."""
+    if story.get("visuals"):
+        import visual_recipes
+
+        visual_recipes.for_story(story)
     if shot.get("place") and not shot.get("set"):
         import silhouette_board as SB
 
@@ -623,6 +628,39 @@ def _dim(frame, a):
         frame *= 1 - a
 
 
+def closing_place(p: dict, obj, size, flags: dict) -> dict:
+    """An upright frame's closing line, off everyone in its shot when it can be (2026-11-24: always 72% down, it lay over
+    him): {"closing_y": its middle (px), "closing_dim": a soft dark band behind it, when it can't be}. {}: its usual
+    place (a wide frame; a shot without the closing line)."""
+    W, H = size
+    if not flags.get("closing") or W >= H or not p.get("composed"):
+        return {}
+    import silhouette_board as SB
+
+    st = SB.state(p, obj, float(flags.get("closing_at") or 0.0) + 0.6, {"t0": 0.0, **flags, "no_bubbles": True})
+    people = SB.screen_boxes(obj, st)
+    spr = type_sprite(flags["closing"], int(CLOSING_PX * min(W, H) / 1080), int(W * 0.82), 0.30)
+    h, w = spr.shape[:2]
+    bar = S.BARS * min(W, H)
+    lo, hi = bar + 0.035 * H + h / 2, H - bar - 0.10 * H - h / 2   # (off the bars; above YouTube's words at the bottom)
+    best = None
+    for rank, share in enumerate((0.72, 0.17, 0.62, 0.28, 0.80)):
+        y = min(max(share * H, lo), hi)
+        box = (W / 2 - w / 2, y - h / 2, W / 2 + w / 2, y + h / 2)
+        hit = sum(max(0.0, min(box[2], b[2]) - max(box[0], b[0])) * max(0.0, min(box[3], b[3]) - max(box[1], b[1]))
+                  for b in people) / float(w * h)
+        if best is None or hit + 0.004 * rank < best[0]:
+            best = (hit + 0.004 * rank, y, hit)
+    return {"closing_y": best[1], "closing_dim": best[2] > 0.03}
+
+
+def _band(frame, y, h, a):
+    """A soft dark band across the frame round y (words over someone, still readable)."""
+    H = frame.shape[0]
+    d = np.abs(np.arange(H, dtype=np.float32) - y) / (h * 0.5 + 0.05 * H)
+    frame *= (1.0 - a * np.clip(1.0 - d, 0.0, 1.0) ** 0.6)[:, None, None]
+
+
 def overlays(frame, size, t, flags):
     """The closing line (the last shot) and a narrated film's subtitles. (The title card and the short version's title at
     the top are drawn only when a shot's flags ask for them: none does since 2026-11-20.)"""
@@ -640,7 +678,10 @@ def overlays(frame, size, t, flags):
         q = S.smooth(S.window(t, a, a + 0.9))
         if q > 0:
             spr = type_sprite(flags["closing"], int(CLOSING_PX * k), int(W * 0.82), 0.30)
-            S.paste(frame, spr, W / 2, H * (0.80 if W > H else 0.72), opacity=q)
+            y = flags.get("closing_y") or H * (0.80 if W > H else 0.72)   # (upright: off everyone, closing_place)
+            if flags.get("closing_dim"):
+                _band(frame, y, spr.shape[0], 0.45 * q)
+            S.paste(frame, spr, W / 2, y, opacity=q)
     if flags.get("top_title"):  # (the short version's: at the top while its first line hooks, gone before its shot ends)
         end = min(4.2, float(flags.get("top_title_until") or 4.2))
         q = S.smooth(S.window(t, 0.2, 0.8)) * (1 - S.smooth(S.window(t, end - 0.6, end)))
@@ -655,10 +696,15 @@ def overlays(frame, size, t, flags):
 def frames(job: dict):
     """Yields a shot's frames (float RGB), from job: {"plan", "flags", "size", "n", "index0"}."""
     p, flags, size = job["plan"], job["flags"], tuple(job["size"])
+    if job.get("visuals"):   # (a drawing process of its own: the story's made visuals join its library first)
+        import visual_recipes
+
+        visual_recipes.register(job["visuals"])
     if p.get("composed"):   # (a place of the story's own: tools/silhouette_board.py)
         import silhouette_board as SB
 
         obj = SB.place_for(p, size)
+        flags = {**flags, **closing_place(p, obj, size, flags)}
         for i in range(job["n"]):
             t = i / FPS
             frame = obj.frame(job["index0"] + i, SB.state(p, obj, t, flags))
@@ -739,7 +785,7 @@ def jobs_for(story: dict, times: list[dict], size, folder: Path, short: bool = F
             flags["still_from"] = max(0.0, t["seconds"] - 1.0)
             flags["fade_out"] = 0.9
         out.append({"k": k, "plan": p, "flags": flags, "size": list(size), "n": frames_n, "index0": index0,
-                    "out": str(folder / f"shot_{k:03d}.mp4")})
+                    "out": str(folder / f"shot_{k:03d}.mp4"), "visuals": story.get("visuals") or []})
         index0 += frames_n
     return out
 
@@ -936,10 +982,10 @@ def render(story: dict, times: list[dict], out: Path, voice: list[dict] | None =
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         jobs = jobs_for(story, times, size, tmp, short=upright, subs=subs)
-        progress(f"Drawing the short version upright: {len(jobs)} shots, {seconds:.0f} s" if upright
+        progress(f"Drawing {'the Short' if story.get('form') == 'short' else 'the short version'} upright: {len(jobs)} shots, {seconds:.0f} s" if upright
                  else f"Drawing the film: {len(jobs)} shots, {seconds / 60:.1f} minutes")
         video = draw_video(jobs, tmp / "video.mp4", progress)
-        progress("Mixing the short version's sound" if upright else "Mixing the sound")
+        progress(("Mixing the Short's sound" if story.get("form") == "short" else "Mixing the short version's sound") if upright else "Mixing the sound")
         sound = [shot_sound(story["shots"][j["k"]], j["plan"], times[j["k"]]["seconds"], beds_db) for j in jobs]
         audio = tmp / "sound.m4a"
         film_sound.mix(sound, audio, voice=voice, music=music_spec(story, times))
@@ -968,6 +1014,7 @@ def _moment(story: dict, k: int, at: float | None, size, flags: dict | None = No
         obj = SB.place_for(p, size)
         st = SB.state(p, obj, at, {"t0": 0.0, **(flags or {})})
         frame = obj.frame(int(at * FPS), st)
+        flags = {**(flags or {}), **closing_place(p, obj, size, flags or {})}
     else:
         at = best_moment(story, k, p["seconds"]) if at is None else at
         obj = place(p["set"], size, p["light"], p["rain"], p.get("center"), p.get("open_door", False))

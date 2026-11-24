@@ -90,8 +90,8 @@ def short_path(video_id: int) -> Path:
 
 
 def reel_path(row: dict) -> Path:
-    """The video a story's Reel posts: its short version."""
-    return short_path(row["id"])
+    """The video a story's Reel posts: a Short's own video (since 2026-11-23); a story made before, its short version."""
+    return preview_path(row["id"]) if series.form_of(row) == "short" else short_path(row["id"])
 
 
 def voice_dir(video_id: int) -> Path:
@@ -330,10 +330,15 @@ def silent(story: dict) -> bool:
 def animate(row: dict, out: Path, progress=log, now: bool = False) -> dict:
     """The story's film, drawn in code in the silhouette look, told without a narrator: its bubbles over the speakers'
     heads, timed for reading (tools/story_film.py), the music low from the start and lifting at his realization, a still
-    of every scene and the thumbnail; the film is saved, then its short version is made (make_short). A story written
-    for the narrator gets its moments first (Agent 2) and a new storyboard (Agent 3). (`now`: kept for its callers.)"""
+    of every scene; a long story's thumbnail. A Short (plan "form", your plan of 2026-11-23) is drawn upright at 2-3
+    minutes and has no thumbnail. No short version is made any more (a long story stands alone; a Short is its own
+    video). A story written for the narrator gets its moments first (Agent 2) and a new storyboard (Agent 3). (`now`:
+    kept for its callers.)"""
     plan = row["plan"]
     story = plan.get("story")
+    form = series.form_of(row)
+    if story and story.get("form") != form:
+        story = {**story, "form": form}
     if not series.is_story(row) or not story:
         raise RuntimeError(f"#{row['id']} is from an earlier version of the channel: it has no story to animate")
     started = time.monotonic()
@@ -341,12 +346,13 @@ def animate(row: dict, out: Path, progress=log, now: bool = False) -> dict:
         progress("This story was written for the narrator: Agent 2 turns it into moments and bubbles first")
         story = story_agent.write_moments({k: v for k, v in story.items() if k not in ("shots", "short", "plates")},
                                           progress)
+        story["form"] = form
         plan = {**plan, "story": story}
         db.update_video(row["id"], plan=plan)
     if not story.get("shots"):   # (written but not storyboarded yet: Agent 3 designs its pictures first)
         from agents import storyboard
 
-        story = storyboard.run(story, progress=progress)
+        story = {**storyboard.run(story, progress=progress), "form": form}
         plan = {**plan, "story": story, "metadata": {**(plan.get("metadata") or {}), **story_agent.metadata(story)},
                 "script": {**(plan.get("script") or {}), "lines": story_agent.lines_of(story)}}
         db.update_video(row["id"], plan=plan)
@@ -363,7 +369,7 @@ def animate(row: dict, out: Path, progress=log, now: bool = False) -> dict:
     plan = {**{k: v for k, v in plan.items() if k not in ("short_render", "teaser", "voice")},
             "plates": {pid: Path(path).name for pid, path in scenes.items()},
             "render": {"id": uuid.uuid4().hex[:10], "made_at": db.now_iso(), "look": series.LOOK, "seconds": made["seconds"],
-                       "render_seconds": seconds, "title_until": 0.01, "chapters": made["chapters"],
+                       "render_seconds": seconds, "title_until": 0.01, "chapters": made["chapters"], "form": form,
                        "music": made.get("music"), "silent": True,
                        "shots": [{"start": t["start"], "end": round(t["start"] + t["seconds"], 3),
                                   "name": f"plate:{shot['plate']}", "act": shot["act"],
@@ -374,17 +380,16 @@ def animate(row: dict, out: Path, progress=log, now: bool = False) -> dict:
                                     "end": round(t["start"] + b["end"], 3)}
                                    for k, t in enumerate(times) for b in t.get("bubbles") or []]},
             "credits": _music_credit(made.get("music"))}
-    try:
-        plan["thumbnail"] = make_thumbnail(row["id"], plan)
-    except Exception as e:  # a film without its thumbnail still goes out (YouTube picks a frame)
-        progress(f"Couldn't make the thumbnail ({type(e).__name__}: {str(e)[:120]})")
+    if form == "long":  # (a Short has none: YouTube shows a frame of it, Instagram its cover)
+        try:
+            plan["thumbnail"] = make_thumbnail(row["id"], plan)
+        except Exception as e:  # a film without its thumbnail still goes out (YouTube picks a frame)
+            progress(f"Couldn't make the thumbnail ({type(e).__name__}: {str(e)[:120]})")
     db.update_video(row["id"], plan=plan)
-    progress(f"Film ready: {made['seconds'] / 60:.1f} minutes, {len(plan['render']['bubbles'])} bubbles, made in "
-             f"{seconds / 60:.0f} minutes")
-    short = make_short({**row, "plan": plan}, progress, now=True)
-    return {"plan": short["plan"], "video_id": row["id"], "length": made["seconds"],
-            "render_seconds": round(time.monotonic() - started, 1), "voice": None, "readings": 0,
-            "short": short["short"]}
+    progress(f"{'Short' if form == 'short' else 'Film'} ready: {made['seconds'] / 60:.1f} minutes, "
+             f"{len(plan['render']['bubbles'])} bubbles, made in {seconds / 60:.0f} minutes")
+    return {"plan": plan, "video_id": row["id"], "length": made["seconds"],
+            "render_seconds": round(time.monotonic() - started, 1), "voice": None, "readings": 0, "short": None}
 
 
 def make_short(row: dict, progress=log, now: bool = False, again: bool = False) -> dict:

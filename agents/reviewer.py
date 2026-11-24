@@ -101,7 +101,8 @@ should show. For each frame list the problems you can see, if any:
   hidden behind something.
 - mismatch: the picture clearly doesn't show what it should (another place, nobody where he should be, the wrong action).
 - broken_picture: a glitched, blank or corrupted frame.
-- unsuitable: anything sexual, gory or bloody, or a child. (A fire, an ambulance's lights, a hospital bed, a bottle or
+- unsuitable: anything sexual, gory or bloody; a child (small, a big head) near violence, anger, alcohol, danger,
+  romance or anything sexual. (A child in a calm family moment is fine. A fire, an ambulance's lights, a hospital bed, a bottle or
   a glass of wine are fine when the story has them; so are desire's symbols: hearts, lips, heart eyes, a phone screen of
   pink squares under "18+": they show nothing.)
 - off_look: something outside the look: a detailed face, thick outlines, realistic 3D shading, a lens flare, neon tubes.
@@ -113,12 +114,13 @@ Judge only what you see. Most frames have no problems: then list none.
 
 The look, in the owner's own words:
 """
-LESSONS = {  # a recurring problem -> what each agent takes from it: (agent, standing settings, advice)
-    "too_dark": [("storyboard", {}, "Recent films had scenes too dark to read: prefer dusk, dawn or day, or a lamp-lit "
+LESSONS = {  # a recurring problem -> what each agent takes from it: (agent, standing settings, advice); the
+    # pictures' lessons go to Agent 3, Visuals, whose storyboard reads them (2026-11-24: "storyboard" before)
+    "too_dark": [("visuals", {}, "Recent films had scenes too dark to read: prefer dusk, dawn or day, or a lamp-lit "
                                      "room, over night outdoors, and keep rain at night for the moments that need it.")],
-    "hard_to_read": [("storyboard", {}, "Recent films had scenes that couldn't be read: one or two people in a shot, "
+    "hard_to_read": [("visuals", {}, "Recent films had scenes that couldn't be read: one or two people in a shot, "
                                         "each doing one clear thing; close and medium shots for what matters.")],
-    "mismatch": [("storyboard", {}, "Some scenes didn't show what their shot asked for: keep each shot to one action "
+    "mismatch": [("visuals", {}, "Some scenes didn't show what their shot asked for: keep each shot to one action "
                                     "its place can hold, and put in the place the things the action needs.")],
     "unclear": [("animator", {"beds": -4}, "The narrator was hard to hear over the sounds: the sounds under him go down "
                                            "in every film."),
@@ -283,7 +285,8 @@ def look(path: Path, plan: dict, seconds: float, progress=log, short: Path | Non
     frames = [(t, pid, should, path, "") for t, pid, should in _story_frames(plan, seconds)]
     if short is not None and short.exists():
         frames += [(t, pid, should, short, " of the short version") for t, pid, should in _short_frames(plan)]
-    parts = [f"The film: \"{plan['story']['title']}\". {len(frames)} frames, in order:"]
+    what = "The Short (drawn upright, 9:16, for phones)" if plan.get("form") == "short" else "The film"
+    parts = [f"{what}: \"{plan['story']['title']}\". {len(frames)} frames, in order:"]
     shown = {}
     for i, (t, pid, should, src, which) in enumerate(frames):
         jpg = _grab(src, t)
@@ -324,14 +327,15 @@ def look(path: Path, plan: dict, seconds: float, progress=log, short: Path | Non
 # --- the review -----------------------------------------------------------------------------
 
 def current(plan: dict) -> dict | None:
-    """The story's review if it's of the film and the short version as they are now (the makings it names are the
-    latest) and covers what a review checks now (CHECKS), else None. Your "Post it anyway" counts for the film as it is."""
+    """The story's review if it's of the film (and of its short version, for a story made before 2026-11-23 that has
+    one) as they are now (the makings it names are the latest) and covers what a review checks now (CHECKS), else None.
+    Your "Post it anyway" counts for the film as it is."""
     review, made, short = plan.get("review"), plan.get("render") or {}, plan.get("short_render") or {}
     if not review or not made.get("id") or review.get("of") != made["id"]:
         return None
     if review.get("override"):
         return review
-    if int(review.get("checks") or 1) < CHECKS or not short.get("id") or review.get("short_of") != short["id"]:
+    if int(review.get("checks") or 1) < CHECKS or (short.get("id") and review.get("short_of") != short["id"]):
         return None
     return review
 
@@ -433,12 +437,18 @@ def review(row: dict, path: Path | None = None, progress=log) -> dict:
         raise RuntimeError(f"Story #{row['id']} has no film to review")
     made, short = plan.get("render") or {}, plan.get("short_render") or {}
     lines = plan["script"]["lines"]
-    progress("The Reviewer is watching the film")
+    form = series.form_of(row)
+    progress("The Reviewer is watching the " + ("Short" if form == "short" else "film"))
     found = probe(path)
     issues = []
-    low, high = series.minutes()
-    if found["size"] != FILM_SIZE:
-        issues.append(_issue("size", "major", f"the film is {found['size']} instead of 1920x1080", fix="remake"))
+    low, high = series.minutes(form)
+    size = SHORT_SIZE if form == "short" else FILM_SIZE
+    if found["size"] != size:
+        issues.append(_issue("size", "major", f"the {'Short' if form == 'short' else 'film'} is {found['size']} instead "
+                                              f"of {size[0]}x{size[1]}", fix="remake"))
+    if form == "short" and found["seconds"] >= story_film.SHORT_STORY_MOST:
+        issues.append(_issue("length", "major", f"the Short runs {found['seconds']:.0f} s: YouTube takes 3:00 or more as "
+                                                "an ordinary video, not a Short", fix="remake"))
     if not found["sound"]:
         issues.append(_issue("sound", "major", "the film has no sound", fix="remake"))
     if not low * 60 - 45 <= found["seconds"] <= high * 60 + 45:
@@ -483,11 +493,14 @@ def review(row: dict, path: Path | None = None, progress=log) -> dict:
         if not animator.is_his({k: v for k, v in spoken.items() if k != "likeness"}) or spoken.get("his") is False:
             why = (spoken.get("likeness") or {}).get("why") or "another voice"
             issues.append(_issue("not_narrator", "major", f"it doesn't sound like the narrator ({why})", fix="reread"))
-    progress("The Reviewer is watching the short version")
-    heard_short, short_found = _short_checks(row, plan, progress)
+    heard_short, short_found = [], {}
+    if short.get("id"):   # (a story made before 2026-11-23 with its short version: none is made since)
+        progress("The Reviewer is watching the short version")
+        heard_short, short_found = _short_checks(row, plan, progress)
     issues += heard_short
     try:
-        seen, score = look(path, plan, found["seconds"], progress, short=animator.short_path(row["id"]))
+        seen, score = look(path, plan, found["seconds"], progress,
+                           short=animator.short_path(row["id"]) if short.get("id") else None)
         issues += seen
     except Exception as e:  # Gemini out: the rest of the review stands
         issues.append(_issue("look", "minor", f"the frames couldn't be looked at ({type(e).__name__})"))
@@ -571,11 +584,8 @@ def reviewed(row: dict, progress=log, now: bool = False) -> dict:
         animator.run(row, progress=progress, now=now)  # (none yet, or drawn in an earlier look: drawn again now)
         alive()
         row = db.get_video(video_id)
-    if not animator.short_made(row) and not (current(row["plan"]) or {}).get("override"):
-        animator.run_short(row, progress=progress, now=now)  # (a film made before short versions, or its short one
-        alive()                                              # had to wait for his voice)
-        row = db.get_video(video_id)
-    if not current(row["plan"]):
+    if not current(row["plan"]):   # (no short version is made since 2026-11-23: a long story stands alone, a Short is
+                                   # its own video)
         run(row, progress=progress)
         row = db.get_video(video_id)
     while True:

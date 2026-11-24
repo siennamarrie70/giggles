@@ -17,7 +17,7 @@ import numpy as np
 
 import silhouette as S
 import silhouette_words as W
-from silhouette import ell, hexc, rr, spline, tube
+from silhouette import ell, hexc, rect, rr, smooth, spline, tube
 
 INK = hexc("#141018")          # the look's black (a bubble's drawings)
 CREAM = hexc("#F4F1EA")        # the eyes' white (marks over the dark)
@@ -701,6 +701,111 @@ def i_handshake(p, x, y, s, on, t):
     p.poly(rr(x - 0.40 * s, y - 0.22 * s, 0.80 * s, 0.50 * s, 0.22 * s), INK if on == "cream" else hexc("#2A2430"))
 
 
+# --- the phone's new screens as pictures, and the new life's things ------------------------------------------------------------
+def _phone_icon(p, x, y, s, on, kind, t, buzz=False):
+    """His phone face-on showing `kind` (a screen), buzzing at its sides when it rings."""
+    if buzz:
+        for side in (-1, 1):
+            for k in range(2):
+                _line(p, x + side * (0.78 + 0.16 * k) * s, y, s, [(0.0, -0.30 + 0.05 * k), (0.0, 0.30 - 0.05 * k)], 0.06,
+                      _ink(on), 0.8)
+    p.poly(rr(x - 0.55 * s, y - 1.0 * s, 1.10 * s, 2.0 * s, 0.18 * s), INK if on == "cream" else hexc("#2A2430"))
+    screen(p, kind, x, y, 0.42 * s, 0.85 * s, t)
+
+
+def i_call(p, x, y, s, on, t):
+    _phone_icon(p, x, y, s, on, "call", t, buzz=True)
+
+
+def i_missed_calls(p, x, y, s, on, t):
+    _phone_icon(p, x, y, s, on, "missed", t)
+
+
+def i_phone_alarm(p, x, y, s, on, t):
+    _phone_icon(p, x, y, s, on, "alarm", t, buzz=True)
+
+
+def i_feed(p, x, y, s, on, t):
+    _phone_icon(p, x, y, s, on, "feed", t)
+
+
+def i_texts(p, x, y, s, on, t):
+    _phone_icon(p, x, y, s, on, "texts", t)
+
+
+def i_watch(p, x, y, s, on, t):
+    """A gold wristwatch face-on: its strap, the case, the hour marks and hands, a glint."""
+    p.poly(rr(x - 0.30 * s, y - 1.0 * s, 0.60 * s, 2.0 * s, 0.12 * s), hexc("#3A2E2A"))
+    p.circle(x, y, 0.64 * s, GOLD)
+    p.circle(x, y, 0.52 * s, hexc("#141018"))
+    for k in range(12):
+        a = k * math.tau / 12
+        p.circle(x + math.cos(a) * 0.43 * s, y + math.sin(a) * 0.43 * s, (0.05 if k % 3 == 0 else 0.03) * s, GOLD)
+    _line(p, x, y, s, [(0.0, 0.0), (0.0, -0.34)], 0.07, GOLD)
+    _line(p, x, y, s, [(0.0, 0.0), (0.24, 0.10)], 0.07, GOLD)
+    p.circle(x + 0.68 * s, y, 0.09 * s, GOLD)
+    i_sparkle(p, x + 0.48 * s, y - 0.52 * s, 0.32 * s, "dark", t)
+
+
+def i_sports_car(p, x, y, s, on, t):
+    """A sleek red sports car: low, a long bonnet, gold rims, its headlight lit, a shine along its side."""
+    body = [(-1.0, 0.30), (-0.98, 0.04), (-0.72, -0.06), (-0.34, -0.40), (0.14, -0.42), (0.52, -0.12), (1.0, 0.0),
+            (1.03, 0.30)]
+    p.poly(spline(_pts(x, y, s, body), True, 4), RED)
+    p.poly(_pts(x, y, s, [(-0.30, -0.33), (0.10, -0.35), (0.40, -0.12), (-0.55, -0.10)]), hexc("#1A1824"))
+    _line(p, x, y, s, [(-0.80, 0.02), (0.80, 0.04)], 0.035, hexc("#FFB0A0"), 0.8)
+    for u in (-0.62, 0.64):
+        p.circle(x + u * s, y + 0.32 * s, 0.25 * s, INK)
+        p.circle(x + u * s, y + 0.32 * s, 0.14 * s, GOLD)
+        p.circle(x + u * s, y + 0.32 * s, 0.05 * s, INK)
+    p.poly(_pts(x, y, s, [(0.84, 0.02), (1.0, 0.05), (0.99, 0.12), (0.83, 0.09)]), hexc("#FFF4D8"))
+    i_sparkle(p, x + 0.10 * s, y - 0.62 * s, 0.22 * s, "dark", t)
+
+
+def i_flex(p, x, y, s, on, t):
+    """A flexed arm: the biceps bulging, the fist up, his teal sleeve; strength lines round it."""
+    ink = INK if on == "cream" else hexc("#2A2430")
+    p.poly(tube([(x - 0.95 * s, y + 0.45 * s), (x + 0.15 * s, y + 0.42 * s)], 0.62 * s, 0.52 * s), ink)
+    p.poly(ell(x - 0.38 * s, y + 0.16 * s, 0.44 * s, 0.34 * s, 32), ink)
+    p.poly(tube([(x + 0.15 * s, y + 0.42 * s), (x + 0.30 * s, y - 0.50 * s)], 0.50 * s, 0.42 * s), ink)
+    p.circle(x + 0.32 * s, y - 0.70 * s, 0.27 * s, ink)
+    p.poly(tube([(x - 1.0 * s, y + 0.45 * s), (x - 0.66 * s, y + 0.44 * s)], 0.74 * s), TEAL)
+    for k in range(3):
+        a = -2.3 + k * 0.45
+        _line(p, x - 0.38 * s, y + 0.16 * s, s, [(math.cos(a) * 0.62, math.sin(a) * 0.62),
+                                                 (math.cos(a) * 0.86, math.sin(a) * 0.86)], 0.07, GOLD)
+
+
+def i_safe(p, x, y, s, on, t):
+    """A heavy safe standing open: gold bars and money inside, its door swung out with the dial."""
+    p.poly(rr(x - 0.85 * s, y - 0.85 * s, 1.60 * s, 1.75 * s, 0.10 * s), hexc("#4A4E5A"))
+    p.poly(rr(x - 0.70 * s, y - 0.70 * s, 1.30 * s, 1.45 * s, 0.05 * s), hexc("#1A1820"))
+    p.poly(rr(x - 0.70 * s, y - 0.02 * s, 1.30 * s, 0.06 * s, 0.02 * s), hexc("#2E3240"))
+    for k in range(3):
+        u = -0.55 + 0.38 * k
+        p.poly(_pts(x, y, s, [(u, 0.66), (u + 0.32, 0.66), (u + 0.26, 0.42), (u + 0.06, 0.42)]), GOLD)
+    for k in range(2):
+        p.poly(rr(x + (-0.58 + 0.62 * k) * s, y - 0.34 * s, 0.52 * s, 0.30 * s, 0.03 * s), hexc("#3E8F64"))
+        p.poly(rr(x + (-0.36 + 0.62 * k) * s, y - 0.34 * s, 0.08 * s, 0.30 * s, 0.01 * s), hexc("#E8D8A8"))
+    p.poly(_pts(x, y, s, [(0.75, -0.85), (1.05, -0.72), (1.05, 0.78), (0.75, 0.90)]), hexc("#5A5E6A"))
+    p.circle(x + 0.90 * s, y, 0.13 * s, GREY)
+    p.circle(x + 0.90 * s, y, 0.05 * s, INK)
+
+
+def i_skyline(p, x, y, s, on, t):
+    """A city's towers at night against a deep sky, their windows lit, a moon."""
+    p.poly(rr(x - s, y - s, 2 * s, 2 * s, 0.12 * s), hexc("#16163A"))
+    p.circle(x + 0.55 * s, y - 0.55 * s, 0.16 * s, CREAM)
+    for k, (u, w, h) in enumerate(((-0.92, 0.30, 0.95), (-0.58, 0.26, 1.40), (-0.28, 0.34, 1.10), (0.10, 0.24, 1.65),
+                                   (0.38, 0.30, 1.20), (0.70, 0.28, 0.80))):
+        p.poly(rect(x + u * s, y + (1.0 - h) * s, w * s, h * s), hexc("#0A0A16"))
+        for j in range(int(h * 5)):
+            for i in range(2):
+                if (j * 3 + i + k) % 4:
+                    p.poly(rect(x + (u + 0.06 + 0.11 * i) * s, y + (1.0 - h + 0.10 + 0.18 * j) * s, 0.05 * s, 0.07 * s),
+                           GOLD, 0.85)
+
+
 ICONS = {  # name: (draw, what it shows: the storyboard's words for a picture)
     "heart": (i_heart, "a heart: love, desire"),
     "broken_heart": (i_broken_heart, "a broken heart: a love lost"),
@@ -768,6 +873,11 @@ ICONS = {  # name: (draw, what it shows: the storyboard's words for a picture)
     "drop": (i_drop, "a drop: a tear, sweat"),
     "puff": (i_puff, "a puff of smoke"),
     "cloud_rain": (i_cloud_rain, "a rain cloud: sadness"),
+    "call": (i_call, W.PICTURES["call"]), "missed_calls": (i_missed_calls, W.PICTURES["missed_calls"]),
+    "phone_alarm": (i_phone_alarm, W.PICTURES["phone_alarm"]), "feed": (i_feed, W.PICTURES["feed"]),
+    "texts": (i_texts, W.PICTURES["texts"]), "watch": (i_watch, W.PICTURES["watch"]),
+    "sports_car": (i_sports_car, W.PICTURES["sports_car"]), "flex": (i_flex, W.PICTURES["flex"]),
+    "safe": (i_safe, W.PICTURES["safe"]), "skyline": (i_skyline, W.PICTURES["skyline"]),
     # (marks only: too small to be a bubble's picture)
     "z": (i_z, ""), "sparkle": (i_sparkle, ""), "vein": (i_vein, ""), "fly": (i_fly, ""), "dot": (i_dot, ""),
 }
@@ -782,7 +892,43 @@ def draw(p, name: str, x: float, y: float, s: float, on: str = "cream", t: float
 # --- a phone's screen seen face-on ---------------------------------------------------------------------------------------------
 SCREENS = W.SCREENS   # what each shows (the words live in tools/silhouette_words.py)
 SCREEN_LIGHT = {"adult": "#FF5A9A", "notifications": "#9FC8FF", "likes": "#FF7A9A", "messages": "#9FC8FF",
-                "bank": "#FF6A5A", "rival": "#FFD27A", "game": "#8AF0B0", "chart_up": "#8AF0B0"}   # the light each casts
+                "bank": "#FF6A5A", "rival": "#FFD27A", "game": "#8AF0B0", "chart_up": "#8AF0B0",
+                "call": "#8FD8A8", "missed": "#FF6A5A", "alarm": "#FFB07A", "feed": "#FF8AB8", "texts": "#9FC8FF",
+                "video": "#9FC8FF"}   # the light each casts
+
+
+FEED = (("#FF4F7E", "#FFE0EA"), ("#2E9A8A", "#E8FFF4"), ("#5A6AFF", "#FFD27A"), ("#F5A142", "#3A1E10"),
+        ("#9A4AE8", "#F4E8FF"))   # the feed's videos: (background, who's in it)
+SEG = {"a": ((0, 0), (1, 0)), "b": ((1, 0), (1, 1)), "c": ((1, 1), (1, 2)), "d": ((0, 2), (1, 2)), "e": ((0, 1), (0, 2)),
+       "f": ((0, 0), (0, 1)), "g": ((0, 1), (1, 1))}
+DIGIT_SEGS = {"0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc", "5": "afgcd", "6": "afgedc", "7": "abc",
+              "8": "abcdefg", "9": "abcdfg"}
+
+
+def _digits(p, text, x, y, h, color):
+    """A clock's digits (seven segments each) centred at (x, y), h tall: an alarm's time."""
+    w, gap = 0.5 * h, 0.22 * h
+    widths = [0.25 * h if ch == ":" else w for ch in text]
+    cx = x - (sum(widths) + gap * (len(text) - 1)) / 2
+    for ch, cw in zip(text, widths):
+        if ch == ":":
+            for v in (0.32, 0.68):
+                p.circle(cx + cw / 2, y - h / 2 + v * h, 0.07 * h, color)
+        for seg in DIGIT_SEGS.get(ch, ""):
+            (u0, v0), (u1, v1) = SEG[seg]
+            p.poly(tube([(cx + u0 * cw, y - h / 2 + v0 * h / 2), (cx + u1 * cw, y - h / 2 + v1 * h / 2)], 0.12 * h, k=2),
+                   color)
+        cx += cw + gap
+
+
+def _handset(p, x, y, s, color, down=False):
+    """A phone's handset, a call's sign (down: hung up)."""
+    k = -1 if down else 1
+    pts = [(x - s, y + k * 0.35 * s), (x - 0.5 * s, y - k * 0.30 * s), (x + 0.5 * s, y - k * 0.30 * s),
+           (x + s, y + k * 0.35 * s)]
+    p.poly(tube(pts, 0.34 * s, k=4), color)
+    for u in (-1, 1):
+        p.circle(x + u * s, y + k * 0.35 * s, 0.30 * s, color)
 
 
 def screen(p, kind: str, x: float, y: float, hw: float, hh: float, t: float = 0.0) -> None:
@@ -854,6 +1000,99 @@ def screen(p, kind: str, x: float, y: float, hw: float, hh: float, t: float = 0.
         pts = [(x - 0.80 * hw, y + 0.55 * hh), (x - 0.35 * hw, y + 0.20 * hh), (x, y + 0.30 * hh), (x + 0.35 * hw,
                y - 0.15 * hh), (x + 0.75 * hw, y - 0.60 * hh)]
         p.poly(tube(pts, 0.12 * hw, k=2), GREEN)
+        return
+    if kind == "call":   # an incoming call: the caller's photo in rings, a name, decline and answer (it bobs)
+        p.poly(rr(x - hw, y - hh, 2 * hw, 2 * hh, 0.10 * hw), hexc("#16202E"))
+        cy = y - 0.30 * hh
+        for k in range(3):
+            u = (t * 0.9 + k / 3) % 1.0
+            p.circle(x, cy, (0.42 + 0.50 * u) * hw, hexc("#8FB8FF"), 0.30 * (1 - u))
+        p.circle(x, cy, 0.42 * hw, hexc("#3D5A80"))
+        p.circle(x, cy - 0.10 * hw, 0.16 * hw, CREAM)
+        p.poly(ell(x, cy + 0.26 * hw, 0.27 * hw, 0.13 * hw, 24), CREAM)
+        p.poly(rr(x - 0.55 * hw, cy + 0.62 * hw, 1.10 * hw, 0.13 * hw, 0.06 * hw), hexc("#E8EEF8"), 0.9)
+        bob = 0.05 * hh * abs(math.sin(t * 7.0))
+        for side, col in ((-1, RED), (1, GREEN)):
+            bx, by = x + side * 0.50 * hw, y + 0.62 * hh - (bob if side > 0 else 0.0)
+            p.circle(bx, by, 0.27 * hw, col)
+            _handset(p, bx, by, 0.15 * hw, CREAM, down=side < 0)
+        return
+    if kind == "missed":   # missed calls stacking up: red handsets, names, a red count
+        p.poly(rr(x - hw, y - hh, 2 * hw, 2 * hh, 0.10 * hw), hexc("#1E1A24"))
+        for k in range(3 + int(t * 0.8) % 3):
+            cy = y - hh + 0.42 * hh + k * 0.34 * hh
+            p.poly(rr(x - 0.88 * hw, cy - 0.12 * hh, 1.76 * hw, 0.25 * hh, 0.06 * hw), hexc("#2C2632"))
+            _handset(p, x - 0.62 * hw, cy, 0.13 * hw, RED, down=True)
+            _line(p, x, cy, hw, [(-0.35, 0.0), (0.45 - 0.15 * (k % 2), 0.0)], 0.06, hexc("#E8A0A0"))
+        p.circle(x + 0.70 * hw, y - hh + 0.14 * hh, 0.22 * hw, RED)
+        i_exclaim(p, x + 0.70 * hw, y - hh + 0.14 * hh, 0.15 * hw, "dark", t)
+        return
+    if kind == "alarm":   # the alarm going off: the time big, snooze and stop; the phone buzzing
+        buzz = 0.04 * hw * math.sin(t * 60.0)
+        p.poly(rr(x - hw, y - hh, 2 * hw, 2 * hh, 0.10 * hw), hexc("#120E1C"))
+        p.glow(x, y - 0.30 * hh, 1.1 * hw, 0.5 * hh, np.asarray(hexc("#FF9A5A"), np.float32),
+               0.30 + 0.25 * abs(math.sin(t * 6.0)))
+        _digits(p, "6:00", x + buzz, y - 0.30 * hh, 0.60 * hw, CREAM)
+        p.poly(rr(x - 0.80 * hw + buzz, y + 0.22 * hh, 1.60 * hw, 0.24 * hh, 0.12 * hh), hexc("#4A4458"))
+        p.poly(rr(x - 0.80 * hw + buzz, y + 0.56 * hh, 1.60 * hw, 0.24 * hh, 0.12 * hh), hexc("#FF7A3A"))
+        for side in (-1, 1):
+            for k in range(2):
+                _line(p, x + side * (1.18 + 0.16 * k) * hw, y, hh, [(0.0, -0.22), (0.0, 0.22)], 0.04, CREAM, 0.8)
+        return
+    if kind == "feed":   # the endless feed: one short video after another swiping up; like, comment, share
+        p.poly(rr(x - hw, y - hh, 2 * hw, 2 * hh, 0.10 * hw), hexc("#0E0C14"))
+        n, u = divmod(t / 1.3, 1.0)
+        slide = smooth(min(1.0, max(0.0, (u - 0.72) / 0.28)))   # (each one swiped away at its end)
+        for j in (0, 1):
+            k = int(n) + j
+            top = y - hh + (j - slide) * 2 * hh
+            y0, y1 = max(top, y - hh), min(top + 2 * hh, y + hh)
+            if y1 - y0 < 1.0:
+                continue
+            bg, fg = FEED[k % len(FEED)]
+            p.poly(rect(x - hw, y0, 2 * hw, y1 - y0), hexc(bg))
+            cy = top + 1.05 * hh + 0.08 * hh * math.sin(t * 9.0 + k)   # (someone dancing in it)
+            if y - hh + 0.55 * hh < cy < y + hh - 0.50 * hh:
+                p.circle(x - 0.12 * hw, cy - 0.42 * hh, 0.24 * hw, hexc(fg))
+                p.poly(ell(x - 0.12 * hw, cy + 0.02 * hh, 0.30 * hw, 0.30 * hh, 24), hexc(fg))
+                for side in (-1, 1):
+                    a = 0.9 * math.sin(t * 9.0 + k + side)
+                    _line(p, x - 0.12 * hw, cy - 0.15 * hh, hw, [(side * 0.25, 0.0), (side * 0.62, -0.30 + 0.25 * a)],
+                          0.10, hexc(fg))
+        for k, v in enumerate((-0.10, 0.20, 0.48)):   # the buttons down its side
+            bx, by = x + 0.72 * hw, y + v * hh
+            if k == 0:
+                i_heart(p, bx, by, 0.17 * hw, "dark", t)
+            elif k == 1:
+                p.circle(bx, by, 0.13 * hw, CREAM, 0.9)
+            else:
+                p.poly(np.array([(bx - 0.12 * hw, by + 0.11 * hw), (bx + 0.15 * hw, by), (bx - 0.12 * hw, by - 0.11 * hw)]),
+                       CREAM, 0.9)
+        p.poly(rect(x - hw, y + hh - 0.05 * hh, 2 * hw * u, 0.025 * hh), CREAM, 0.8)
+        return
+    if kind == "texts":   # texts piling up unanswered: grey bubbles of "??", a red count
+        p.poly(rr(x - hw, y - hh, 2 * hw, 2 * hh, 0.10 * hw), hexc("#1E2433"))
+        n = 2 + int(t * 1.2) % 4
+        for k in range(n):
+            cy = y + 0.70 * hh - (n - 1 - k) * 0.36 * hh
+            p.poly(rr(x - 0.88 * hw, cy - 0.13 * hh, 1.30 * hw, 0.26 * hh, 0.10 * hw), hexc("#4A4A5E"))
+            for q in range(2):
+                i_question(p, x - 0.55 * hw + q * 0.26 * hw, cy, 0.10 * hh, "dark", t)
+        p.circle(x + 0.70 * hw, y - hh + 0.14 * hh, 0.22 * hw, RED)
+        i_exclaim(p, x + 0.70 * hw, y - hh + 0.14 * hh, 0.15 * hw, "dark", t)
+        return
+    if kind == "video":   # a video playing: a film in its frame, the red bar creeping on, its comments
+        p.poly(rr(x - hw, y - hh, 2 * hw, 2 * hh, 0.10 * hw), hexc("#0E0C14"))
+        vy, vh = y - 0.35 * hh, 0.36 * hh
+        p.poly(rect(x - hw, vy - vh, 2 * hw, 2 * vh), hexc("#2E4A6A"))
+        p.circle(x - 0.6 * hw + 1.2 * hw * ((t * 0.12) % 1.0), vy - 0.30 * vh, 0.22 * vh, GOLD)
+        p.poly(np.array([(x - hw, vy + vh), (x - 0.4 * hw, vy + 0.10 * vh), (x + 0.2 * hw, vy + 0.60 * vh), (x + 0.7 * hw, vy),
+                         (x + hw, vy + 0.40 * vh), (x + hw, vy + vh)]), hexc("#1E3A2E"))
+        u = (t * 0.05) % 1.0
+        p.poly(rect(x - hw, vy + vh + 0.02 * hh, 2 * hw, 0.03 * hh), GREY)
+        p.poly(rect(x - hw, vy + vh + 0.02 * hh, 2 * hw * u, 0.03 * hh), RED)
+        for k in range(3):
+            _line(p, x, y + (0.25 + 0.22 * k) * hh, hw, [(-0.8, 0.0), (0.5 - 0.3 * (k % 2), 0.0)], 0.06, GREY)
         return
     p.poly(rr(x - hw, y - hh, 2 * hw, 2 * hh, 0.10 * hw), S.PAL["screen"])
 

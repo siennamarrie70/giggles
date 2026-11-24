@@ -64,7 +64,7 @@ NEEDS = {  # where an action can happen (silhouette_words.ACTIONS' second word),
     "bed": "a bed, a sofa or a hospital bed", "floor": "the floor", "window": "the place's window",
     "pushup": "the free floor or a gym mat", "door": "a door (indoors) or a house (its front door)",
     "stove": "a stove, a counter, a chef's range or a prep counter", "table": "a table, a desk, a counter or a workbench",
-    "bag": "a punching bag", "treadmill": "a treadmill", "drive": "inside a car: driver", "pair": "a free spot",
+    "bag": "a punching bag", "treadmill": "a treadmill", "bench": "a weight bench", "bar": "a pull-up bar", "drive": "inside a car: driver", "pair": "a free spot",
     "fix": "a workbench, a car (its wheel), or kneeling anywhere", "podium": "a podium (on a stage)",
     "screen": "a screen or a whiteboard on the wall", "mirror": "a mirror on the wall, or a basin's",
     "any": "anywhere: standing, sitting or walking"}
@@ -164,7 +164,8 @@ def library() -> str:
             f"floor: {', '.join(W.FLOORS)}",
             f"window (rooms, halls): {', '.join(W.WINDOWS)}; view (what a window or a vehicle's windows show): "
             f"{', '.join(W.VIEWS)}",
-            "lamp: true for a lamp hanging from a room's ceiling (over its table or desk); curtains: true or false",
+            "lamp: true for a lamp hanging from a room's ceiling (over its table or desk); curtains: true or false; luxury: "
+            "true for a luxury car (inside a car: cream leather, a glowing dashboard)",
             f"light: {', '.join(LIGHTS)}; weather: {', '.join(W.WEATHER)}",
             "effects: " + "; ".join(f"{k} ({v})" for k, v in W.EFFECTS.items()),
             "",
@@ -243,7 +244,10 @@ def system(story: dict, recent: list[dict]) -> str:
     import prompts
 
     look = prompts.load("look_silhouette")
-    return f"""You are the storyboard artist of a YouTube channel of animated motivational story films. There's no
+    places = _places_for(story)
+    upright = (" This film is a Short: 2-3 minutes, drawn upright (9:16) for phones, so frame its moments for an upright "
+               "picture (mostly one or two people in a shot; medium and close framings).") if story.get("form") == "short" else ""
+    return f"""You are the storyboard artist of a YouTube channel of animated motivational story films.{upright} There's no
 narrator: the film shows the story in pictures drawn entirely in code, in the channel's own look, from a library of
 places, things, people and actions (below), and what the people say and think appears in bubbles over their heads (code
 draws them, from the moments below). You design this story's pictures: the places it happens in, the people around its
@@ -257,6 +261,13 @@ design, its room and its clock don't):
 
 THE HERO is always the same man, drawn the same way in every story: a black silhouette in a teal hoodie, two white eyes.
 He speaks and thinks only in his bubbles. Never describe his looks: say what he does, where, and how his eyes are.
+When he trains (pushups, lifting, boxing, treadmill, bench_press, pullups, jump_rope) he wears a fitted teal T-shirt, and
+from his first workout after the realization he is fit for the rest of the film: broad shoulders, strong arms (code
+draws both). In his new life (payoff) he can wear a sharp suit (outfit: suit: charcoal, a teal tie, a gold watch).
+THE NEW LIFE (payoff) shows the life he built with at least one clear sign of it, whatever fits this story: the things in
+its places (sports_car, luxury_car, panorama_window, safe, gold, money, trophy; a luxury car to drive), his suit, a
+picture bubble (sports_car, watch, safe, skyline, flex). His phone turned to us (screen) shows what the moment is about:
+a call ringing, missed calls, an alarm, the endless feed, texts piling up, a video.
 
 THE STORY: "{story['title']}". Theme: {story.get('theme')}. Core message: {story.get('core_message')}
 Its stages, in the script writer's words, in order: hook, incident (the major incident), collapse, rock_bottom (rock
@@ -270,7 +281,7 @@ THE MOMENTS, one numbered moment per shot, in order ([stage] what we see | who i
 THE PEOPLE (their ids are fixed: the bubbles name them): {_people_text(story)}
 
 WHAT YOU DESIGN
-1. places ({PLACES[0]}-{PLACES[1]}): every place the story happens in, designed for this story and built from the library.
+1. places ({places[0]}-{places[1]}): every place the story happens in, designed for this story and built from the library.
    id: a short name (flat, office, restaurant); name: what it is in a few words ("his small rented flat").
    kind and its look: wall colour, floor, window and its view, lamp, curtains (rooms); nature (outdoors in nature).
    things: the big things on the floor, left to right (at most {THINGS_MOST} in a room, 4 outdoors); wall_things (at most 3);
@@ -288,7 +299,9 @@ WHAT YOU DESIGN
    library's parts: there are no ready-made places.
 2. cast (0-{CAST_MOST}): the people around him, never him: the moments' people with their ids exactly (above), and anyone
    else a shot needs. role: who they are to him; their look from the library's parts: hair and its colour, cloth (never
-   teal: that's his), extras, build, height. Each looks different from the others at a glance. Everyone is an adult.
+   teal: that's his), extras, build, height. Each looks different from the others at a glance. preset: the library's
+   character they are, drawn its way (empty: design them from the parts): {ROLES_TEXT}.
+   {story_agent.kids_rule(story)} A child is always one of the library's children (preset).
 3. shots: one for every moment, in order (line: its number), and {QUIET[0]}-{QUIET[1]} quiet shots without a moment
    (line: 0) where the film needs to breathe: after a blow lands, before the turn, a place before he enters it.
    - stage: the stage the line belongs to (every stage has shots, in order, never going back).
@@ -315,8 +328,10 @@ WHAT YOU DESIGN
 4. realization: the number of the shot (counting every shot, 1 = the first) where he realizes; the music lifts
    there. In rock_bottom, or the first shot of transformation.
 5. chapters: six short names (2-5 words), one for each stage in order: the film's YouTube chapters.
-6. thumbnail: the shot (its number) that makes a stranger click (him in it, a strong moment) and its words: lead (white,
-   1-4 words) and punch (yellow, 1-3 words): together they make a stranger need to know. This story's own words.
+6. thumbnail: the shot (its number) that makes a stranger click (him in it, doing what the story is about: a strong
+   moment) and its words, always laid out the same way: lead (white, one line: 1-3 short words, 18 letters at most)
+   and punch (yellow and big, on two lines: 1-3 words, 16 letters at most): together they make a stranger need to
+   know. This story's own words.
 7. description: 2-3 sentences for YouTube: what the story is about and its stakes, not its ending; no links or hashtags.
    tags: 6-12 search words.
 
@@ -336,7 +351,7 @@ THE LIBRARY (nothing else exists; use these words exactly)
 
 {_recent_text(recent)}
 
-ALWAYS: everyone is an adult (no children or teenagers, not even in a photo or a memory); nothing explicit; no gore,
+ALWAYS: {story_agent.kids_rule(story, short=True)}; never a child in the thumbnail; nothing explicit; no gore,
 weapons or self-harm; no real brands, people or places by name.""" + _learned()
 
 
@@ -345,7 +360,7 @@ def _learned() -> str:
     try:
         from agents.base import taught
 
-        text = taught("storyboard")
+        text = taught("visuals")   # (Agent 3's lessons: its storyboard's)
     except Exception:   # (the database out of reach: the storyboard is made without them)
         return ""
     return ("\n\n" + text) if text else ""
@@ -366,18 +381,19 @@ def schema() -> dict:
     place = {"type": "object", "properties": {
         "id": s, "name": s, "kind": one_of(W.PLACE_KINDS), "nature": {"type": "string", "description": "for kind nature, else empty"},
         "wall": one_of(W.WALLS), "floor": one_of(W.FLOORS), "window": one_of(W.WINDOWS), "view": one_of(W.VIEWS),
-        "lamp": {"type": "boolean"}, "curtains": {"type": "boolean"},
+        "lamp": {"type": "boolean"}, "curtains": {"type": "boolean"}, "luxury": {"type": "boolean"},
         "things": {"type": "array", "items": s}, "wall_things": {"type": "array", "items": s},
         "small": {"type": "array", "items": s}, "effects": {"type": "array", "items": one_of(W.EFFECTS)},
         "light": one_of(LIGHTS), "weather": one_of(W.WEATHER),
         "wish": {"type": "string", "description": "what it needs that the library lacks, or empty"}},
-        "required": ["id", "name", "kind", "nature", "wall", "floor", "window", "view", "lamp", "curtains", "things",
+        "required": ["id", "name", "kind", "nature", "wall", "floor", "window", "view", "lamp", "curtains", "luxury", "things",
                      "wall_things", "small", "effects", "light", "weather", "wish"]}
     cast = {"type": "object", "properties": {
         "id": s, "role": s, "hair": one_of(W.HAIRS), "hair_color": one_of(W.HAIR_COLORS),
         "cloth": one_of([c for c in W.CLOTH_COLORS if c != "teal"]), "extras": {"type": "array", "items": one_of(W.EXTRAS)},
-        "build": one_of(BUILDS), "height": one_of(HEIGHTS)},
-        "required": ["id", "role", "hair", "hair_color", "cloth", "extras", "build", "height"]}
+        "build": one_of(BUILDS), "height": one_of(HEIGHTS),
+        "preset": one_of([""] + list(W.ROLES), "the library's character they are (drawn its way), or empty")},
+        "required": ["id", "role", "preset", "hair", "hair_color", "cloth", "extras", "build", "height"]}
     shot = {"type": "object", "properties": {
         "line": {"type": "integer", "description": "the line's number, or 0 for a quiet shot"},
         "stage": one_of(STAGES), "place": {"type": "string", "description": "a place's id"},
@@ -387,13 +403,14 @@ def schema() -> dict:
         "eyes": one_of(W.MOODS), "with": {"type": "string", "description": "hugging, handshake, arguing: the other's id"},
         "marks": {"type": "array", "items": one_of(W.MARKS), "description": "round his head: at most 2"},
         "screen": one_of([""] + list(W.SCREENS), "his phone's screen turned to us, or empty"),
+        "outfit": one_of(["", "suit"], "his clothes: empty (his hoodie), or suit (his new life only)"),
         "others": {"type": "array", "items": person},
         "framing": one_of(FRAMINGS), "close_on": {"type": "string", "description": "detail: the thing; else empty"},
         "move": one_of(W.CAMERA), "event": one_of(_events()), "enter": one_of(W.ENTER),
         "effects": {"type": "array", "items": one_of(W.EFFECTS)}, "label": s, "seconds": {"type": "number"},
         "shows": s},
         "required": ["line", "stage", "place", "light", "weather", "action", "at", "item", "eyes", "with", "marks",
-                     "screen", "others",
+                     "screen", "outfit", "others",
                      "framing", "close_on", "move", "event", "enter", "effects", "label", "seconds", "shows"]}
     return {"type": "object", "properties": {
         "places": {"type": "array", "items": place}, "cast": {"type": "array", "items": cast},
@@ -410,6 +427,18 @@ def schema() -> dict:
 # (any of the library's exaggerated pieces can serve any story: none belongs to a topic. tools/silhouette_words.IDEAS only
 # offers a few ideas for the topics of the owner's list; nothing is drawn from it by force)
 HABIT_LEAST = {"fall": 6, "before": 4, "after": 2}   # shots that must show it big
+SHORT_PLACES = (4, 9)                                     # a Short's places (2-3 minutes, upright: your plan of 2026-11-23)
+SHORT_HABIT_LEAST = {"fall": 4, "before": 3, "after": 2}  # ...and its shots that must show the habit big
+
+
+def _places_for(story: dict) -> tuple[int, int]:
+    """How many places a story of its form is designed with: a Short fewer (story["form"])."""
+    return SHORT_PLACES if story.get("form") == "short" else PLACES
+
+
+def _habit_least(story: dict) -> dict:
+    """Its shots that must show the habit big (HABIT_LEAST; a Short's fewer)."""
+    return SHORT_HABIT_LEAST if story.get("form") == "short" else HABIT_LEAST
 FALL = ("hook", "incident", "collapse", "rock_bottom")    # where the habit grips him
 RISE = ("transformation", "payoff")                      # where a virtue story shows the virtue
 BIG_EYES = ("hearts", "dollars", "spirals", "droopy", "furious", "side_eye", "smug", "sobbing", "terrified", "fire")
@@ -427,10 +456,11 @@ def _ideas(story: dict) -> dict:
 def _habit_text(story: dict, recent: list[dict]) -> str:
     """The habit shown big, for Gemini: the story's own, with any of the library's exaggerated pieces."""
     virtue = story.get("kind") == "virtue"
-    rule = (f"at least {HABIT_LEAST['before']} shots of hook, incident, collapse and rock_bottom show the weakness he "
-            f"overcomes big, and at least {HABIT_LEAST['after']} of transformation and payoff the virtue itself"
+    least = _habit_least(story)
+    rule = (f"at least {least['before']} shots of hook, incident, collapse and rock_bottom show the weakness he "
+            f"overcomes big, and at least {least['after']} of transformation and payoff the virtue itself"
             if virtue else
-            f"at least {HABIT_LEAST['fall']} shots of hook, incident, collapse and rock_bottom show it big, growing as it "
+            f"at least {least['fall']} shots of hook, incident, collapse and rock_bottom show it big, growing as it "
             "grips him")
     ideas = _ideas(story)
     idea = ""
@@ -518,11 +548,12 @@ def _habits(shots: list[dict], story: dict, recent: list[dict], problems: list, 
     if not shots:
         return []
     last = {p for r in recent[:1] for p in r.get("habit_used") or []}
+    least = _habit_least(story)
     if story.get("kind") == "virtue":
-        _show_big(shots, FALL, HABIT_LEAST["before"], story, last, problems, notes, "the weakness, before his turn")
-        _show_big(shots, RISE, HABIT_LEAST["after"], story, last, problems, notes, "the virtue, after it")
+        _show_big(shots, FALL, least["before"], story, last, problems, notes, "the weakness, before his turn")
+        _show_big(shots, RISE, least["after"], story, last, problems, notes, "the virtue, after it")
     else:
-        _show_big(shots, FALL, HABIT_LEAST["fall"], story, last, problems, notes, "his fall")
+        _show_big(shots, FALL, least["fall"], story, last, problems, notes, "his fall")
     return sorted(set().union(*[_pieces(s) for s in shots]))
 
 
@@ -578,6 +609,7 @@ def _place(d: dict, pid: str, key: str, notes: list, missing: list, problems: li
         missing.append(f"{m.replace('thing: ', '').replace('_', ' ')} (in {pid})")
     out = {"kind": clean["kind"], "wall": clean["wall"], "floor": clean["floor"], "window": clean["window"],
            "view": clean["view"], "nature": clean["nature"], "lamp": clean["lamp"], "curtains": clean["curtains"],
+           "luxury": bool(d.get("luxury")) and clean["kind"] == "car",
            "things": [t["thing"] for t in clean["things"]], "wall_things": [t["thing"] for t in clean["wall_things"]],
            "small": [t["thing"] for t in clean["small"]], "effects": clean["effects"]}
     big = [t for t in out["things"] if W.PROPS[t][3] in ("back", "mid")]
@@ -587,10 +619,92 @@ def _place(d: dict, pid: str, key: str, notes: list, missing: list, problems: li
     return {"id": pid, "name": name, "spec": out, "light": light, "weather": weather, "seed": f"{key}/{pid}"}
 
 
-def _person(c: dict, cid: str, notes: list, problems: list) -> dict:
+ROLES_TEXT = "; ".join(f"{k} ({v[0]})" for k, v in W.ROLES.items())   # (the cast's presets, for the prompt)
+NOT_FOR_KIDS = {  # what keeps a child out of a shot (the owner's rule: calm, safe family moments only)
+    "action": {"punching_wall", "throwing", "slamming", "shouting", "shaking_fists", "arguing", "grabbing", "cowering",
+               "backing_away", "drinking", "hiding_phone", "staring"},
+    "item": {"bottle", "glass"},
+    "thing": {"bottle", "wine", "ambulance", "scaffold", "cement_mixer", "hospital_bed", "heart_monitor", "waiting_chairs",
+              "railing", "office_row", "meeting_table", "podium", "stage", "audience", "filing_cabinet", "water_cooler",
+              "shop_counter", "workbench", "chef_range", "prep_counter", "weights", "punching_bag", "treadmill",
+              "weight_bench", "pullup_bar", "gym_mat"},
+    "effect": {"fire", "smoke", "emergency", "red_pulse", "pink_haze", "shake", "party"},
+    "mark": {"steam", "vein", "aura_red", "hearts", "drool"},
+    "picture": {"phone_adult", "lips", "bottle", "bomb", "fist", "volcano", "grawlix"},
+    "screen": {"adult"},
+}
+
+
+def _has_kid(s: dict, kids: set) -> bool:
+    return bool({o.get("who") for o in s.get("others") or []} & kids or (s.get("him") or {}).get("with") in kids)
+
+
+def _kids_safe(shots: list[dict], cast: dict, by_id: dict, notes: list) -> None:
+    """Children (silhouette_words.CHILD_ROLES) only in calm, safe family moments: out of any shot with violence, anger,
+    alcohol, danger, romance, a place of work, a hospital or the gym; their bubbles go with them."""
+    kids = {cid for cid, c in cast.items() if c.get("child")}
+    for k, s in enumerate(shots):
+        if not kids or not _has_kid(s, kids):
+            continue
+        spec = (by_id.get(s.get("place")) or {}).get("spec") or {}
+        people = [s.get("him") or {}] + list(s.get("others") or [])
+        found = ({p.get("action") for p in people} & NOT_FOR_KIDS["action"]
+                 | {p.get("item") for p in people} & NOT_FOR_KIDS["item"]
+                 | (set(spec.get("things") or []) | set(spec.get("wall_things") or []) | set(spec.get("small") or []))
+                 & NOT_FOR_KIDS["thing"]
+                 | (set(s.get("effects") or []) | set(spec.get("effects") or [])) & NOT_FOR_KIDS["effect"]
+                 | {m for p in people for m in p.get("marks") or []} & NOT_FOR_KIDS["mark"]
+                 | {b.get("picture") for b in s.get("bubbles") or []} & NOT_FOR_KIDS["picture"]
+                 | {p.get("screen") for p in people} & NOT_FOR_KIDS["screen"])
+        if not found:
+            continue
+        s["others"] = [o for o in s.get("others") or [] if o.get("who") not in kids]
+        if (s.get("him") or {}).get("with") in kids:
+            s["him"]["with"] = ""
+        s["bubbles"] = [b for b in s.get("bubbles") or [] if b.get("who") not in kids]
+        notes.append(f"shot {k + 1}: the child left out ({', '.join(sorted(found))}: children only in calm, safe family "
+                     "moments)")
+
+
+def _preset_of(role: str) -> str:
+    """The library's character a role names (silhouette_words.ROLES), or ""."""
+    r = role.lower()
+    for name, pattern in ROLE_WORDS:
+        if re.search(pattern, r):
+            return name
+    return ""
+
+
+ROLE_WORDS = (("young_him", r"\b(him|himself) as a (boy|child|kid)|younger self|young (him|himself)|little (him|himself)"),
+              ("little_brother", r"(little|younger|baby|kid) brother"), ("little_sister", r"(little|younger|baby|kid) sister"),
+              ("daughter", r"\bdaughter|\b(little|young) girl\b"), ("son", r"\bson\b|\b(little|young) boy\b"),
+              ("girlfriend", r"girlfriend|fianc|partner"), ("wife", r"\bwife\b"), ("father", r"\b(father|dad)\b"),
+              ("mother", r"\b(mother|mom|mum)\b"), ("best_friend", r"best friend"), ("rival", r"rival|competitor"),
+              ("colleague", r"colleague|co-?worker"), ("boss", r"\b(boss|manager|ceo)\b"),
+              ("coach", r"\b(coach|trainer)\b"), ("mentor", r"mentor|teacher|old man"), ("doctor", r"\bdoctor\b"),
+              ("friend", r"\bfriend\b"))
+
+
+def _person(c: dict, cid: str, notes: list, problems: list, kids: bool = False, taken: set | None = None) -> dict:
+    """One of the cast: their role and look. A preset (the storyboard's, or the one their role names) draws them as the
+    library's character, the first of each only (two alike would read as one); a child is always one of the library's
+    children, and only when the story can have children (kids)."""
     role = _clean(c.get("role"))[:80] or cid.replace("_", " ")
-    if story_agent.ADULTS.search(role):
+    taken = set() if taken is None else taken
+    preset = c.get("preset") if c.get("preset") in W.ROLES else _preset_of(role)
+    child = story_agent.KIDS.search(role) is not None or preset in W.CHILD_ROLES
+    if child and not kids:
         problems.append(f"{cid} ({role}): everyone in the story is an adult")
+        preset = "" if preset in W.CHILD_ROLES else preset
+    elif child and preset not in W.CHILD_ROLES:
+        preset = "daughter" if re.search(r"daughter|girl|sister", role.lower()) else "son"
+    if preset and preset in taken and preset not in W.CHILD_ROLES:
+        preset = ""
+    if preset:
+        taken.add(preset)
+        words = dict(W.ROLES[preset][1])
+        return {"id": cid, "role": role, "words": words, "look": _look_of(words), "preset": preset,
+                "child": bool(words.get("child"))}
     words = {"hair": c.get("hair") if c.get("hair") in W.HAIRS else "short",
              "hair_color": c.get("hair_color") if c.get("hair_color") in W.HAIR_COLORS else "black",
              "cloth": c.get("cloth") if c.get("cloth") in W.CLOTH_COLORS else "slate",
@@ -605,6 +719,12 @@ def _person(c: dict, cid: str, notes: list, problems: list) -> dict:
     import silhouette_board as SB
 
     return {"id": cid, "role": role, "words": words, "look": SB.look_spec(words)}
+
+
+def _look_of(words: dict) -> dict:
+    import silhouette_board as SB
+
+    return SB.look_spec(words)
 
 
 def _action(v, notes: list, missing: list, where: str) -> str:
@@ -722,7 +842,9 @@ def _people_in_cast(cast: dict, story: dict, problems: list, notes: list) -> Non
         cast[person["id"]] = _person({"id": person["id"], "role": person["role"], "hair": hair,
                                       "hair_color": ("brown", "black", "grey", "auburn")[k % 4],
                                       "cloth": ("navy", "wine", "olive", "grey", "plum", "mustard")[k % 6], "extras": [],
-                                      "build": "average", "height": "average"}, person["id"], notes, problems)
+                                      "build": "average", "height": "average"}, person["id"], notes, problems,
+                                     kids=story_agent.kids_allowed(story),
+                                     taken={c.get("preset") for c in cast.values() if c.get("preset")})
 
 
 def plates_of(story: dict) -> list[dict]:
@@ -774,6 +896,72 @@ def reseat(story: dict) -> list[str]:
     return problems + notes
 
 
+WORKOUTS = ("pushups", "lifting", "boxing", "treadmill", "bench_press", "pullups", "jump_rope")
+NEW_LIFE_THINGS = ("sports_car", "luxury_car", "panorama_window", "safe", "gold", "money", "trophy")
+NEW_LIFE_PICTURES = ("sports_car", "watch", "safe", "skyline", "flex", "money", "moneybag", "trophy", "crown", "star")
+FACE_ON = ("phone", "lying_awake", "doomscrolling")   # (his phone turned to us)
+SCREEN_WORDS = (("call", ("call", "calling", "ringing", "answer", "pick up")), ("missed", ("missed", "ignored")),
+                ("alarm", ("alarm", "wake up", "snooze", "oversl")), ("texts", ("text", "texts", "message", "where are you",
+                                                                               "reply")),
+                ("video", ("video", "episode", "series", "stream")), ("game", ("game", "level")),
+                ("bank", ("bank", "rent", "broke", "balance", "debt")), ("likes", ("likes", "followers")),
+                ("chart_up", ("sales", "growth", "profit", "subscribers")))
+
+
+def _his_look(shots: list[dict], by_id: dict, rk: int, notes: list) -> None:
+    """His look through the film, by code (tools/silhouette_board.py draws it): fit (broad in the chest and back, strong
+    arms) from his first workout at or after the realization to the end (no workout then: never fit); the suit only in
+    his new life (payoff); and when the new life shows no sign of the life he built (its things, his suit, a picture of
+    it), the suit on him in its first shot out in the world (not in bed, not training)."""
+    start = next((k for k, s in enumerate(shots) if k >= max(rk, 0) and (s.get("him") or {}).get("action") in WORKOUTS),
+                 None)
+    for k, s in enumerate(shots):
+        him = s.get("him")
+        if not him:
+            continue
+        if start is not None and k >= start:
+            him["fit"] = True
+        if him.get("outfit") == "suit" and s["stage"] != "payoff":
+            him["outfit"] = ""
+            notes.append(f"shot {k + 1}: his suit is for his new life (payoff): his hoodie here")
+
+    def spec(s):
+        return (by_id.get(s.get("place")) or {}).get("spec") or {}
+
+    def shows(s):
+        sp, him = spec(s), s.get("him") or {}
+        things = set(sp.get("things") or []) | set(sp.get("wall_things") or []) | set(sp.get("small") or [])
+        return bool(things & set(NEW_LIFE_THINGS) or sp.get("luxury") or him.get("outfit") == "suit"
+                    or him.get("item") in ("trophy", "money")
+                    or any(b.get("picture") in NEW_LIFE_PICTURES for b in s.get("bubbles") or []))
+
+    payoff = [s for s in shots if s["stage"] == "payoff"]
+    if not payoff or any(shows(s) for s in payoff):
+        return
+    training = {"bed", "hospital_bed", "weights", "treadmill", "punching_bag", "weight_bench", "pullup_bar", "gym_mat"}
+    for s in payoff:
+        him = s.get("him")
+        if him and him["action"] not in WORKOUTS + ("asleep", "lying_awake", "lying_floor") and \
+                not training & set(spec(s).get("things") or []):
+            him["outfit"] = "suit"
+            notes.append(f"shot {shots.index(s) + 1}: code dressed him in his suit (a sign of his new life)")
+            return
+
+
+def _phone_screens(shots: list[dict]) -> None:
+    """His phone turned to us is never blank: with no screen from the storyboard, code picks one from the shot's words
+    (a call, an alarm, texts...) or its stage (the feed pulling him in early on, missed calls at rock bottom, the alarm
+    of his new mornings, a chart going up in his new life)."""
+    for s in shots:
+        him = s.get("him")
+        if not him or him["action"] not in FACE_ON or him.get("screen"):
+            continue
+        words = " " + " ".join(str(b.get("text") or "") for b in s.get("bubbles") or []).lower()
+        pick = next((k for k, ws in SCREEN_WORDS if any(re.search(r"\b" + re.escape(w), words) for w in ws)), None)
+        him["screen"] = pick or {"rock_bottom": "missed", "transformation": "alarm",
+                                 "payoff": "chart_up"}.get(s["stage"], "feed")
+
+
 def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dict, list[str], list[str]]:
     """The storyboard as code can take it ({"places", "cast", "shots", "realization", "chapters", "thumbnail",
     "description", "tags", "missing", "hard"}), what's wrong with it (problems: it goes back) and what code changed or
@@ -802,7 +990,7 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
         for m in i["missing"]:
             missing.append(f"{m} (in {pid})")
     # the cast
-    cast = {}
+    cast, presets, kids = {}, set(), story_agent.kids_allowed(story)
     for k, c in enumerate(raw.get("cast") or []):
         cid = _id(c.get("id") or c.get("role"), f"person_{k + 1}")
         if cid in HERO or _word(c.get("role")) in HERO:
@@ -810,7 +998,7 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
             continue
         while cid in cast:
             cid += "_2"
-        cast[cid] = _person(c, cid, notes, problems)
+        cast[cid] = _person(c, cid, notes, problems, kids=kids, taken=presets)
     _people_in_cast(cast, story, problems, notes)
     if len(cast) > CAST_MOST:
         notes.append(f"{len(cast)} people: at most {CAST_MOST}")
@@ -846,7 +1034,8 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
             him = {"action": action, "at": _at(s.get("at")), "item": _item(s.get("item")),
                    "eyes": s.get("eyes") if s.get("eyes") in W.MOODS else "", "with": _id(s.get("with"), ""),
                    "marks": [x for x in dict.fromkeys(_word(m) for m in s.get("marks") or []) if x in W.MARKS][:2],
-                   "screen": s.get("screen") if s.get("screen") in W.SCREENS else ""}
+                   "screen": s.get("screen") if s.get("screen") in W.SCREENS else "",
+                   "outfit": "suit" if _word(s.get("outfit")) == "suit" else ""}
         others = []
         for o in s.get("others") or []:
             who = _id(o.get("who"), "")
@@ -972,9 +1161,10 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
     for cid in [c for c in cast if c not in in_shots]:
         notes.append(f"{cid} is in no shot: left out")
     cast = {c: v for c, v in cast.items() if c in in_shots}
-    if not PLACES[0] <= len(places) <= PLACES[1]:
-        (problems if len(places) < PLACES[0] - 1 else notes).append(
-            f"{len(places)} places: design {PLACES[0]}-{PLACES[1]} (a home can be several: his desk, his kitchen, his "
+    p_least, p_most = _places_for(story)
+    if not p_least <= len(places) <= p_most:
+        (problems if len(places) < p_least - 1 else notes).append(
+            f"{len(places)} places: design {p_least}-{p_most} (a home can be several: his desk, his kitchen, his "
             "bedroom; where the incident happens, where he hits bottom, where he changes, his new life)")
     for pid in used:
         share = sum(1 for s in shots if s["place"] == pid) / len(shots)
@@ -990,6 +1180,9 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
         rk = later[-1] if later else next((k for k, s in enumerate(shots) if s["stage"] == "transformation"),
                                           len(shots) // 2)
         notes.append(f"the realization is shot {rk + 1} (in rock bottom or the first of the transformation)")
+    _his_look(shots, by_id, rk, notes)   # (fit from his first workout on, the suit in his new life)
+    _phone_screens(shots)
+    _kids_safe(shots, cast, by_id, notes)   # (children only in calm, safe family moments)
     chapters = [_clean(c).strip(" .\"'")[:40] for c in raw.get("chapters") or []]
     if len(chapters) != 6 or not all(1 <= len(c.split()) <= 6 for c in chapters):
         notes.append("chapters: six short names, one for each stage")
@@ -997,15 +1190,23 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
                 for k, stage in enumerate(STAGES)}
     thumb = raw.get("thumbnail") or {}
     lead, punch = _clean(thumb.get("lead")).strip(" .\"'"), _clean(thumb.get("punch")).strip(" .\"'")
-    if not 1 <= len(lead.split()) <= 4 or not 1 <= len(punch.split()) <= 3 or re.search(r"[#@]|[\U0001F300-\U0001FAFF]",
-                                                                                         lead + punch):
-        problems.append("the thumbnail's words: lead 1-4 words (white), punch 1-3 words (yellow), no hashtags or emoji")
+    if (not 1 <= len(lead.split()) <= 3 or len(lead) > 18 or not 1 <= len(punch.split()) <= 3 or len(punch) > 16
+            or re.search(r"[#@]|[\U0001F300-\U0001FAFF]", lead + punch)):
+        problems.append("the thumbnail's words: lead 1-3 words, 18 letters at most (white); punch 1-3 words, 16 letters "
+                        "at most (yellow); no hashtags or emoji")
     tk = shots.index(picked["thumbnail"]) if picked.get("thumbnail") in shots else -1
     if tk < 0:
         problems.append("the thumbnail's shot: a shot's number (1 = the first)")
         tk = rk
     elif not shots[tk]["him"]:
         notes.append(f"the thumbnail's shot {tk + 1} doesn't have him in it")
+    kid_ids = {cid for cid, c in cast.items() if c.get("child")}
+    if kid_ids and _has_kid(shots[tk], kid_ids):   # (never a child in the thumbnail)
+        free = sorted((k for k, s in enumerate(shots) if s["him"] and not _has_kid(s, kid_ids)),
+                      key=lambda k: (shots[k]["stage"] != shots[tk]["stage"], abs(k - tk)))
+        if free:
+            notes.append(f"the thumbnail is shot {free[0] + 1}, not {tk + 1}: never a child in the thumbnail")
+            tk = free[0]
     description = re.sub(r"https?://\S+|#\w+", "", _clean(raw.get("description"))).strip()[:700]
     if len(description.split()) < 8:
         problems.append("the description: 2-3 sentences for YouTube")
@@ -1014,8 +1215,8 @@ def check(raw: dict, story: dict, recent: list[dict] | None = None) -> tuple[dic
         notes.append("tags: 6-12 search words")
     texts = [s["shows"] for s in shots] + [c["role"] for c in cast.values()] + list(chapters.values()) + [
         lead, punch, description, *tags] + [b["text"] for s in shots for b in s.get("bubbles") or []]
-    hard = story_agent.rules_broken(" ".join(texts))
-    hard += [p for p in problems if "everyone in the story is an adult" in p]
+    hard = story_agent.rules_broken(" ".join(texts), kids=story_agent.kids_allowed(story))
+    hard += [p for p in problems if "everyone in the story is an adult" in p or "children only" in p]
     problems += [h for h in hard if h not in problems]
     board = {"places": places, "cast": list(cast.values()), "shots": shots, "plates": plates, "realization": rk,
              "chapters": chapters,
