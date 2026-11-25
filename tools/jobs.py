@@ -522,6 +522,9 @@ def due(progress=_log) -> dict:
         found = {"work": True, "why": "the day's numbers are due"}
     else:
         found = {"work": False, "why": "nothing to do: the next story is scheduled"}
+    if not found["work"] and not paused() and publisher.reels_enabled() and (reels := publisher.reels_to_keep()):
+        found = {**found, "work": True, "why": f"{found['why']}; and {len(reels)} Reel video{'s' if len(reels) != 1 else ''} "
+                                               "to keep for Instagram (made on the laptop, or kept too briefly)"}
     db.keep_note("autopilot:check", {**found, "at": db.now_iso()})
     return found
 
@@ -774,6 +777,7 @@ def morning(progress=_log) -> dict:
     try:
         if not (kept.in_cloud() and publisher.reels_on()):
             return _morning(progress)
+        _keep_reels(progress)  # (first: each Reel still to post gets a video this run keeps, if no run keeps one)
         stop = threading.Event()
         beside = threading.Thread(target=_reels_beside, args=(stop, progress), name="reels", daemon=True)
         beside.start()
@@ -800,6 +804,15 @@ def _reels_beside(stop: threading.Event, progress) -> None:
                     publisher.run_instagram(whole, progress=progress)
         except Exception as e:  # (a Reel's own failure is handled where it's posted: this is the database or YouTube)
             progress(f"Reels: {str(e)[:200]}")
+
+
+def _keep_reels(progress) -> None:
+    """publisher.keep_reels, never failing the run (a Reel's video is drawn again by a later run)."""
+    try:
+        if not paused():
+            publisher.keep_reels(progress)
+    except Exception as e:
+        progress(f"Reels: their videos couldn't be kept ({type(e).__name__}: {str(e)[:200]})")
 
 
 def _morning(progress) -> dict:

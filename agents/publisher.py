@@ -70,6 +70,12 @@ WEAK_HASHTAG = 0.7                     # a hashtag this far below the channel's 
 REEL_WAITS = (10, 20, 40, 60, 90, 120, 180)  # minutes before the next try of a Reel Instagram didn't take, by try
 REEL_TRIES = len(REEL_WAITS) + 1
 REEL_DAYS = 2                          # a Reel not posted within this long after its time is given up (its video deleted)
+KEPT_SAFE = timedelta(days=2, hours=12)  # a cloud run's kept files are surely there this long (GitHub keeps them 3 days)
+REEL_AFTER = timedelta(hours=12)         # a Reel's video must be there until this long after its time (its tries)
+REKEEP_WITHIN = timedelta(hours=12)      # a kept copy that goes before then is kept again by a run within this of going
+KEEP_RETRY = timedelta(hours=6)          # a Reel's video that couldn't be drawn again isn't tried again before this
+REKEEP_MOST = 3                          # Reels' videos drawn again in one cloud run (each takes minutes)
+VIDEO_WAIT = timedelta(minutes=30)       # a Reel whose video isn't kept anywhere yet looks again this long later
 POSTING_STALE = timedelta(minutes=30)  # a Reel "posting" for longer was cut off (the dashboard stopped)
 STUDIO_GRACE = timedelta(minutes=5)    # still private this long after its time: made private in YouTube Studio
 PUBLISH_LAG = timedelta(minutes=30)    # a Reel waits this long for YouTube to make its Short public (it's a little late)
@@ -138,8 +144,13 @@ def caption(meta: dict, plan: dict) -> str:
     return f"{meta['title']}\n\n{description(meta, plan, links=False)}"[:instagram.CAPTION_CHARS]
 
 
+def reels_enabled() -> bool:
+    """Reels switched on in the settings (whether Instagram's keys are here or not: the cloud's hourly check has none)."""
+    return bool((load_config().get("instagram") or {}).get("enabled"))
+
+
 def reels_on() -> bool:
-    return bool((load_config().get("instagram") or {}).get("enabled")) and instagram.is_configured()
+    return reels_enabled() and instagram.is_configured()
 
 
 # --- YouTube ---------------------------------------------------------------------------------------------------------------
@@ -349,6 +360,88 @@ def _posting(reel: dict) -> bool:
 def _remaking(reel: dict) -> bool:
     """Is the Reel's video being made again right now (remake_reel)?"""
     return reel.get("status") == "remaking" and (reel.get("remaking_at") or "") > db.now_iso(-POSTING_STALE)
+
+
+def reels_to_keep() -> list[dict]:
+    """The Reels still to post whose video no cloud run keeps until after their time (tools/kept.py), soonest first: a
+    Short made and uploaded on the laptop (its video never reached GitHub), or one whose kept copy goes (KEPT_SAFE after
+    it was kept) before REEL_AFTER past its time, once that is within REKEEP_WITHIN. One that couldn't be drawn again
+    waits KEEP_RETRY. The database only: the cloud's hourly check asks it (jobs.due)."""
+    now = datetime.now(timezone.utc)
+    out = []
+    for v in db.scheduled_videos(days=REEL_DAYS, parts=("instagram", "form")):
+        reel = v["plan"].get("instagram") or {}
+        if reel.get("status") != "pending" or not reel.get("at"):
+            continue
+        if reel.get("keep_failed_at") and now - slots.parse(reel["keep_failed_at"]) < KEEP_RETRY:
+            continue
+        if reel.get("kept_in"):
+            gone = slots.parse(reel.get("kept_at") or v.get("created_at") or reel["at"]) + KEPT_SAFE
+            if gone >= slots.parse(reel["at"]) + REEL_AFTER or gone - now > REKEEP_WITHIN:
+                continue  # (kept long enough; or it goes later: kept again nearer the time)
+        out.append(v)
+    return sorted(out, key=lambda v: v["plan"]["instagram"]["at"])
+
+
+def _draw_reel(row: dict, progress=log) -> dict:
+    """A Reel's video drawn again from its story as it is on YouTube (nothing saved: what's recorded about the YouTube
+    video stays as it was): a Short's own video, upright, or an older story's short version."""
+    if series.form_of(row) == "short":
+        plan = row["plan"]
+        drawn = story_film.make({**plan["story"], "form": "short"}, animator.reel_path(row), progress,
+                                beds=animator._beds(plan.get("fixes") or {}))
+        return {"video_id": row["id"], "short": drawn["seconds"], "readings": 0, "voice": None}
+    return animator.make_short(row, progress, now=True, again=True)
+
+
+def keep_reels(progress=log) -> list[int]:
+    """In a cloud run, before its story: each Reel reels_to_keep() names gets its video on this machine - fetched from
+    the run that kept it, or drawn again from its story when no run has it (_draw_reel) - and this run keeps it
+    (jobs.keep_videos at its end; _reels_beside posts one whose time comes meanwhile). At most REKEEP_MOST drawn again
+    in one run. Returns the stories this run now keeps."""
+    run = kept.this_run()
+    if not run:
+        return []
+    kept_now, drawn = [], 0
+    for row in reels_to_keep():
+        vid, old = row["id"], (row["plan"].get("instagram") or {}).get("kept_in")
+        if old and old != run and kept.still_running(old):
+            continue  # (that run keeps it when it ends)
+        out = animator.reel_path(row)
+        try:
+            if not out.exists() and old and old != run:
+                try:
+                    kept.fetch(vid, old, out)
+                    progress(f"Story #{vid}'s Reel video fetched from run {old} and kept again, before GitHub deletes it")
+                except FileNotFoundError:
+                    pass  # (gone: drawn again below)
+            if not out.exists():
+                if drawn >= REKEEP_MOST:
+                    continue
+                drawn += 1
+                progress(f"Story #{vid}'s Reel has no kept video (made on the laptop, or its kept copy is gone): "
+                         "drawing it again from its story")
+                _draw_reel(db.get_video(vid), progress)
+        except Exception as e:  # (one Reel's trouble doesn't stop the others, nor the run)
+            progress(f"Story #{vid}'s Reel video couldn't be drawn again ({type(e).__name__}: {str(e)[:160]}); "
+                     "a later run tries again")
+            with _reels:
+                fresh = db.get_video(vid)
+                reel = fresh["plan"].get("instagram") or {}
+                if reel.get("status") == "pending":
+                    db.update_video(vid, plan={**fresh["plan"], "instagram": {**reel, "keep_failed_at": db.now_iso()}})
+            continue
+        with _reels:
+            fresh = db.get_video(vid)
+            reel = fresh["plan"].get("instagram") or {}
+            if reel.get("status") != "pending":  # (posted, taken off or deleted meanwhile)
+                continue
+            reel = {k: x for k, x in reel.items() if k != "keep_failed_at"}
+            db.update_video(vid, plan={**fresh["plan"], "instagram": {**reel, "kept_in": run, "kept_at": db.now_iso()}})
+        kept_now.append(vid)
+    if kept_now:
+        progress("Reels whose video this run keeps for Instagram: " + ", ".join(f"#{i}" for i in kept_now))
+    return kept_now
 
 
 def reels_due() -> list[dict]:
@@ -591,13 +684,21 @@ def post_reel(row: dict, progress=log, now: bool = False) -> dict:
         progress(f"Getting story #{video_id}'s short version from run {run}, which kept it")
         try:
             kept.fetch(video_id, run, out)
-        except FileNotFoundError as e:
-            notify.run(f"⚠️ The Reel of \"{plan['metadata']['title']}\" can't be posted: {e}")
-            return done("failed", error=str(e)[:300])
+        except FileNotFoundError:
+            pass  # (its kept copy is gone: below, it waits for a cloud run to draw it again)
         except Exception as e:  # (GitHub or openssl, for now)
             return again(e, "Its video couldn't be fetched")
-    if not out.exists():
-        return done("failed", error="the video file was gone")
+    if not out.exists():  # (no run keeps it: made on the laptop, or its kept copy gone; a cloud run draws it again)
+        if slots.parse(reel.get("at") or row["publish_at"]) + timedelta(days=REEL_DAYS) < datetime.now(timezone.utc):
+            notify.run(f"⚠️ The Reel of \"{plan['metadata']['title']}\" can't be posted: its video was never kept")
+            return done("failed", error="its video was never kept in time (made on the laptop, or its kept copy gone)")
+        progress(f"Story #{video_id}'s Reel video isn't kept anywhere yet: the next cloud run draws it again")
+        waiting = done("pending", error="its video isn't kept yet: the next cloud run draws it again from its story",
+                       retry_at=db.now_iso(VIDEO_WAIT), kept_in=None)
+        if now:
+            raise RuntimeError(f"Story #{video_id}'s video isn't on this computer or kept in the cloud: the next cloud "
+                               "run draws it again from its story, then its Reel goes up")
+        return waiting
     where = "public" if now else _on_youtube(reel.get("youtube_id") or row["youtube_id"])
     if where == "publishing" and (_turn(row) or "") > db.now_iso(-PUBLISH_LAG):
         progress(f"YouTube hasn't made story #{video_id}'s short version public yet; its Reel waits a few minutes more")
@@ -666,13 +767,9 @@ def remake_reel(row: dict, progress=log) -> dict:
         db.update_video(video_id, plan={**row["plan"], "instagram": {**(before or {}), "status": "remaking",
                                                                       "remaking_at": db.now_iso()}})
     try:
-        if series.form_of(row) == "short":  # (a Short: its own video, drawn again; nothing saved)
-            progress(f"Making Short #{video_id} again for Instagram")
-            drawn = story_film.make(row["plan"]["story"], animator.preview_path(video_id), progress)
-            made = {"video_id": video_id, "short": drawn["seconds"], "readings": 0, "voice": None}
-        else:
-            progress(f"Making story #{video_id}'s short version again for Instagram")
-            made = animator.make_short(row, progress, now=True, again=True)
+        progress(f"Making {'Short' if series.form_of(row) == 'short' else 'the short version of story'} #{video_id} "
+                 "again for Instagram")
+        made = _draw_reel(row, progress)
     except Exception:
         with _reels:  # as it was before
             db.update_video(video_id, plan={**db.get_video(video_id)["plan"], "instagram": before})
